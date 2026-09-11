@@ -1,0 +1,140 @@
+diff --git a/include/juice/juice.h b/include/juice/juice.h
+index 3bb37c5..9ebf22a 100644
+--- a/include/juice/juice.h
++++ b/include/juice/juice.h
+@@ -81,7 +81,14 @@ typedef enum juice_check_kind {
+     JUICE_CHECK_REQUEST_TX, JUICE_CHECK_RESPONSE_TX, JUICE_CHECK_REQUEST_RX,
+     JUICE_CHECK_RESPONSE_RX, JUICE_CHECK_VALIDATION_FAILED, JUICE_CHECK_UNMATCHED,
+     JUICE_CHECK_TIMEOUT, JUICE_CHECK_NOMINATION_TX, JUICE_CHECK_NOMINATION_RX,
+-    JUICE_CHECK_SEND_FAILED, JUICE_CHECK_CREDENTIALS_MISSING
++    JUICE_CHECK_SEND_FAILED, JUICE_CHECK_CREDENTIALS_MISSING,
++    JUICE_CHECK_SOCKET_RX, JUICE_CHECK_SOCKET_RX_PEER, JUICE_CHECK_SOCKET_RX_SERVER,
++    JUICE_CHECK_SOCKET_RX_UNKNOWN, JUICE_CHECK_SOCKET_IO_FAILED,
++    JUICE_CHECK_NON_STUN_PRESELECTION, JUICE_CHECK_STUN_PARSE_FAILED,
++    JUICE_CHECK_STATE_IGNORED, JUICE_CHECK_REMOTE_ADDRESS_UNMATCHED,
++    JUICE_CHECK_STUN_SERVER_RESPONSE, JUICE_CHECK_PEER_STUN_PARSED,
++    JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MATCH, JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MISMATCH,
++    JUICE_CHECK_SEND_TARGET_MATCH, JUICE_CHECK_SEND_TARGET_MISMATCH, JUICE_CHECK_SOCKET_READY
+ } juice_check_kind_t;
+ typedef struct juice_check_event {
+     juice_check_kind_t kind;
+diff --git a/src/agent.c b/src/agent.c
+index 0e68304..fb030b7 100644
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -236,9 +236,11 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 	socket_config.port_end = agent->config.local_port_range_end;
+ 
+ 	if (conn_create(agent, &socket_config)) {
++		agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_IO_FAILED);
+ 		JLOG_FATAL("Connection creation for agent failed");
+ 		return -1;
+ 	}
++	agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_READY);
+ 
+ 	addr_record_t records[ICE_MAX_CANDIDATES_COUNT - 1];
+ 	int records_count = conn_get_addrs(agent, records, ICE_MAX_CANDIDATES_COUNT - 1);
+@@ -287,6 +289,12 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 		}
+ 
+ 		JLOG_DEBUG("Gathered host candidate: %s", buffer);
++		// Compare only locally. Never export addresses, ports, or an enumerable address hash.
++		bool socket_match = false;
++		for (int j = 0; j < records_count; ++j)
++			if (addr_record_is_equal(&candidate->resolved, records + j, true)) socket_match = true;
++		agent_check_event(agent, NULL, socket_match ? JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MATCH
++		                                         : JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MISMATCH);
+ 
+ 		if (agent->config.cb_candidate)
+ 			agent->config.cb_candidate(agent, buffer, agent->config.user_ptr);
+@@ -687,11 +695,24 @@ int agent_conn_update(juice_agent_t *agent, timestamp_t *next_timestamp) {
+ }
+ 
+ int agent_conn_recv(juice_agent_t *agent, char *buf, size_t len, const addr_record_t *src) {
++	// Before selection include every datagram, even malformed/non-STUN input. After
++	// selection only STUN is counted: no callback/lock/logging cost per media packet.
++	if (!agent->selected_pair || is_stun_datagram(buf, len)) {
++		agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_RX);
++		agent_stun_entry_t *source = agent_find_entry_from_record(agent, src, NULL);
++		if (!source)
++			agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_RX_UNKNOWN);
++		else if (source->type == AGENT_STUN_ENTRY_TYPE_CHECK)
++			agent_check_event(agent, source, JUICE_CHECK_SOCKET_RX_PEER);
++		else
++			agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_RX_SERVER);
++	}
+ 	agent_input(agent, buf, len, src, NULL);
+ 	return 0; // ignore errors
+ }
+ 
+ int agent_conn_fail(juice_agent_t *agent) {
++	agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_IO_FAILED);
+ 	agent_change_state(agent, JUICE_STATE_FAILED);
+ 	atomic_store(&agent->selected_entry, NULL); // disallow sending
+ 	return 0;
+@@ -701,8 +722,10 @@ int agent_input(juice_agent_t *agent, char *buf, size_t len, const addr_record_t
+                 const addr_record_t *relayed) {
+ 	JLOG_VERBOSE("Received datagram, size=%d", len);
+ 
+-	if (agent->state == JUICE_STATE_DISCONNECTED || agent->state == JUICE_STATE_GATHERING)
++	if (agent->state == JUICE_STATE_DISCONNECTED || agent->state == JUICE_STATE_GATHERING) {
++		agent_check_event(agent, NULL, JUICE_CHECK_STATE_IGNORED);
+ 		return 0;
++	}
+ 
+ 	if (is_stun_datagram(buf, len)) {
+ 		if (JLOG_DEBUG_ENABLED) {
+@@ -718,12 +741,15 @@ int agent_input(juice_agent_t *agent, char *buf, size_t len, const addr_record_t
+ 		}
+ 		stun_message_t msg;
+ 		if (stun_read(buf, len, &msg) < 0) {
++			agent_check_event(agent, NULL, JUICE_CHECK_STUN_PARSE_FAILED);
+ 			JLOG_ERROR("STUN message reading failed");
+ 			return -1;
+ 		}
+ 		return agent_dispatch_stun(agent, buf, len, &msg, src, relayed);
+ 	}
+ 
++	if (!agent->selected_pair)
++		agent_check_event(agent, NULL, JUICE_CHECK_NON_STUN_PRESELECTION);
+ 	if (JLOG_DEBUG_ENABLED) {
+ 		char src_str[ADDR_MAX_STRING_LEN];
+ 		addr_record_to_string(src, src_str, ADDR_MAX_STRING_LEN);
+@@ -1195,6 +1221,7 @@ int agent_verify_credentials(juice_agent_t *agent, const agent_stun_entry_t *ent
+ int agent_dispatch_stun(juice_agent_t *agent, void *buf, size_t size, stun_message_t *msg,
+                         const addr_record_t *src, const addr_record_t *relayed) {
+ 	if (msg->msg_method == STUN_METHOD_BINDING && msg->has_integrity) {
++		agent_check_event(agent, NULL, JUICE_CHECK_PEER_STUN_PARSED);
+ 		JLOG_VERBOSE("STUN message is from the remote peer");
+ 		// Verify the message now
+ 		if (agent_verify_stun_binding(agent, buf, size, msg)) {
+@@ -1228,6 +1255,7 @@ int agent_dispatch_stun(juice_agent_t *agent, void *buf, size_t size, stun_messa
+ 		} else {
+ 			// This may happen normally, for instance when there is no space left for reflexive
+ 			// candidates
++			agent_check_event(agent, NULL, JUICE_CHECK_REMOTE_ADDRESS_UNMATCHED);
+ 			JLOG_DEBUG("No STUN entry matching remote address, ignoring");
+ 			return 0;
+ 		}
+@@ -1235,6 +1263,8 @@ int agent_dispatch_stun(juice_agent_t *agent, void *buf, size_t size, stun_messa
+ 
+ 	switch (msg->msg_method) {
+ 	case STUN_METHOD_BINDING:
++		if (entry->type == AGENT_STUN_ENTRY_TYPE_SERVER && STUN_IS_RESPONSE(msg->msg_class))
++			agent_check_event(agent, NULL, JUICE_CHECK_STUN_SERVER_RESPONSE);
+ 		// Message was verified earlier, no need to re-verify
+ 		if (entry->type == AGENT_STUN_ENTRY_TYPE_CHECK && !msg->has_integrity &&
+ 		    (msg->msg_class == STUN_CLASS_REQUEST || msg->msg_class == STUN_CLASS_RESP_SUCCESS)) {
+@@ -1620,6 +1650,12 @@ int agent_send_stun_binding(juice_agent_t *agent, agent_stun_entry_t *entry, stu
+ 		return -1;
+ 	}
+ 
++	if (entry->type == AGENT_STUN_ENTRY_TYPE_CHECK && msg_class == STUN_CLASS_REQUEST) {
++		const bool matches = entry->pair && entry->pair->remote &&
++		    addr_record_is_equal(&entry->record, &entry->pair->remote->resolved, true);
++		agent_check_event(agent, entry, matches ? JUICE_CHECK_SEND_TARGET_MATCH
++		                                       : JUICE_CHECK_SEND_TARGET_MISMATCH);
++	}
+ 	if (entry->relay_entry) {
+ 		// The datagram must be sent through the relay
+ 		JLOG_DEBUG("Sending STUN message via relay");

@@ -1,0 +1,43 @@
+{
+  "name": "redclawdesktop",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "openssl",
+    "boost-json",
+    "protobuf",
+    "zstd",
+    "gtest",
+    "spdlog",
+    "fmt",
+    "libqrencode",
+    "cppwinrt",
+    {
+      "name": "ffmpeg",
+      "features": [
+        "x264",
+        "x265",
+        "qsv",
+        "nvcodec",
+        "amf"
+      ]
+    },
+    {
+      "name": "libdatachannel",
+      "features": [
+        "srtp"
+      ]
+    }
+  ],
+  "features": {
+    "dht-backends": {
+      "description": "Build libtorrent Mainline DHT and miniupnpc port mapping support.",
+      "dependencies": [
+        {
+          "name": "libtorrent",
+          "default-features": false
+        },
+        "miniupnpc"
+      ]
+    }
+  }
+}

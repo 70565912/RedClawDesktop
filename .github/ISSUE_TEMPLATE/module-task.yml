@@ -1,0 +1,56 @@
+name: Module Task
+description: Start or track a module-scoped implementation task.
+title: "[Mxx] <task title>"
+labels: ["module-task"]
+body:
+  - type: input
+    id: module
+    attributes:
+      label: Module ID
+      placeholder: M01
+    validations:
+      required: true
+
+  - type: input
+    id: taskid
+    attributes:
+      label: Task ID
+      placeholder: M01-T01
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options:
+        - foundation
+        - implementation
+        - integration
+        - hardening
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: One clear completion objective.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Match module playbook criteria.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required Tests
+      description: List test cases and expected result.
+    validations:
+      required: true

@@ -1,0 +1,17 @@
+diff --git a/include/rtc/common.hpp b/include/rtc/common.hpp
+--- a/include/rtc/common.hpp
++++ b/include/rtc/common.hpp
+@@ -61,7 +61,12 @@
+ enum class IceCheckKind { RequestTx, ResponseTx, RequestRx, ResponseRx, ValidationFailed,
+                           Unmatched, Timeout, NominationTx, NominationRx, SendFailed,
+-                          CredentialsMissing };
++                          CredentialsMissing, SocketRx, SocketRxPeer, SocketRxServer,
++                          SocketRxUnknown, SocketIoFailed, NonStunPreselection,
++                          StunParseFailed, StateIgnored, RemoteAddressUnmatched,
++                          StunServerResponse, PeerStunParsed, LocalCandidateSocketMatch,
++                          LocalCandidateSocketMismatch, SendTargetMatch, SendTargetMismatch,
++                          SocketReady };
+ struct IceCheckEvent {
+     IceCheckKind kind;
+     int pairId, localType, remoteType;
+ };

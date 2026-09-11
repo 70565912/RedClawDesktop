@@ -1,0 +1,22 @@
+diff --git a/include/rtc/configuration.hpp b/include/rtc/configuration.hpp
+--- a/include/rtc/configuration.hpp
++++ b/include/rtc/configuration.hpp
+@@ -74,5 +74,6 @@
+ 	TransportPolicy iceTransportPolicy = TransportPolicy::All;
+ 	bool enableIceTcp = false;    // libnice only
+-	bool enableIceUdpMux = false; // libjuice only
++	bool enableIceUdpMux = false; // libjuice only
++	uint32_t initialIceCheckWindowMs = 0; // libjuice only; 0: upstream policy, max 120000
+ 	bool disableAutoNegotiation = false;
+ 	bool forceMediaTransport = false;
+diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -90,5 +90,6 @@
+ 	jconfig.cb_gathering_done = IceTransport::GatheringDoneCallback;
+ 	jconfig.cb_recv = IceTransport::RecvCallback;
+-	jconfig.user_ptr = this;
++	jconfig.user_ptr = this;
++	jconfig.initial_check_window_ms = config.initialIceCheckWindowMs;
+     jconfig.cb_check = [](juice_agent_t *, const juice_check_event_t *event, void *user) {
+         auto self = static_cast<IceTransport *>(user);

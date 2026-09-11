@@ -1,0 +1,13 @@
+name: Module Status Hint
+
+on:
+  pull_request:
+
+jobs:
+  hint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reminder
+        run: |
+          echo "Ensure docs/logs/DEVLOG.md and docs/runtime/MODULE_KANBAN.md are updated for module tasks."

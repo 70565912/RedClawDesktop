@@ -1,0 +1,66 @@
+
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vcpkg-base",
+      "hidden": true,
+      "environment": {
+        "VCPKG_MAX_CONCURRENCY": "2",
+        "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+      },
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$penv{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "vs2022-x64",
+      "displayName": "Visual Studio 2022 x64",
+      "description": "Configure with Visual Studio 2022 generator using system MSVC toolchain.",
+      "inherits": ["vcpkg-base"],
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022-x64",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "cacheVariables": {
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/vs2022-x64/vcpkg_installed"
+      }
+    },
+    {
+      "name": "ninja-multi-x64",
+      "displayName": "Ninja Multi-Config x64",
+      "description": "Configure with Ninja Multi-Config using the active MSVC developer environment.",
+      "inherits": ["vcpkg-base"],
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build/ninja-x64",
+      "cacheVariables": {
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/ninja-x64/vcpkg_installed"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "displayName": "Build Debug (VS2022)",
+      "description": "Build Debug configuration using vs2022-x64 configure preset.",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "displayName": "Build Release (VS2022)",
+      "description": "Build Release configuration using vs2022-x64 configure preset.",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Release"
+    }
+  ]
+}

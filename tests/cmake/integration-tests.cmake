@@ -1,0 +1,411 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_privileged_input_gate_integration_tests
+  integration/privileged_input_gate_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_privileged_input_gate_integration_tests PRIVATE
+  redclaw_service
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_privileged_input_gate_integration_tests)
+
+add_test(
+  NAME redclaw_privileged_input_gate_integration_tests
+  COMMAND redclaw_privileged_input_gate_integration_tests
+)
+
+add_executable(redclaw_privileged_runtime_input_routing_integration_tests
+  integration/privileged_runtime_input_routing_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_privileged_runtime_input_routing_integration_tests PRIVATE
+  redclaw_service
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_privileged_runtime_input_routing_integration_tests)
+
+add_test(
+  NAME redclaw_privileged_runtime_input_routing_integration_tests
+  COMMAND redclaw_privileged_runtime_input_routing_integration_tests
+)
+
+add_executable(redclaw_service_session_event_source_integration_tests
+  integration/service_session_event_source_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_service_session_event_source_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_service_session_event_source_integration_tests)
+
+add_test(
+  NAME redclaw_service_session_event_source_integration_tests
+  COMMAND redclaw_service_session_event_source_integration_tests
+)
+
+add_executable(redclaw_m07_runtime_signal_producer_integration_tests
+  integration/m07_runtime_signal_producer_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_runtime_signal_producer_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_m07_runtime_signal_producer_integration_tests)
+
+add_test(
+  NAME redclaw_m07_runtime_signal_producer_integration_tests
+  COMMAND redclaw_m07_runtime_signal_producer_integration_tests
+)
+
+add_executable(redclaw_sealed_file_signaling_integration_tests
+  integration/sealed_file_signaling_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_sealed_file_signaling_integration_tests PRIVATE
+  redclaw_protocol
+)
+
+redclaw_apply_warnings(redclaw_sealed_file_signaling_integration_tests)
+
+add_test(
+  NAME redclaw_sealed_file_signaling_integration_tests
+  COMMAND redclaw_sealed_file_signaling_integration_tests
+)
+
+add_executable(redclaw_m07_uac_prompt_runtime_coordinator_integration_tests
+  integration/m07_uac_prompt_runtime_coordinator_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_uac_prompt_runtime_coordinator_integration_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_uac_prompt_runtime_coordinator_integration_tests)
+
+add_test(
+  NAME redclaw_m07_uac_prompt_runtime_coordinator_integration_tests
+  COMMAND redclaw_m07_uac_prompt_runtime_coordinator_integration_tests
+)
+
+add_executable(redclaw_m07_windows_uac_prompt_source_integration_tests
+  integration/m07_windows_uac_prompt_source_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_windows_uac_prompt_source_integration_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_windows_uac_prompt_source_integration_tests)
+
+add_test(
+  NAME redclaw_m07_windows_uac_prompt_source_integration_tests
+  COMMAND redclaw_m07_windows_uac_prompt_source_integration_tests
+)
+
+add_executable(redclaw_m07_uac_consent_signal_producer_integration_tests
+  integration/m07_uac_consent_signal_producer_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_uac_consent_signal_producer_integration_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_uac_consent_signal_producer_integration_tests)
+
+add_test(
+  NAME redclaw_m07_uac_consent_signal_producer_integration_tests
+  COMMAND redclaw_m07_uac_consent_signal_producer_integration_tests
+)
+
+add_executable(redclaw_m07_controller_harness_cli
+  integration/m07_controller_harness_cli.cpp
+)
+
+target_link_libraries(redclaw_m07_controller_harness_cli PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_controller_harness_cli)
+
+add_executable(redclaw_m07_host_prompt_trigger_helper
+  integration/m07_host_prompt_trigger_helper.cpp
+)
+
+target_link_libraries(redclaw_m07_host_prompt_trigger_helper PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_host_prompt_trigger_helper)
+
+add_executable(redclaw_m07_dual_machine_probe_a
+  integration/m07_dual_machine_probe_a.cpp
+)
+
+target_link_libraries(redclaw_m07_dual_machine_probe_a PRIVATE
+  ws2_32
+)
+
+redclaw_apply_warnings(redclaw_m07_dual_machine_probe_a)
+
+add_executable(redclaw_m07_dual_machine_probe_b
+  integration/m07_dual_machine_probe_b.cpp
+)
+
+target_link_libraries(redclaw_m07_dual_machine_probe_b PRIVATE
+  ws2_32
+)
+
+redclaw_apply_warnings(redclaw_m07_dual_machine_probe_b)
+
+add_executable(redclaw_m07_session_uac_consent_ingress_router_integration_tests
+  integration/m07_session_uac_consent_ingress_router_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_session_uac_consent_ingress_router_integration_tests PRIVATE
+  redclaw_protocol
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_session_uac_consent_ingress_router_integration_tests)
+
+add_test(
+  NAME redclaw_m07_session_uac_consent_ingress_router_integration_tests
+  COMMAND redclaw_m07_session_uac_consent_ingress_router_integration_tests
+)
+
+add_executable(redclaw_m07_boot_startup_validation_integration_tests
+  integration/m07_boot_startup_validation_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_boot_startup_validation_integration_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_m07_boot_startup_validation_integration_tests)
+
+add_test(
+  NAME redclaw_m07_boot_startup_validation_integration_tests
+  COMMAND redclaw_m07_boot_startup_validation_integration_tests
+)
+
+add_executable(redclaw_m07_handoff_orchestration_integration_tests
+  integration/m07_handoff_orchestration_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_handoff_orchestration_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_handoff_orchestration_integration_tests)
+
+add_test(
+  NAME redclaw_m07_handoff_orchestration_integration_tests
+  COMMAND redclaw_m07_handoff_orchestration_integration_tests
+)
+
+add_executable(redclaw_m07_handoff_integration_e2e_tests
+  integration/m07_handoff_integration_e2e_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_handoff_integration_e2e_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_handoff_integration_e2e_tests)
+
+add_test(
+  NAME redclaw_m07_handoff_integration_e2e_tests
+  COMMAND redclaw_m07_handoff_integration_e2e_tests
+)
+
+add_executable(redclaw_m07_helper_crash_recovery_integration_tests
+  integration/m07_helper_crash_recovery_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_helper_crash_recovery_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_helper_crash_recovery_integration_tests)
+
+add_test(
+  NAME redclaw_m07_helper_crash_recovery_integration_tests
+  COMMAND redclaw_m07_helper_crash_recovery_integration_tests
+)
+
+add_executable(redclaw_m07_logout_fallback_integration_tests
+  integration/m07_logout_fallback_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_logout_fallback_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_logout_fallback_integration_tests)
+
+add_test(
+  NAME redclaw_m07_logout_fallback_integration_tests
+  COMMAND redclaw_m07_logout_fallback_integration_tests
+)
+
+add_executable(redclaw_m07_security_boundary_validation_integration_tests
+  integration/m07_security_boundary_validation_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m07_security_boundary_validation_integration_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_m07_security_boundary_validation_integration_tests)
+
+add_test(
+  NAME redclaw_m07_security_boundary_validation_integration_tests
+  COMMAND redclaw_m07_security_boundary_validation_integration_tests
+)
+
+add_executable(redclaw_handshake_replay_integration_tests
+  integration/handshake_replay_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_handshake_replay_integration_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_handshake_replay_integration_tests)
+
+add_test(
+  NAME redclaw_handshake_replay_integration_tests
+  COMMAND redclaw_handshake_replay_integration_tests
+)
+
+add_executable(redclaw_fingerprint_policy_refresh_integration_tests
+  integration/fingerprint_policy_refresh_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_fingerprint_policy_refresh_integration_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_fingerprint_policy_refresh_integration_tests)
+
+add_test(
+  NAME redclaw_fingerprint_policy_refresh_integration_tests
+  COMMAND redclaw_fingerprint_policy_refresh_integration_tests
+)
+
+add_executable(redclaw_session_network_flap_recovery_integration_tests
+  integration/session_network_flap_recovery_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_session_network_flap_recovery_integration_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_network_flap_recovery_integration_tests)
+
+add_test(
+  NAME redclaw_session_network_flap_recovery_integration_tests
+  COMMAND redclaw_session_network_flap_recovery_integration_tests
+)
+
+add_executable(redclaw_session_network_flap_chaos_hardening_tests
+  integration/session_network_flap_chaos_hardening_tests.cpp
+)
+
+target_link_libraries(redclaw_session_network_flap_chaos_hardening_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_network_flap_chaos_hardening_tests)
+
+add_test(
+  NAME redclaw_session_network_flap_chaos_hardening_tests
+  COMMAND redclaw_session_network_flap_chaos_hardening_tests
+)
+
+add_executable(redclaw_m05_resolution_switch_integration_tests
+  integration/m05_resolution_switch_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_m05_resolution_switch_integration_tests PRIVATE
+  redclaw_capture
+  redclaw_render
+)
+
+redclaw_apply_warnings(redclaw_m05_resolution_switch_integration_tests)
+
+add_test(
+  NAME redclaw_m05_resolution_switch_integration_tests
+  COMMAND redclaw_m05_resolution_switch_integration_tests
+)
+
+add_executable(redclaw_ffmpeg_roundtrip_integration_tests
+  integration/ffmpeg_roundtrip_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_ffmpeg_roundtrip_integration_tests PRIVATE
+  redclaw_capture
+  redclaw_render
+  GTest::gtest
+  GTest::gtest_main
+)
+
+if(WIN32)
+  target_link_libraries(redclaw_ffmpeg_roundtrip_integration_tests PRIVATE redclaw_helper d3d11 dxguid)
+endif()
+
+redclaw_apply_warnings(redclaw_ffmpeg_roundtrip_integration_tests)
+
+add_test(
+  NAME redclaw_ffmpeg_roundtrip_integration_tests
+  COMMAND redclaw_ffmpeg_roundtrip_integration_tests
+)
+
+add_executable(redclaw_desktop_stream_simulation_integration_tests
+  integration/desktop_stream_simulation_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_desktop_stream_simulation_integration_tests PRIVATE
+  redclaw_net
+  redclaw_protocol
+  redclaw_session
+  redclaw_service
+  GTest::gtest_main
+)
+
+redclaw_apply_warnings(redclaw_desktop_stream_simulation_integration_tests)
+
+add_test(
+  NAME redclaw_desktop_stream_simulation_integration_tests
+  COMMAND redclaw_desktop_stream_simulation_integration_tests
+)
+
+add_executable(redclaw_support_bundle_generation_integration_tests
+  integration/support_bundle_generation_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_support_bundle_generation_integration_tests PRIVATE
+  redclaw_diag
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_support_bundle_generation_integration_tests)
+
+add_test(
+  NAME redclaw_support_bundle_generation_integration_tests
+  COMMAND redclaw_support_bundle_generation_integration_tests
+)

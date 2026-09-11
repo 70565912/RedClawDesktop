@@ -1,0 +1,167 @@
+diff --git a/include/rtc/peerconnection.hpp b/include/rtc/peerconnection.hpp
+--- a/include/rtc/peerconnection.hpp
++++ b/include/rtc/peerconnection.hpp
+@@ -107,7 +107,8 @@
+ 	void onLocalDescription(std::function<void(Description description)> callback);
+ 	void onLocalCandidate(std::function<void(Candidate candidate)> callback);
+ 	void onStateChange(std::function<void(State state)> callback);
+-	void onIceStateChange(std::function<void(IceState state)> callback);
++	void onIceStateChange(std::function<void(IceState state)> callback);
++	void onIceCheck(std::function<void(IceCheckEvent)> callback);
+ 	void onGatheringStateChange(std::function<void(GatheringState state)> callback);
+ 	void onSignalingStateChange(std::function<void(SignalingState state)> callback);
+ 
+diff --git a/src/peerconnection.cpp b/src/peerconnection.cpp
+--- a/src/peerconnection.cpp
++++ b/src/peerconnection.cpp
+@@ -315,7 +315,11 @@
+ 	impl()->stateChangeCallback = callback;
+ }
+ 
+-void PeerConnection::onIceStateChange(std::function<void(IceState state)> callback) {
++void PeerConnection::onIceCheck(std::function<void(IceCheckEvent)> callback) {
++    impl()->iceCheckCallback = std::move(callback);
++}
++
++void PeerConnection::onIceStateChange(std::function<void(IceState state)> callback) {
+ 	impl()->iceStateChangeCallback = callback;
+ }
+ 
+diff --git a/src/impl/peerconnection.hpp b/src/impl/peerconnection.hpp
+--- a/src/impl/peerconnection.hpp
++++ b/src/impl/peerconnection.hpp
+@@ -121,7 +121,8 @@
+ 	synchronized_callback<Description> localDescriptionCallback;
+ 	synchronized_callback<Candidate> localCandidateCallback;
+ 	synchronized_callback<State> stateChangeCallback;
+-	synchronized_callback<IceState> iceStateChangeCallback;
++	synchronized_callback<IceState> iceStateChangeCallback;
++	synchronized_callback<IceCheckEvent> iceCheckCallback;
+ 	synchronized_callback<GatheringState> gatheringStateChangeCallback;
+ 	synchronized_callback<SignalingState> signalingStateChangeCallback;
+ 	synchronized_callback<shared_ptr<rtc::Track>> trackCallback;
+diff --git a/src/impl/peerconnection.cpp b/src/impl/peerconnection.cpp
+--- a/src/impl/peerconnection.cpp
++++ b/src/impl/peerconnection.cpp
+@@ -193,9 +193,11 @@
+ 				    // Ignore
+ 				    break;
+ 			    }
+-		    });
+-
+-		return emplaceTransport(this, &mIceTransport, std::move(transport));
++		    }, [weak_this = weak_from_this()](IceCheckEvent event) {
++                if (auto self = weak_this.lock()) self->iceCheckCallback(event);
++            });
++
++		return emplaceTransport(this, &mIceTransport, std::move(transport));
+ 
+ 	} catch (const std::exception &e) {
+ 		PLOG_ERROR << e.what();
+@@ -1238,7 +1240,8 @@
+ 	localDescriptionCallback = nullptr;
+ 	localCandidateCallback = nullptr;
+ 	stateChangeCallback = nullptr;
+-	iceStateChangeCallback = nullptr;
++	iceStateChangeCallback = nullptr;
++	iceCheckCallback = nullptr;
+ 	gatheringStateChangeCallback = nullptr;
+ 	signalingStateChangeCallback = nullptr;
+ 	trackCallback = nullptr;
+diff --git a/src/impl/icetransport.hpp b/src/impl/icetransport.hpp
+--- a/src/impl/icetransport.hpp
++++ b/src/impl/icetransport.hpp
+@@ -42,7 +42,8 @@
+ 
+ 	IceTransport(const Configuration &config, candidate_callback candidateCallback,
+ 	             state_callback stateChangeCallback,
+-	             gathering_state_callback gatheringStateChangeCallback);
++	             gathering_state_callback gatheringStateChangeCallback,
++                 std::function<void(IceCheckEvent)> checkCallback);
+ 	~IceTransport();
+ 
+ 	Description::Role role() const;
+@@ -75,7 +76,8 @@
+ 	std::atomic<GatheringState> mGatheringState;
+ 
+ 	candidate_callback mCandidateCallback;
+-	gathering_state_callback mGatheringStateChangeCallback;
++	gathering_state_callback mGatheringStateChangeCallback;
++	std::function<void(IceCheckEvent)> mCheckCallback;
+ 
+ #if !USE_NICE
+ 	unique_ptr<juice_agent_t, void (*)(juice_agent_t *)> mAgent;
+diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -47,11 +47,13 @@
+ 
+ IceTransport::IceTransport(const Configuration &config, candidate_callback candidateCallback,
+                            state_callback stateChangeCallback,
+-                           gathering_state_callback gatheringStateChangeCallback)
++                           gathering_state_callback gatheringStateChangeCallback,
++                           std::function<void(IceCheckEvent)> checkCallback)
+     : Transport(nullptr, std::move(stateChangeCallback)), mRole(Description::Role::ActPass),
+       mMid("0"), mGatheringState(GatheringState::New),
+       mCandidateCallback(std::move(candidateCallback)),
+-      mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
++      mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
++      mCheckCallback(std::move(checkCallback)),
+       mAgent(nullptr, nullptr) {
+ 
+ 	PLOG_DEBUG << "Initializing ICE transport (libjuice)";
+@@ -87,7 +89,16 @@
+ 	jconfig.cb_candidate = IceTransport::CandidateCallback;
+ 	jconfig.cb_gathering_done = IceTransport::GatheringDoneCallback;
+ 	jconfig.cb_recv = IceTransport::RecvCallback;
+-	jconfig.user_ptr = this;
++	jconfig.user_ptr = this;
++    jconfig.cb_check = [](juice_agent_t *, const juice_check_event_t *event, void *user) {
++        auto self = static_cast<IceTransport *>(user);
++        if (self->mCheckCallback) {
++            try {
++                self->mCheckCallback({static_cast<IceCheckKind>(event->kind),
++                                     event->pair_id, event->local_type, event->remote_type});
++            } catch (...) { /* Never propagate C++ exceptions across the C callback boundary. */ }
++        }
++    };
+ 
+ 	if (config.enableIceTcp) {
+ 		PLOG_WARNING << "ICE-TCP is not supported with libjuice";
+@@ -398,11 +409,13 @@
+ 
+ IceTransport::IceTransport(const Configuration &config, candidate_callback candidateCallback,
+                            state_callback stateChangeCallback,
+-                           gathering_state_callback gatheringStateChangeCallback)
++                           gathering_state_callback gatheringStateChangeCallback,
++                           std::function<void(IceCheckEvent)> checkCallback)
+     : Transport(nullptr, std::move(stateChangeCallback)), mRole(Description::Role::ActPass),
+       mMid("0"), mGatheringState(GatheringState::New),
+       mCandidateCallback(std::move(candidateCallback)),
+-      mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
++      mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
++      mCheckCallback(std::move(checkCallback)),
+       mNiceAgent(nullptr, nullptr), mOutgoingDscp(0) {
+ 
+ 	PLOG_DEBUG << "Initializing ICE transport (libnice)";
+diff --git a/include/rtc/common.hpp b/include/rtc/common.hpp
+--- a/include/rtc/common.hpp
++++ b/include/rtc/common.hpp
+@@ -54,7 +54,16 @@
+ #include <variant>
+ #include <vector>
+ 
+-namespace rtc {
++namespace rtc {
++
++// RedClaw diagnostic ABI 1. No addresses, SDP, credentials or native text.
++enum class IceCheckKind { RequestTx, ResponseTx, RequestRx, ResponseRx, ValidationFailed,
++                          Unmatched, Timeout, NominationTx, NominationRx, SendFailed,
++                          CredentialsMissing };
++struct IceCheckEvent {
++    IceCheckKind kind;
++    int pairId, localType, remoteType;
++};
+ 
+ using std::byte;
+ using std::nullopt;

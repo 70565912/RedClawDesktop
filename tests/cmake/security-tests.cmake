@@ -1,0 +1,45 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_security_replay_guard_tests
+  security/replay_guard_tests.cpp
+)
+
+target_link_libraries(redclaw_security_replay_guard_tests PRIVATE
+  redclaw_security
+)
+
+redclaw_apply_warnings(redclaw_security_replay_guard_tests)
+
+add_test(
+  NAME redclaw_security_replay_guard_tests
+  COMMAND redclaw_security_replay_guard_tests
+)
+
+add_executable(redclaw_security_peer_fingerprint_verifier_tests
+  security/peer_fingerprint_verifier_tests.cpp
+)
+
+target_link_libraries(redclaw_security_peer_fingerprint_verifier_tests PRIVATE
+  redclaw_security
+)
+
+redclaw_apply_warnings(redclaw_security_peer_fingerprint_verifier_tests)
+
+add_test(
+  NAME redclaw_security_peer_fingerprint_verifier_tests
+  COMMAND redclaw_security_peer_fingerprint_verifier_tests
+)
+
+add_executable(redclaw_security_peer_fingerprint_store_tests
+  security/peer_fingerprint_store_tests.cpp
+)
+
+target_link_libraries(redclaw_security_peer_fingerprint_store_tests PRIVATE
+  redclaw_security
+)
+
+redclaw_apply_warnings(redclaw_security_peer_fingerprint_store_tests)
+
+add_test(
+  NAME redclaw_security_peer_fingerprint_store_tests
+  COMMAND redclaw_security_peer_fingerprint_store_tests
+)

@@ -1,0 +1,193 @@
+diff --git a/include/juice/juice.h b/include/juice/juice.h
+index 9ebf22a..5b4fa59 100644
+--- a/include/juice/juice.h
++++ b/include/juice/juice.h
+@@ -88,7 +88,9 @@ typedef enum juice_check_kind {
+     JUICE_CHECK_STATE_IGNORED, JUICE_CHECK_REMOTE_ADDRESS_UNMATCHED,
+     JUICE_CHECK_STUN_SERVER_RESPONSE, JUICE_CHECK_PEER_STUN_PARSED,
+     JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MATCH, JUICE_CHECK_LOCAL_CANDIDATE_SOCKET_MISMATCH,
+-    JUICE_CHECK_SEND_TARGET_MATCH, JUICE_CHECK_SEND_TARGET_MISMATCH, JUICE_CHECK_SOCKET_READY
++    JUICE_CHECK_SEND_TARGET_MATCH, JUICE_CHECK_SEND_TARGET_MISMATCH, JUICE_CHECK_SOCKET_READY,
++    JUICE_CHECK_UDP_IGNORED_CONNRESET, JUICE_CHECK_UDP_IGNORED_NETRESET,
++    JUICE_CHECK_UDP_IGNORED_CONNREFUSED, JUICE_CHECK_UDP_ERROR_OBSERVATION_READY
+ } juice_check_kind_t;
+ typedef struct juice_check_event {
+     juice_check_kind_t kind;
+diff --git a/src/agent.c b/src/agent.c
+index fb030b7..682cc90 100644
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -241,6 +241,9 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 		return -1;
+ 	}
+ 	agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_READY);
++    // Shared mux errors cannot be attributed to an individual agent.
++    if (agent->config.concurrency_mode != JUICE_CONCURRENCY_MODE_MUX)
++        agent_check_event(agent, NULL, JUICE_CHECK_UDP_ERROR_OBSERVATION_READY);
+ 
+ 	addr_record_t records[ICE_MAX_CANDIDATES_COUNT - 1];
+ 	int records_count = conn_get_addrs(agent, records, ICE_MAX_CANDIDATES_COUNT - 1);
+@@ -711,6 +714,17 @@ int agent_conn_recv(juice_agent_t *agent, char *buf, size_t len, const addr_reco
+ 	return 0; // ignore errors
+ }
+ 
++void agent_observe_udp_error(int error, void *user) {
++    juice_agent_t *agent = (juice_agent_t *)user;
++    if (agent->selected_pair) return; // no extra established-media hot-path work
++    if (error == SECONNRESET)
++        agent_check_event(agent, NULL, JUICE_CHECK_UDP_IGNORED_CONNRESET);
++    else if (error == SENETRESET)
++        agent_check_event(agent, NULL, JUICE_CHECK_UDP_IGNORED_NETRESET);
++    else if (error == SECONNREFUSED)
++        agent_check_event(agent, NULL, JUICE_CHECK_UDP_IGNORED_CONNREFUSED);
++}
++
+ int agent_conn_fail(juice_agent_t *agent) {
+ 	agent_check_event(agent, NULL, JUICE_CHECK_SOCKET_IO_FAILED);
+ 	agent_change_state(agent, JUICE_STATE_FAILED);
+diff --git a/src/agent.h b/src/agent.h
+index b281503..4b3915e 100644
+--- a/src/agent.h
++++ b/src/agent.h
+@@ -172,6 +172,7 @@ int agent_get_selected_candidate_pair(juice_agent_t *agent, ice_candidate_t *loc
+                                       ice_candidate_t *remote);
+ 
+ int agent_conn_recv(juice_agent_t *agent, char *buf, size_t len, const addr_record_t *src);
++void agent_observe_udp_error(int error, void *user);
+ int agent_conn_update(juice_agent_t *agent, timestamp_t *next_timestamp);
+ int agent_conn_fail(juice_agent_t *agent);
+ 
+diff --git a/src/conn_poll.c b/src/conn_poll.c
+index be3377c..3752b39 100644
+--- a/src/conn_poll.c
++++ b/src/conn_poll.c
+@@ -46,7 +46,7 @@ typedef struct pfds_record {
+ 
+ int conn_poll_prepare(conn_registry_t *registry, pfds_record_t *pfds, timestamp_t *next_timestamp);
+ int conn_poll_process(conn_registry_t *registry, pfds_record_t *pfds);
+-int conn_poll_recv(socket_t sock, char *buffer, size_t size, addr_record_t *src);
++int conn_poll_recv(juice_agent_t *agent, socket_t sock, char *buffer, size_t size, addr_record_t *src);
+ int conn_poll_run(conn_registry_t *registry);
+ 
+ static thread_return_t THREAD_CALL conn_thread_entry(void *arg) {
+@@ -187,10 +187,10 @@ error:
+ 	return -1;
+ }
+ 
+-int conn_poll_recv(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
++int conn_poll_recv(juice_agent_t *agent, socket_t sock, char *buffer, size_t size, addr_record_t *src) {
+ 	JLOG_VERBOSE("Receiving datagram");
+ 	int len;
+-	while ((len = udp_recvfrom(sock, buffer, size, src)) == 0) {
++	while ((len = udp_recvfrom_observed(sock, buffer, size, src, agent_observe_udp_error, agent)) == 0) {
+ 		// Empty datagram, ignore
+ 	}
+ 
+@@ -251,7 +251,7 @@ int conn_poll_process(conn_registry_t *registry, pfds_record_t *pfds) {
+ 			int ret = 0;
+ 			int left = 1000; // limit for fairness between sockets
+ 			while (left-- &&
+-			       (ret = conn_poll_recv(conn_impl->sock, buffer, BUFFER_SIZE, &src)) > 0) {
++			       (ret = conn_poll_recv(agent, conn_impl->sock, buffer, BUFFER_SIZE, &src)) > 0) {
+ 				if (agent_conn_recv(agent, buffer, (size_t)ret, &src) != 0) {
+ 					JLOG_WARN("Agent receive failed");
+ 					conn_impl->state = CONN_STATE_FINISHED;
+diff --git a/src/conn_thread.c b/src/conn_thread.c
+index 00c49b0..8962c33 100644
+--- a/src/conn_thread.c
++++ b/src/conn_thread.c
+@@ -31,7 +31,7 @@ typedef struct conn_impl {
+ int conn_thread_run(juice_agent_t *agent);
+ int conn_thread_prepare(juice_agent_t *agent, struct pollfd *pfd, timestamp_t *next_timestamp);
+ int conn_thread_process(juice_agent_t *agent, struct pollfd *pfd);
+-int conn_thread_recv(socket_t sock, char *buffer, size_t size, addr_record_t *src);
++int conn_thread_recv(juice_agent_t *agent, socket_t sock, char *buffer, size_t size, addr_record_t *src);
+ 
+ static thread_return_t THREAD_CALL conn_thread_entry(void *arg) {
+ 	thread_set_name_self("juice agent");
+@@ -76,7 +76,7 @@ int conn_thread_process(juice_agent_t *agent, struct pollfd *pfd) {
+ 		char buffer[BUFFER_SIZE];
+ 		addr_record_t src;
+ 		int ret;
+-		while ((ret = conn_thread_recv(conn_impl->sock, buffer, BUFFER_SIZE, &src)) > 0) {
++		while ((ret = conn_thread_recv(agent, conn_impl->sock, buffer, BUFFER_SIZE, &src)) > 0) {
+ 			if (agent_conn_recv(agent, buffer, (size_t)ret, &src) != 0) {
+ 				JLOG_WARN("Agent receive failed");
+ 				mutex_unlock(&conn_impl->mutex);
+@@ -108,10 +108,10 @@ int conn_thread_process(juice_agent_t *agent, struct pollfd *pfd) {
+ 	return 0;
+ }
+ 
+-int conn_thread_recv(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
++int conn_thread_recv(juice_agent_t *agent, socket_t sock, char *buffer, size_t size, addr_record_t *src) {
+ 	JLOG_VERBOSE("Receiving datagram");
+ 	int len;
+-	while ((len = udp_recvfrom(sock, buffer, size, src)) == 0) {
++	while ((len = udp_recvfrom_observed(sock, buffer, size, src, agent_observe_udp_error, agent)) == 0) {
+ 		// Empty datagram (used to interrupt)
+ 	}
+ 
+@@ -276,4 +276,3 @@ int conn_thread_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t s
+ 
+ 	return udp_get_addrs(conn_impl->sock, records, size);
+ }
+-
+diff --git a/src/udp.c b/src/udp.c
+index 7c7582e..e3f0885 100644
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -179,6 +179,12 @@ error:
+ }
+ 
+ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
++    return udp_recvfrom_observed(sock, buffer, size, src, NULL, NULL);
++}
++
++int udp_recvfrom_observed(socket_t sock, char *buffer, size_t size, addr_record_t *src,
++                          udp_ignored_error_cb callback, void *user) {
++    unsigned ignored = 0;
+ 	while (true) {
+ 		src->len = sizeof(src->addr);
+ 		int len =
+@@ -188,14 +194,25 @@ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
+ 
+ 		} else if (sockerrno == SECONNRESET || sockerrno == SENETRESET ||
+ 		           sockerrno == SECONNREFUSED) {
++            const int ignored_error = sockerrno;
++            if (callback) callback(ignored_error, user);
+ 			// On Windows, if a UDP socket receives an ICMP port unreachable response after
+ 			// sending a datagram, this error is stored, and the next call to recvfrom() returns
+ 			// WSAECONNRESET (port unreachable) or WSAENETRESET (TTL expired).
+ 			// Therefore, it may be ignored.
+ 			JLOG_DEBUG("Ignoring %s returned by recvfrom",
+-			           sockerrno == SECONNRESET
++			           ignored_error == SECONNRESET
+ 			               ? "ECONNRESET"
+-			               : (sockerrno == SENETRESET ? "ENETRESET" : "ECONNREFUSED"));
++			               : (ignored_error == SENETRESET ? "ENETRESET" : "ECONNREFUSED"));
++            // Bound one receive turn even if asynchronous errors keep arriving.
++            if (++ignored == 64) {
++#ifdef _WIN32
++                WSASetLastError(SEWOULDBLOCK);
++#else
++                errno = SEWOULDBLOCK;
++#endif
++                return -1;
++            }
+ 			continue;
+ 		}
+ 		return len;
+diff --git a/src/udp.h b/src/udp.h
+index c318eec..f34babc 100644
+--- a/src/udp.h
++++ b/src/udp.h
+@@ -22,6 +22,9 @@ typedef struct udp_socket_config {
+ 
+ socket_t udp_create_socket(const udp_socket_config_t *config);
+ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src);
++typedef void (*udp_ignored_error_cb)(int error, void *user);
++int udp_recvfrom_observed(socket_t sock, char *buffer, size_t size, addr_record_t *src,
++                          udp_ignored_error_cb callback, void *user);
+ int udp_sendto(socket_t sock, const char *data, size_t size, const addr_record_t *dst);
+ int udp_sendto_self(socket_t sock, const char *data, size_t size);
+ int udp_set_diffserv(socket_t sock, int ds);
