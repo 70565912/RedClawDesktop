@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="RedClaw Desktop Host"
+    Manufacturer="RedClaw"
+    Version="0.1.0"
+    UpgradeCode="A9D63F10-1A67-4F27-A5A1-4E3577A74887"
+    InstallerVersion="500"
+    Compressed="yes"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of RedClaw Desktop Host is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="RedClaw">
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="cgHostRuntimePayload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.RuntimePublishDirectory)\*">
+        <Exclude Files="$(var.RuntimePublishDirectory)\*.pdb" />
+        <Exclude Files="$(var.RuntimePublishDirectory)\redclaw_desktop.exe" />
+        <Exclude Files="$(var.RuntimePublishDirectory)\redclaw_host_service.exe" />
+        <Exclude Files="$(var.RuntimePublishDirectory)\redclaw_rendezvous_service.exe" />
+        <Exclude Files="$(var.RuntimePublishDirectory)\Qt6*.dll" />
+      </Files>
+    </ComponentGroup>
+
+    <ComponentGroup Id="cgHostServiceBinary" Directory="INSTALLFOLDER">
+        <Component Id="cmpHostServiceBinary" Guid="8A6A52A7-0FBF-4D93-A389-8CA34A4EE8C0">
+          <File
+            Id="filHostServiceBinary"
+            Source="$(var.HostServiceBinaryPath)"
+            KeyPath="yes" />
+
+          <ServiceInstall
+            Id="svcInstallRedClawHost"
+            Name="RedClawHostService"
+            DisplayName="RedClaw Host Service"
+            Description="Provides unattended RedClaw remote host connectivity."
+            Start="auto"
+            Type="ownProcess"
+            ErrorControl="normal"
+            Account="LocalSystem"
+            Vital="yes" />
+
+          <ServiceControl
+            Id="svcControlRedClawHost"
+            Name="RedClawHostService"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+        </Component>
+    </ComponentGroup>
+
+    <Feature Id="ProductFeature" Title="RedClaw Desktop Host" Level="1">
+      <ComponentGroupRef Id="cgHostRuntimePayload" />
+      <ComponentGroupRef Id="cgHostServiceBinary" />
+    </Feature>
+  </Package>
+</Wix>

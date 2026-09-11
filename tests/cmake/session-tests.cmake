@@ -1,0 +1,115 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_session_privileged_input_runtime_orchestrator_tests
+  session/privileged_input_runtime_orchestrator_tests.cpp
+)
+
+target_link_libraries(redclaw_session_privileged_input_runtime_orchestrator_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_privileged_input_runtime_orchestrator_tests)
+
+add_test(
+  NAME redclaw_session_privileged_input_runtime_orchestrator_tests
+  COMMAND redclaw_session_privileged_input_runtime_orchestrator_tests
+)
+
+add_executable(redclaw_session_host_session_lifecycle_dispatcher_tests
+  session/host_session_lifecycle_dispatcher_tests.cpp
+)
+
+target_link_libraries(redclaw_session_host_session_lifecycle_dispatcher_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_host_session_lifecycle_dispatcher_tests)
+
+add_test(
+  NAME redclaw_session_host_session_lifecycle_dispatcher_tests
+  COMMAND redclaw_session_host_session_lifecycle_dispatcher_tests
+)
+
+add_executable(redclaw_session_state_transition_matrix_tests
+  session/session_state_transition_matrix_tests.cpp
+)
+
+target_link_libraries(redclaw_session_state_transition_matrix_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_state_transition_matrix_tests)
+
+add_test(
+  NAME redclaw_session_state_transition_matrix_tests
+  COMMAND redclaw_session_state_transition_matrix_tests
+)
+
+add_executable(redclaw_session_handoff_state_machine_tests
+  session/session_handoff_state_machine_tests.cpp
+)
+
+target_link_libraries(redclaw_session_handoff_state_machine_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_handoff_state_machine_tests)
+
+add_test(
+  NAME redclaw_session_handoff_state_machine_tests
+  COMMAND redclaw_session_handoff_state_machine_tests
+)
+
+add_executable(redclaw_session_recovery_orchestrator_tests
+  session/session_recovery_orchestrator_tests.cpp
+)
+
+target_link_libraries(redclaw_session_recovery_orchestrator_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_recovery_orchestrator_tests)
+
+add_test(
+  NAME redclaw_session_recovery_orchestrator_tests
+  COMMAND redclaw_session_recovery_orchestrator_tests
+)
+
+add_executable(redclaw_session_desktop_source_activity_tests
+  session/desktop_source_activity_tests.cpp
+)
+
+target_link_libraries(redclaw_session_desktop_source_activity_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_desktop_source_activity_tests)
+
+add_test(
+  NAME redclaw_session_desktop_source_activity_tests
+  COMMAND redclaw_session_desktop_source_activity_tests
+)
+
+add_executable(redclaw_session_illegal_transition_stress_tests
+  session/session_illegal_transition_stress_tests.cpp
+)
+
+target_link_libraries(redclaw_session_illegal_transition_stress_tests PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_illegal_transition_stress_tests)
+
+add_test(
+  NAME redclaw_session_illegal_transition_stress_tests
+  COMMAND redclaw_session_illegal_transition_stress_tests
+)
+
+add_executable(redclaw_session_recovery_chaos_runner
+  session/session_recovery_chaos_runner.cpp
+)
+
+target_link_libraries(redclaw_session_recovery_chaos_runner PRIVATE
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_session_recovery_chaos_runner)

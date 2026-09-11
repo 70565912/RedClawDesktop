@@ -1,0 +1,77 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+
+# Local machine config (do not sync)
+CMakeUserPresets.json
+local/
+.env.local
+
+# Logs and temp
+*.log
+*.tmp
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+dist/
+build/
+release/
+!scripts/release/
+!scripts/release/**
+
+# Coverage
+coverage/
+*.lcov
+
+# Local secrets
+.env
+.env.*
+
+# vcpkg local manifest artifacts
+vcpkg_installed/
+
+# Local diagnostics and scratch artifacts
+build_output.txt
+mailbox/
+reports/
+runtime-signaling/
+runtime-signaling*/
+runtime-signaling-ui-dht-controller/
+runtime-signaling-ui-dht-mailbox/
+runtime-signaling-local-*/
+**/dht-mailbox/
+*.sealed
+*.rcd-dht
+*.dht-record
+*.trace
+*.etl
+*.dmp
+docs/192.168.0.89.txt
+redclaw-dht-test-scratch/
+redclawdesktop.pem
+test_probe.ps1
+
+# Local credentials and identity material
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
+agent-projects.conf
+ice-servers.conf
+credentials.json
+credentials*.json
+auth.json

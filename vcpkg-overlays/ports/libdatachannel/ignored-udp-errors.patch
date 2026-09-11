@@ -1,0 +1,13 @@
+diff --git a/include/rtc/common.hpp b/include/rtc/common.hpp
+--- a/include/rtc/common.hpp
++++ b/include/rtc/common.hpp
+@@ -67,7 +67,8 @@
+                           StunServerResponse, PeerStunParsed, LocalCandidateSocketMatch,
+                           LocalCandidateSocketMismatch, SendTargetMatch, SendTargetMismatch,
+-                          SocketReady };
++                          SocketReady, UdpIgnoredConnReset, UdpIgnoredNetReset,
++                          UdpIgnoredConnRefused, UdpErrorObservationReady };
+ struct IceCheckEvent {
+     IceCheckKind kind;
+     int pairId, localType, remoteType;
+ };

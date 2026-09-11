@@ -1,0 +1,57 @@
+name: ci-unit-tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: ci-unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:GITHUB_WORKSPACE/vcpkg"
+          & "$env:GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.bat"
+
+      - name: Configure (Debug)
+        shell: pwsh
+        run: |
+          cmake -S "$env:GITHUB_WORKSPACE" -B "$env:GITHUB_WORKSPACE/build/ci-debug" -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DBUILD_TESTING=ON `
+            -DREDCLAW_TESTS_IN_DEFAULT_BUILD=OFF
+
+      - name: Build unit test targets (Debug)
+        shell: pwsh
+        run: |
+          cmake --build "$env:GITHUB_WORKSPACE/build/ci-debug" --config Debug --target redclaw_tests_unit
+
+      - name: Run unit tests (CTest)
+        shell: pwsh
+        run: |
+          ctest --test-dir "$env:GITHUB_WORKSPACE/build/ci-debug" -C Debug --output-on-failure -E "_integration_tests|_e2e_tests"
+
+      - name: Upload CTest logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-logs
+          path: |
+            build/ci-debug/Testing/**
+          if-no-files-found: ignore

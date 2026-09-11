@@ -1,0 +1,76 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_input_policy_gate_tests
+  input/input_policy_gate_tests.cpp
+)
+
+target_link_libraries(redclaw_input_policy_gate_tests PRIVATE
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_input_policy_gate_tests)
+
+add_test(
+  NAME redclaw_input_policy_gate_tests
+  COMMAND redclaw_input_policy_gate_tests
+)
+
+add_executable(redclaw_input_injection_adapter_tests
+  input/input_injection_adapter_tests.cpp
+)
+
+target_link_libraries(redclaw_input_injection_adapter_tests PRIVATE
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_input_injection_adapter_tests)
+
+add_test(
+  NAME redclaw_input_injection_adapter_tests
+  COMMAND redclaw_input_injection_adapter_tests
+)
+
+add_executable(redclaw_remote_input_session_tests
+  input/remote_input_session_tests.cpp
+)
+
+target_link_libraries(redclaw_remote_input_session_tests PRIVATE
+  GTest::gtest_main
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_remote_input_session_tests)
+
+add_test(
+  NAME redclaw_remote_input_session_tests
+  COMMAND redclaw_remote_input_session_tests
+)
+
+add_executable(redclaw_windows_secure_desktop_injector_backend_tests
+  input/windows_secure_desktop_injector_backend_tests.cpp
+)
+
+target_link_libraries(redclaw_windows_secure_desktop_injector_backend_tests PRIVATE
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_windows_secure_desktop_injector_backend_tests)
+
+add_test(
+  NAME redclaw_windows_secure_desktop_injector_backend_tests
+  COMMAND redclaw_windows_secure_desktop_injector_backend_tests
+)
+
+add_executable(redclaw_target_routing_input_injection_adapter_tests
+  input/target_routing_input_injection_adapter_tests.cpp
+)
+
+target_link_libraries(redclaw_target_routing_input_injection_adapter_tests PRIVATE
+  redclaw_input
+)
+
+redclaw_apply_warnings(redclaw_target_routing_input_injection_adapter_tests)
+
+add_test(
+  NAME redclaw_target_routing_input_injection_adapter_tests
+  COMMAND redclaw_target_routing_input_injection_adapter_tests
+)

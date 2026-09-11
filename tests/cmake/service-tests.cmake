@@ -1,0 +1,271 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+if(REDCLAW_ENABLE_DHT_BACKENDS)
+  add_executable(redclaw_service_dht_listener_startup_tests service/dht_listener_startup_tests.cpp)
+  target_include_directories(redclaw_service_dht_listener_startup_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/service/src)
+  target_link_libraries(redclaw_service_dht_listener_startup_tests PRIVATE redclaw_service redclaw_diag GTest::gtest_main)
+  redclaw_apply_warnings(redclaw_service_dht_listener_startup_tests)
+  add_test(NAME redclaw_service_dht_listener_startup_tests COMMAND redclaw_service_dht_listener_startup_tests)
+endif()
+
+add_executable(redclaw_service_privileged_broker_state_machine_tests
+  service/privileged_broker_state_machine_tests.cpp
+)
+
+target_link_libraries(redclaw_service_privileged_broker_state_machine_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_privileged_broker_state_machine_tests)
+
+add_test(
+  NAME redclaw_service_privileged_broker_state_machine_tests
+  COMMAND redclaw_service_privileged_broker_state_machine_tests
+)
+
+add_executable(redclaw_service_privileged_broker_hooks_tests
+  service/privileged_broker_hooks_tests.cpp
+)
+
+target_link_libraries(redclaw_service_privileged_broker_hooks_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_privileged_broker_hooks_tests)
+
+add_test(
+  NAME redclaw_service_privileged_broker_hooks_tests
+  COMMAND redclaw_service_privileged_broker_hooks_tests
+)
+
+add_executable(redclaw_service_windows_service_lifecycle_wrapper_tests
+  service/windows_service_lifecycle_wrapper_tests.cpp
+)
+
+target_link_libraries(redclaw_service_windows_service_lifecycle_wrapper_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_windows_service_lifecycle_wrapper_tests)
+
+add_test(
+  NAME redclaw_service_windows_service_lifecycle_wrapper_tests
+  COMMAND redclaw_service_windows_service_lifecycle_wrapper_tests
+)
+
+add_executable(redclaw_service_session_security_bootstrap_config_tests
+  service/session_security_bootstrap_config_tests.cpp
+)
+
+target_link_libraries(redclaw_service_session_security_bootstrap_config_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_session_security_bootstrap_config_tests)
+
+add_test(
+  NAME redclaw_service_session_security_bootstrap_config_tests
+  COMMAND redclaw_service_session_security_bootstrap_config_tests
+)
+
+add_executable(redclaw_service_rendezvous_session_registry_tests
+  service/rendezvous_session_registry_tests.cpp
+)
+
+target_link_libraries(redclaw_service_rendezvous_session_registry_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_rendezvous_session_registry_tests)
+
+add_test(
+  NAME redclaw_service_rendezvous_session_registry_tests
+  COMMAND redclaw_service_rendezvous_session_registry_tests
+)
+
+add_executable(redclaw_service_dht_rendezvous_tests
+  service/dht_rendezvous_tests.cpp
+)
+
+target_link_libraries(redclaw_service_dht_rendezvous_tests PRIVATE
+  redclaw_service
+)
+
+target_include_directories(redclaw_service_dht_rendezvous_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/service/src
+)
+
+redclaw_apply_warnings(redclaw_service_dht_rendezvous_tests)
+
+add_test(
+  NAME redclaw_service_dht_rendezvous_tests
+  COMMAND redclaw_service_dht_rendezvous_tests
+)
+
+add_executable(redclaw_service_connection_negotiation_tests
+  service/connection_negotiation_tests.cpp
+  service/dht_publication_transaction_tests.cpp
+)
+
+target_link_libraries(redclaw_service_connection_negotiation_tests PRIVATE
+  redclaw_service
+  GTest::gtest_main
+)
+
+redclaw_apply_warnings(redclaw_service_connection_negotiation_tests)
+
+add_test(
+  NAME redclaw_service_connection_negotiation_tests
+  COMMAND redclaw_service_connection_negotiation_tests
+)
+
+add_executable(redclaw_service_ipc_channel_contracts_tests
+  service/ipc_channel_contracts_tests.cpp
+)
+
+target_link_libraries(redclaw_service_ipc_channel_contracts_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_ipc_channel_contracts_tests)
+
+add_test(
+  NAME redclaw_service_ipc_channel_contracts_tests
+  COMMAND redclaw_service_ipc_channel_contracts_tests
+)
+
+add_executable(redclaw_service_ipc_channel_tests
+  service/ipc_channel_tests.cpp
+)
+
+target_link_libraries(redclaw_service_ipc_channel_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_ipc_channel_tests)
+
+add_test(
+  NAME redclaw_service_ipc_channel_tests
+  COMMAND redclaw_service_ipc_channel_tests
+)
+
+add_executable(redclaw_service_capability_registry_tests
+  service/capability_registry_tests.cpp
+)
+
+target_link_libraries(redclaw_service_capability_registry_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_capability_registry_tests)
+
+add_test(
+  NAME redclaw_service_capability_registry_tests
+  COMMAND redclaw_service_capability_registry_tests
+)
+
+add_executable(redclaw_service_capability_sync_tests
+  service/capability_sync_tests.cpp
+)
+
+target_link_libraries(redclaw_service_capability_sync_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_capability_sync_tests)
+
+add_test(
+  NAME redclaw_service_capability_sync_tests
+  COMMAND redclaw_service_capability_sync_tests
+)
+
+add_executable(redclaw_service_capability_downgrade_tests
+  service/capability_downgrade_tests.cpp
+)
+
+target_link_libraries(redclaw_service_capability_downgrade_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_capability_downgrade_tests)
+
+add_test(
+  NAME redclaw_service_capability_downgrade_tests
+  COMMAND redclaw_service_capability_downgrade_tests
+)
+
+add_executable(redclaw_service_capability_integration_tests
+  service/capability_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_service_capability_integration_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_capability_integration_tests)
+
+add_test(
+  NAME redclaw_service_capability_integration_tests
+  COMMAND redclaw_service_capability_integration_tests
+)
+
+add_executable(redclaw_service_helper_launcher_tests
+  service/helper_launcher_tests.cpp
+)
+
+target_link_libraries(redclaw_service_helper_launcher_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_helper_launcher_tests)
+
+add_test(
+  NAME redclaw_service_helper_launcher_tests
+  COMMAND redclaw_service_helper_launcher_tests
+)
+
+add_executable(redclaw_service_session_detection_tests
+  service/session_detection_tests.cpp
+)
+
+target_link_libraries(redclaw_service_session_detection_tests PRIVATE
+  redclaw_service
+)
+
+redclaw_apply_warnings(redclaw_service_session_detection_tests)
+
+add_test(
+  NAME redclaw_service_session_detection_tests
+  COMMAND redclaw_service_session_detection_tests
+)
+
+add_executable(redclaw_callback_driven_host_service_lifecycle_event_source_tests
+  service/callback_driven_host_service_lifecycle_event_source_tests.cpp
+)
+
+target_link_libraries(redclaw_callback_driven_host_service_lifecycle_event_source_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_callback_driven_host_service_lifecycle_event_source_tests)
+
+add_test(
+  NAME redclaw_callback_driven_host_service_lifecycle_event_source_tests
+  COMMAND redclaw_callback_driven_host_service_lifecycle_event_source_tests
+)
+
+add_executable(redclaw_host_service_runtime_lifecycle_bridge_tests
+  service/host_service_runtime_lifecycle_bridge_tests.cpp
+)
+
+target_link_libraries(redclaw_host_service_runtime_lifecycle_bridge_tests PRIVATE
+  redclaw_service
+  redclaw_session
+)
+
+redclaw_apply_warnings(redclaw_host_service_runtime_lifecycle_bridge_tests)
+
+add_test(
+  NAME redclaw_host_service_runtime_lifecycle_bridge_tests
+  COMMAND redclaw_host_service_runtime_lifecycle_bridge_tests
+)

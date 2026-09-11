@@ -1,0 +1,60 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_render_decoder_frame_queue_tests
+  render/decoder_frame_queue_tests.cpp
+)
+
+target_link_libraries(redclaw_render_decoder_frame_queue_tests PRIVATE
+  redclaw_render
+)
+
+redclaw_apply_warnings(redclaw_render_decoder_frame_queue_tests)
+
+add_test(
+  NAME redclaw_render_decoder_frame_queue_tests
+  COMMAND redclaw_render_decoder_frame_queue_tests
+)
+
+add_executable(redclaw_render_viewport_controls_tests
+  render/viewport_controls_tests.cpp
+)
+
+target_link_libraries(redclaw_render_viewport_controls_tests PRIVATE
+  redclaw_render
+)
+
+redclaw_apply_warnings(redclaw_render_viewport_controls_tests)
+
+add_test(
+  NAME redclaw_render_viewport_controls_tests
+  COMMAND redclaw_render_viewport_controls_tests
+)
+
+add_executable(redclaw_render_runtime_status_timeline_tests
+  render/runtime_status_timeline_tests.cpp
+)
+
+target_link_libraries(redclaw_render_runtime_status_timeline_tests PRIVATE
+  redclaw_render
+)
+
+redclaw_apply_warnings(redclaw_render_runtime_status_timeline_tests)
+
+add_test(
+  NAME redclaw_render_runtime_status_timeline_tests
+  COMMAND redclaw_render_runtime_status_timeline_tests
+)
+
+add_executable(redclaw_render_runtime_status_timeline_ui_model_tests
+  render/runtime_status_timeline_ui_model_tests.cpp
+)
+
+target_link_libraries(redclaw_render_runtime_status_timeline_ui_model_tests PRIVATE
+  redclaw_render
+)
+
+redclaw_apply_warnings(redclaw_render_runtime_status_timeline_ui_model_tests)
+
+add_test(
+  NAME redclaw_render_runtime_status_timeline_ui_model_tests
+  COMMAND redclaw_render_runtime_status_timeline_ui_model_tests
+)

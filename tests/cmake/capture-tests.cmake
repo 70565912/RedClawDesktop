@@ -1,0 +1,119 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_capture_dda_min_capture_poc_tests
+  capture/dda_min_capture_poc_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_dda_min_capture_poc_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_dda_min_capture_poc_tests)
+
+add_test(
+  NAME redclaw_capture_dda_min_capture_poc_tests
+  COMMAND redclaw_capture_dda_min_capture_poc_tests
+)
+
+set_tests_properties(redclaw_capture_dda_min_capture_poc_tests PROPERTIES
+  SKIP_RETURN_CODE 77
+)
+
+add_executable(redclaw_capture_windows_capture_abstraction_skeleton_tests
+  capture/windows_capture_abstraction_skeleton_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_windows_capture_abstraction_skeleton_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_windows_capture_abstraction_skeleton_tests)
+
+add_test(
+  NAME redclaw_capture_windows_capture_abstraction_skeleton_tests
+  COMMAND redclaw_capture_windows_capture_abstraction_skeleton_tests
+)
+
+add_executable(redclaw_capture_encoder_low_latency_profile_tests
+  capture/encoder_low_latency_profile_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_encoder_low_latency_profile_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_encoder_low_latency_profile_tests)
+
+add_test(
+  NAME redclaw_capture_encoder_low_latency_profile_tests
+  COMMAND redclaw_capture_encoder_low_latency_profile_tests
+)
+
+add_executable(redclaw_capture_encoder_backend_bridge_tests
+  capture/encoder_backend_bridge_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_encoder_backend_bridge_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_encoder_backend_bridge_tests)
+
+add_test(
+  NAME redclaw_capture_encoder_backend_bridge_tests
+  COMMAND redclaw_capture_encoder_backend_bridge_tests
+)
+
+add_executable(redclaw_capture_encoder_execution_session_tests
+  capture/encoder_execution_session_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_encoder_execution_session_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_encoder_execution_session_tests)
+
+add_test(
+  NAME redclaw_capture_encoder_execution_session_tests
+  COMMAND redclaw_capture_encoder_execution_session_tests
+)
+
+add_executable(redclaw_capture_stability_smoke_tests
+  capture/capture_stability_smoke_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_stability_smoke_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_stability_smoke_tests)
+
+add_test(
+  NAME redclaw_capture_stability_smoke_tests
+  COMMAND redclaw_capture_stability_smoke_tests
+)
+
+add_executable(redclaw_capture_fallback_metrics_tests
+  capture/capture_fallback_metrics_tests.cpp
+)
+
+target_link_libraries(redclaw_capture_fallback_metrics_tests PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_fallback_metrics_tests)
+
+add_test(
+  NAME redclaw_capture_fallback_metrics_tests
+  COMMAND redclaw_capture_fallback_metrics_tests
+)
+
+add_executable(redclaw_capture_stability_runner
+  capture/capture_stability_runner.cpp
+)
+
+target_link_libraries(redclaw_capture_stability_runner PRIVATE
+  redclaw_capture
+)
+
+redclaw_apply_warnings(redclaw_capture_stability_runner)

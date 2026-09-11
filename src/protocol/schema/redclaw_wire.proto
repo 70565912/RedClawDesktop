@@ -1,0 +1,321 @@
+syntax = "proto3";
+
+package redclaw.protocol.wire;
+
+// Field numbers and enum values are wire contracts: never renumber or reuse them.
+
+enum AgentMessageTypeV1 {
+  AgentMessageTypeV1_kCapabilities = 0;
+  AgentMessageTypeV1_kProjectCatalog = 1;
+  AgentMessageTypeV1_kTaskCreate = 2;
+  AgentMessageTypeV1_kTurnStart = 3;
+  AgentMessageTypeV1_kTurnSteer = 4;
+  AgentMessageTypeV1_kTurnInterrupt = 5;
+  AgentMessageTypeV1_kTaskSyncRequest = 6;
+  AgentMessageTypeV1_kTaskSnapshot = 7;
+  AgentMessageTypeV1_kEvent = 8;
+  AgentMessageTypeV1_kEventAck = 9;
+  AgentMessageTypeV1_kApprovalRequest = 10;
+  AgentMessageTypeV1_kApprovalDecision = 11;
+  AgentMessageTypeV1_kTaskComplete = 12;
+  AgentMessageTypeV1_kTaskError = 13;
+}
+
+enum AgentProviderKindV1 {
+  AgentProviderKindV1_kNone = 0;
+  AgentProviderKindV1_kCodex = 1;
+  AgentProviderKindV1_kCursor = 2;
+}
+
+enum AgentProviderReadinessV1 {
+  AgentProviderReadinessV1_kCliMissing = 0;
+  AgentProviderReadinessV1_kNotAuthenticated = 1;
+  AgentProviderReadinessV1_kReady = 2;
+  AgentProviderReadinessV1_kProbeFailed = 3;
+  AgentProviderReadinessV1_kModelUnavailable = 4;
+}
+
+enum AgentWorkDirectoryModeV1 {
+  AgentWorkDirectoryModeV1_kIsolatedWorktree = 0;
+  AgentWorkDirectoryModeV1_kDirectWorkspace = 1;
+}
+
+enum AgentTaskStateV1 {
+  AgentTaskStateV1_kUnavailable = 0;
+  AgentTaskStateV1_kIdle = 1;
+  AgentTaskStateV1_kQueued = 2;
+  AgentTaskStateV1_kStarting = 3;
+  AgentTaskStateV1_kRunning = 4;
+  AgentTaskStateV1_kAwaitingApproval = 5;
+  AgentTaskStateV1_kPaused = 6;
+  AgentTaskStateV1_kCompleted = 7;
+  AgentTaskStateV1_kFailed = 8;
+  AgentTaskStateV1_kInterrupted = 9;
+}
+
+enum AgentApprovalDecisionV1 {
+  AgentApprovalDecisionV1_kNone = 0;
+  AgentApprovalDecisionV1_kAccept = 1;
+  AgentApprovalDecisionV1_kReject = 2;
+}
+
+enum StreamControlMessageTypeV1 {
+  StreamControlMessageTypeV1_kHello = 0;
+  StreamControlMessageTypeV1_kCapabilities = 1;
+  StreamControlMessageTypeV1_kViewportRequest = 2;
+  StreamControlMessageTypeV1_kStreamTargetApplied = 3;
+  StreamControlMessageTypeV1_kSourceActivityState = 4;
+  StreamControlMessageTypeV1_kReceiverNetworkStats = 5;
+  StreamControlMessageTypeV1_kMediaTransportFeedback = 6;
+  StreamControlMessageTypeV1_kPlaybackStarvation = 7;
+  StreamControlMessageTypeV1_kKeyframeRequest = 8;
+  StreamControlMessageTypeV1_kPing = 9;
+  StreamControlMessageTypeV1_kPong = 10;
+  StreamControlMessageTypeV1_kRemoteLogRequest = 11;
+  StreamControlMessageTypeV1_kRemoteLogChunk = 12;
+  StreamControlMessageTypeV1_kRemoteLogComplete = 13;
+  StreamControlMessageTypeV1_kRemoteLogError = 14;
+  StreamControlMessageTypeV1_kInputCapabilities = 15;
+  StreamControlMessageTypeV1_kInputControlRequest = 16;
+  StreamControlMessageTypeV1_kInputControlStatus = 17;
+  StreamControlMessageTypeV1_kInputBatch = 18;
+  StreamControlMessageTypeV1_kInputStateSync = 19;
+  StreamControlMessageTypeV1_kInputReleaseAll = 20;
+  StreamControlMessageTypeV1_kDesktopDisplayCatalog = 21;
+  StreamControlMessageTypeV1_kCaptureRegionRequest = 22;
+  StreamControlMessageTypeV1_kCaptureRegionApplied = 23;
+  StreamControlMessageTypeV1_kCaptureRegionRejected = 24;
+}
+
+enum RemoteLogModeV1 {
+  RemoteLogModeV1_kSnapshot = 0;
+  RemoteLogModeV1_kFollow = 1;
+  RemoteLogModeV1_kStop = 2;
+}
+
+enum RemoteInputEventTypeV1 {
+  RemoteInputEventTypeV1_kKeyDown = 0;
+  RemoteInputEventTypeV1_kKeyUp = 1;
+  RemoteInputEventTypeV1_kMouseMove = 2;
+  RemoteInputEventTypeV1_kMouseButtonDown = 3;
+  RemoteInputEventTypeV1_kMouseButtonUp = 4;
+  RemoteInputEventTypeV1_kMouseWheel = 5;
+  RemoteInputEventTypeV1_kMouseHorizontalWheel = 6;
+}
+
+enum RemoteInputMouseButtonV1 {
+  RemoteInputMouseButtonV1_kNone = 0;
+  RemoteInputMouseButtonV1_kLeft = 1;
+  RemoteInputMouseButtonV1_kRight = 2;
+  RemoteInputMouseButtonV1_kMiddle = 3;
+  RemoteInputMouseButtonV1_kX1 = 4;
+  RemoteInputMouseButtonV1_kX2 = 5;
+}
+
+enum RemoteInputControlStateV1 {
+  RemoteInputControlStateV1_kUnavailable = 0;
+  RemoteInputControlStateV1_kAvailable = 1;
+  RemoteInputControlStateV1_kActive = 2;
+  RemoteInputControlStateV1_kPaused = 3;
+  RemoteInputControlStateV1_kDenied = 4;
+}
+
+enum RemoteInputStatusReasonV1 {
+  RemoteInputStatusReasonV1_kNone = 0;
+  RemoteInputStatusReasonV1_kUnsupported = 1;
+  RemoteInputStatusReasonV1_kNotAuthorized = 2;
+  RemoteInputStatusReasonV1_kNoVideo = 3;
+  RemoteInputStatusReasonV1_kLocalPause = 4;
+  RemoteInputStatusReasonV1_kLeaseExpired = 5;
+  RemoteInputStatusReasonV1_kQueueOverflow = 6;
+  RemoteInputStatusReasonV1_kInjectionFailed = 7;
+  RemoteInputStatusReasonV1_kDisconnected = 8;
+  RemoteInputStatusReasonV1_kGeometryChanged = 9;
+  RemoteInputStatusReasonV1_kStaleSequence = 10;
+}
+
+enum DesktopSourceActivityStateV1 {
+  DesktopSourceActivityStateV1_kUnknown = 0;
+  DesktopSourceActivityStateV1_kActive = 1;
+  DesktopSourceActivityStateV1_kStaticPending = 2;
+  DesktopSourceActivityStateV1_kStatic = 3;
+}
+
+message AgentMessageEnvelopeV1 {
+  int32 schema_version = 1;
+  string session_epoch = 2;
+  uint64 message_id = 3;
+  uint64 sent_at_ms = 4;
+  string task_id = 5;
+  string request_id = 6;
+  string supersedes_request_id = 7;
+  uint64 event_sequence = 8;
+  AgentMessageTypeV1 type = 9;
+  AgentProviderKindV1 provider = 10;
+  AgentProviderReadinessV1 provider_readiness = 11;
+  AgentWorkDirectoryModeV1 work_directory_mode = 12;
+  AgentTaskStateV1 task_state = 13;
+  AgentApprovalDecisionV1 approval_decision = 14;
+  string model = 15;
+  string project_id = 16;
+  string display_name = 17;
+  string event_kind = 18;
+  string error_code = 19;
+  string evidence_manifest_name = 20;
+  string evidence_sha256 = 21;
+  bytes text = 22; // Stream chunks may split a UTF-8 code point.
+  uint64 acknowledged_event_sequence = 23;
+  bool available = 24;
+  bool complete = 25;
+  bool gap = 26;
+  bool git_repository = 27;
+  bool requires_turn_approval = 28;
+  bool supports_structured_approval = 29;
+}
+
+message RemoteInputEventV1 {
+  RemoteInputEventTypeV1 type = 1;
+  uint32 scan_code = 2;
+  uint32 virtual_key = 3;
+  bool extended = 4;
+  bool repeat = 5;
+  uint32 normalized_x = 6;
+  uint32 normalized_y = 7;
+  RemoteInputMouseButtonV1 mouse_button = 8;
+  sint32 wheel_delta = 9;
+}
+
+message MediaTransportArrivalV1 {
+  uint64 transport_sequence = 1;
+  uint64 receiver_steady_us = 2;
+}
+
+message DesktopDisplayV1 {
+  string display_id = 1;
+  string display_name = 2;
+  sint32 desktop_origin_x = 3;
+  sint32 desktop_origin_y = 4;
+  uint32 pixel_width = 5;
+  uint32 pixel_height = 6;
+  uint32 rotation = 7;
+  bool primary = 8;
+}
+
+message StreamControlMessageV1 {
+  int32 schema_version = 1;
+  StreamControlMessageTypeV1 type = 2;
+  string session_epoch = 3;
+  uint64 message_id = 4;
+  uint64 sent_at_ms = 5;
+  uint32 viewport_width = 6;
+  uint32 viewport_height = 7;
+  uint32 encoded_width = 8;
+  uint32 encoded_height = 9;
+  uint32 target_fps = 10;
+  uint32 target_bitrate_kbps = 11;
+  uint64 received_bytes = 12;
+  uint64 received_frames = 13;
+  uint64 decoded_frames = 14;
+  uint64 rendered_frames = 15;
+  uint64 dropped_frames = 16;
+  uint64 reassembly_timeouts = 17;
+  uint64 received_fragments = 18;
+  uint64 reassembled_frames = 19;
+  uint64 completed_keyframes = 20;
+  uint64 dropped_keyframes = 21;
+  uint64 playback_starvation_count = 22;
+  uint64 incomplete_frame_id = 23;
+  uint64 latest_received_frame_id = 24;
+  uint64 latest_complete_frame_id = 25;
+  uint64 latest_complete_keyframe_id = 26;
+  uint64 observed_rate_revision = 27;
+  uint64 source_activity_revision = 28;
+  DesktopSourceActivityStateV1 source_activity_state = 29;
+  bool media_budget_waiting = 30;
+  uint64 reference_frame_id = 31;
+  uint64 reference_keyframe_id = 32;
+  uint64 stream_geometry_revision = 33;
+  uint64 rate_revision = 34;
+  uint64 observed_source_activity_revision = 35;
+  uint64 latest_displayable_frame_id = 36;
+  uint64 latest_displayable_keyframe_id = 37;
+  uint64 latest_presented_frame_id = 38;
+  uint32 rtt_ms = 39;
+  uint64 transport_feedback_id = 40;
+  repeated MediaTransportArrivalV1 media_transport_arrivals = 41;
+  string request_id = 42;
+  RemoteLogModeV1 log_mode = 43;
+  uint64 log_cursor = 44;
+  uint32 chunk_index = 45;
+  bool complete = 46;
+  bool gap = 47;
+  bytes payload = 48;
+  bool input_supported = 49;
+  bool input_authorized = 50;
+  bool input_requested_active = 51;
+  RemoteInputControlStateV1 input_state = 52;
+  RemoteInputStatusReasonV1 input_reason = 53;
+  uint64 input_sequence = 54;
+  sint32 desktop_origin_x = 55;
+  sint32 desktop_origin_y = 56;
+  uint32 desktop_width = 57;
+  uint32 desktop_height = 58;
+  uint32 desktop_rotation = 59;
+  uint64 desktop_geometry_revision = 60;
+  uint32 pressed_mouse_buttons = 61;
+  repeated uint32 pressed_scan_codes = 62;
+  repeated RemoteInputEventV1 input_events = 63;
+  repeated DesktopDisplayV1 desktop_displays = 64;
+  uint64 display_catalog_revision = 65;
+  string display_id = 66;
+  uint32 region_left = 67;
+  uint32 region_top = 68;
+  uint32 region_right = 69;
+  uint32 region_bottom = 70;
+  uint64 capture_region_revision = 71;
+  uint32 content_rect_x = 72;
+  uint32 content_rect_y = 73;
+  uint32 content_rect_width = 74;
+  uint32 content_rect_height = 75;
+}
+
+message DhtSignalSnapshot {
+  uint32 schema_version = 1;
+  string role = 2;
+  string description_type = 3;
+  bytes description_sdp = 4;
+  bytes publisher_instance_id = 5;
+  uint64 generation = 6;
+  string connection_request_tag = 7;
+  string answered_description_tag = 8;
+  string acknowledged_answer_tag = 9;
+  bool candidates_complete = 10;
+  repeated bytes candidate_lines = 11;
+}
+
+enum DebugBridgeMessageTypeV1 {
+  DebugBridgeMessageTypeV1_kHello = 0;
+  DebugBridgeMessageTypeV1_kHeartbeat = 1;
+  DebugBridgeMessageTypeV1_kStatusRequest = 2;
+  DebugBridgeMessageTypeV1_kStatusResponse = 3;
+  DebugBridgeMessageTypeV1_kCommandRequest = 4;
+  DebugBridgeMessageTypeV1_kCommandResult = 5;
+  DebugBridgeMessageTypeV1_kAgentFrame = 6;
+  DebugBridgeMessageTypeV1_kError = 7;
+}
+
+message DebugBridgeEnvelopeV1 {
+  int32 schema_version = 1;
+  string bridge_id = 2;
+  string session_epoch = 3;
+  uint64 message_id = 4;
+  uint64 sequence = 5;
+  uint64 acknowledged_sequence = 6;
+  uint64 sent_at_ms = 7;
+  DebugBridgeMessageTypeV1 type = 8;
+  string request_id = 9;
+  string action = 10;
+  bytes payload = 11;
+  bool ok = 12;
+  string error_code = 13;
+}

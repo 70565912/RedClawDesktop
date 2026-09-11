@@ -1,0 +1,123 @@
+diff --git a/src/impl/dtlstransport.hpp b/src/impl/dtlstransport.hpp
+--- a/src/impl/dtlstransport.hpp
++++ b/src/impl/dtlstransport.hpp
+@@ -15,7 +15,8 @@
+ #include "tls.hpp"
+ #include "transport.hpp"
+ 
+-#include <atomic>
++#include <atomic>
++#include <chrono>
+ #include <functional>
+ #include <memory>
+ #include <mutex>
+@@ -102,7 +103,10 @@
+ 	BIO *mInBio, *mOutBio;
+ 	std::mutex mSslMutex;
+ 
+-	void handleTimeout();
++	const std::chrono::steady_clock::time_point mHandshakeStarted = std::chrono::steady_clock::now();
++	std::atomic<bool> mTimeoutPending = false;
++
++	void handleTimeout();
+ 
+ 	static BIO_METHOD *BioMethods;
+ 	static int TransportExIndex;
+diff --git a/src/impl/dtlstransport.cpp b/src/impl/dtlstransport.cpp
+--- a/src/impl/dtlstransport.cpp
++++ b/src/impl/dtlstransport.cpp
+@@ -778,7 +778,13 @@
+ 		if (!mSsl)
+ 			throw std::runtime_error("Failed to create SSL instance");
+ 
+-		SSL_set_ex_data(mSsl, TransportExIndex, this);
++		SSL_set_ex_data(mSsl, TransportExIndex, this);
++
++		// Slow signaling must not consume the entire DTLS retry horizon before
++		// the other peer learns our Answer. Keep flights bounded at 1/2/4/8/12s.
++		DTLS_set_timer_cb(mSsl, [](SSL *, unsigned int previous) -> unsigned int {
++			return previous == 0 ? 1000000U : std::min(previous * 2, 12000000U);
++		});
+ 
+ 		if (mIsClient)
+ 			SSL_set_connect_state(mSsl);
+@@ -937,6 +943,9 @@
+ 			BIO_write(mInBio, message->data(), int(message->size()));
+ 
+ 			if (state() == State::Connecting) {
++				// Incoming traffic cannot renew or bypass the absolute lifetime.
++				if (std::chrono::steady_clock::now() - mHandshakeStarted >= 120s)
++					throw std::runtime_error("Handshake timeout");
+ 				// Continue the handshake
+ 				int ret, err;
+ 				{
+@@ -998,34 +1007,41 @@
+ 	}
+ }
+ 
+-void DtlsTransport::handleTimeout() {
+-	std::lock_guard lock(mSslMutex);
+-
+-	// Warning: This function breaks the usual return value convention
+-	int ret = DTLSv1_handle_timeout(mSsl);
+-	if (ret < 0) {
+-		throw std::runtime_error("Handshake timeout"); // write BIO can't fail
+-	} else if (ret > 0) {
+-		LOG_VERBOSE << "DTLS retransmit done";
+-	}
+-
+-	struct timeval tv = {};
+-	if (DTLSv1_get_timeout(mSsl, &tv)) {
+-		auto timeout = milliseconds(tv.tv_sec * 1000 + tv.tv_usec / 1000);
+-		// Also handle handshake timeout manually because OpenSSL actually
+-		// doesn't... OpenSSL backs off exponentially in base 2 starting from the
+-		// recommended 1s so this allows for 5 retransmissions and fails after
+-		// roughly 30s.
+-		if (timeout > 30s)
+-			throw std::runtime_error("Handshake timeout");
+-
+-		LOG_VERBOSE << "DTLS retransmit timeout is " << timeout.count() << "ms";
+-		ThreadPool::Instance().schedule(timeout, [weak_this = weak_from_this()]() {
+-			if (auto locked = weak_this.lock())
+-				locked->doRecv();
+-		});
+-	}
+-}
++void DtlsTransport::handleTimeout() {
++	std::lock_guard lock(mSslMutex);
++	if (state() != State::Connecting)
++		return;
++
++	// Absolute monotonic lifetime, never extended by retries or incoming data.
++	const auto remaining = std::chrono::duration_cast<milliseconds>(
++	    120s - (std::chrono::steady_clock::now() - mHandshakeStarted));
++	if (remaining <= 0ms)
++		throw std::runtime_error("Handshake timeout");
++
++	// Warning: this function breaks the usual return value convention.
++	const int ret = DTLSv1_handle_timeout(mSsl);
++	if (ret < 0)
++		throw std::runtime_error("Handshake timeout");
++	if (ret > 0)
++		LOG_VERBOSE << "DTLS retransmit done";
++
++	// One pending wake only. The 4s cap also covers a passive peer with no
++	// OpenSSL flight timer yet, without adding a thread or an unbounded timer queue.
++	auto timeout = std::min(remaining, milliseconds(4000));
++	struct timeval tv = {};
++	if (DTLSv1_get_timeout(mSsl, &tv))
++		timeout = std::min(timeout, std::max(1ms, milliseconds(tv.tv_sec * 1000 + (tv.tv_usec + 999) / 1000)));
++
++	if (!mTimeoutPending.exchange(true)) {
++		ThreadPool::Instance().schedule(timeout, [weak_this = weak_from_this()]() {
++			if (auto locked = weak_this.lock()) {
++				locked->mTimeoutPending = false;
++				if (locked->state() == State::Connecting)
++					locked->enqueueRecv();
++			}
++		});
++	}
++}
+ 
+ int DtlsTransport::CertificateCallback(int /*preverify_ok*/, X509_STORE_CTX *ctx) {
+ 	SSL *ssl =

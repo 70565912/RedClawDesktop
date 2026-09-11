@@ -1,0 +1,62 @@
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_diag_structured_logging_redaction_tests
+  diag/structured_logging_redaction_tests.cpp
+)
+
+target_link_libraries(redclaw_diag_structured_logging_redaction_tests PRIVATE
+  redclaw_diag
+)
+
+redclaw_apply_warnings(redclaw_diag_structured_logging_redaction_tests)
+
+add_test(
+  NAME redclaw_diag_structured_logging_redaction_tests
+  COMMAND redclaw_diag_structured_logging_redaction_tests
+)
+
+add_executable(redclaw_diag_process_file_logging_tests
+  diag/process_file_logging_tests.cpp
+)
+
+target_link_libraries(redclaw_diag_process_file_logging_tests PRIVATE
+  redclaw_diag
+  GTest::gtest
+  GTest::gtest_main
+)
+
+redclaw_apply_warnings(redclaw_diag_process_file_logging_tests)
+
+add_test(
+  NAME redclaw_diag_process_file_logging_tests
+  COMMAND redclaw_diag_process_file_logging_tests
+)
+
+add_executable(redclaw_diag_support_bundle_exporter_tests
+  diag/support_bundle_exporter_tests.cpp
+)
+
+target_link_libraries(redclaw_diag_support_bundle_exporter_tests PRIVATE
+  redclaw_diag
+)
+
+redclaw_apply_warnings(redclaw_diag_support_bundle_exporter_tests)
+
+add_test(
+  NAME redclaw_diag_support_bundle_exporter_tests
+  COMMAND redclaw_diag_support_bundle_exporter_tests
+)
+
+add_executable(redclaw_diag_connectivity_diagnostics_snapshot_tests
+  diag/connectivity_diagnostics_snapshot_tests.cpp
+)
+
+target_link_libraries(redclaw_diag_connectivity_diagnostics_snapshot_tests PRIVATE
+  redclaw_diag
+)
+
+redclaw_apply_warnings(redclaw_diag_connectivity_diagnostics_snapshot_tests)
+
+add_test(
+  NAME redclaw_diag_connectivity_diagnostics_snapshot_tests
+  COMMAND redclaw_diag_connectivity_diagnostics_snapshot_tests
+)

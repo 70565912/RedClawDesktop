@@ -1,0 +1,109 @@
+# Test-only peer pairs, not part of the shipping net library.
+add_library(redclaw_net_test_support STATIC net/support/peer_harness.cpp)
+target_link_libraries(redclaw_net_test_support PRIVATE redclaw_net)
+redclaw_apply_warnings(redclaw_net_test_support)
+
+# Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_ice_filtered_path_integration_tests net/ice_filtered_path_integration_tests.cpp)
+
+add_executable(redclaw_ice_candidate_diagnostics_tests net/ice_candidate_diagnostics_tests.cpp)
+
+target_link_libraries(redclaw_ice_candidate_diagnostics_tests PRIVATE redclaw_net GTest::gtest_main)
+
+redclaw_apply_warnings(redclaw_ice_candidate_diagnostics_tests)
+
+add_test(NAME redclaw_ice_candidate_diagnostics_tests COMMAND redclaw_ice_candidate_diagnostics_tests)
+
+target_link_libraries(redclaw_ice_filtered_path_integration_tests PRIVATE redclaw_net GTest::gtest_main)
+
+redclaw_apply_warnings(redclaw_ice_filtered_path_integration_tests)
+
+add_test(NAME redclaw_ice_filtered_path_integration_tests COMMAND redclaw_ice_filtered_path_integration_tests)
+
+set_tests_properties(redclaw_ice_filtered_path_integration_tests PROPERTIES TIMEOUT 380 RUN_SERIAL TRUE)
+
+add_executable(redclaw_transport_recovery_regression_tests net/transport_recovery_regression_tests.cpp)
+
+target_link_libraries(redclaw_transport_recovery_regression_tests PRIVATE redclaw_net redclaw_session GTest::gtest_main)
+
+redclaw_apply_warnings(redclaw_transport_recovery_regression_tests)
+
+add_test(NAME redclaw_transport_recovery_regression_tests COMMAND redclaw_transport_recovery_regression_tests)
+
+add_executable(redclaw_net_lifecycle_integration_tests net/transport_lifecycle_integration_tests.cpp)
+
+target_link_libraries(redclaw_net_lifecycle_integration_tests PRIVATE redclaw_net GTest::gtest_main)
+
+redclaw_apply_warnings(redclaw_net_lifecycle_integration_tests)
+
+add_test(NAME redclaw_net_lifecycle_integration_tests COMMAND redclaw_net_lifecycle_integration_tests)
+
+set_tests_properties(redclaw_net_lifecycle_integration_tests PROPERTIES TIMEOUT 420 RUN_SERIAL TRUE)
+
+add_executable(redclaw_stream_adaptation_regression_tests net/stream_adaptation_regression_tests.cpp)
+
+target_link_libraries(redclaw_stream_adaptation_regression_tests PRIVATE redclaw_net GTest::gtest_main)
+
+redclaw_apply_warnings(redclaw_stream_adaptation_regression_tests)
+
+add_test(NAME redclaw_stream_adaptation_regression_tests COMMAND redclaw_stream_adaptation_regression_tests)
+
+add_executable(redclaw_net_peer_loopback_poc_tests
+  net/peer_loopback_poc_tests.cpp
+)
+
+target_link_libraries(redclaw_net_peer_loopback_poc_tests PRIVATE
+  redclaw_net_test_support
+)
+
+redclaw_apply_warnings(redclaw_net_peer_loopback_poc_tests)
+
+add_test(
+  NAME redclaw_net_peer_loopback_poc_tests
+  COMMAND redclaw_net_peer_loopback_poc_tests
+)
+
+add_executable(redclaw_net_ice_wrapper_skeleton_tests
+  net/ice_wrapper_skeleton_tests.cpp
+)
+
+target_link_libraries(redclaw_net_ice_wrapper_skeleton_tests PRIVATE
+  redclaw_net
+)
+
+redclaw_apply_warnings(redclaw_net_ice_wrapper_skeleton_tests)
+
+add_test(
+  NAME redclaw_net_ice_wrapper_skeleton_tests
+  COMMAND redclaw_net_ice_wrapper_skeleton_tests
+)
+
+add_executable(redclaw_net_video_frame_transport_tests
+  net/video_frame_transport_tests.cpp
+)
+
+target_link_libraries(redclaw_net_video_frame_transport_tests PRIVATE
+  redclaw_net
+)
+
+redclaw_apply_warnings(redclaw_net_video_frame_transport_tests)
+
+add_test(
+  NAME redclaw_net_video_frame_transport_tests
+  COMMAND redclaw_net_video_frame_transport_tests
+)
+
+add_executable(redclaw_net_lan_peer_integration_tests
+  net/lan_peer_integration_tests.cpp
+)
+
+target_link_libraries(redclaw_net_lan_peer_integration_tests PRIVATE
+  redclaw_net_test_support
+)
+
+redclaw_apply_warnings(redclaw_net_lan_peer_integration_tests)
+
+add_test(
+  NAME redclaw_net_lan_peer_integration_tests
+  COMMAND redclaw_net_lan_peer_integration_tests
+)

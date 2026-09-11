@@ -1,0 +1,50 @@
+name: Docs Governance
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  docs-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required docs exist
+        run: |
+          set -e
+          required=(
+            "docs/README.md"
+            "docs/runtime/AGENT_EXECUTION_PROTOCOL.md"
+            "docs/runtime/PROJECT_STATE.md"
+            "docs/runtime/MODULE_KANBAN.md"
+            "docs/modules/module-specs.md"
+            "docs/logs/DEVLOG.md"
+          )
+          for f in "${required[@]}"; do
+            test -f "$f" || (echo "Missing required doc: $f" && exit 1)
+          done
+
+      - name: Verify playbooks count
+        run: |
+          set -e
+          count=$(find docs/runtime/MODULE_PLAYBOOKS -maxdepth 1 -type f -name 'M*.md' | wc -l)
+          if [ "$count" -lt 10 ]; then
+            echo "Expected at least 10 module playbooks, found $count"
+            exit 1
+          fi
+
+      - name: Verify kanban references all modules
+        run: |
+          set -e
+          for m in M01 M02 M03 M04 M05 M06 M07 M08 M09 M10 M11 X00; do
+            grep -q "## $m" docs/runtime/MODULE_KANBAN.md || (echo "Kanban missing $m" && exit 1)
+          done
+
+      - name: Verify single-entry onboarding in README
+        run: |
+          set -e
+          grep -q "## AI 接手单一入口" README.md || (echo "README missing single-entry section" && exit 1)
+          grep -q '唯一必读入口：`README.md`' README.md || (echo "README missing single-entry mandatory line" && exit 1)

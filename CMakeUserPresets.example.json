@@ -1,0 +1,33 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "local-env",
+      "hidden": true,
+      "environment": {
+        "VCPKG_ROOT": "<LOCAL_VCPKG_ROOT>",
+        "Path": "<LOCAL_QT_6_2_4_MSVC2019_64_PATH>/bin;$penv{Path}"
+      }
+    },
+    {
+      "name": "vs2022-x64-local",
+      "displayName": "Visual Studio 2022 x64 (Local)",
+      "inherits": ["vs2022-x64", "local-env"],
+      "cacheVariables": {
+        "Qt6_DIR": "<LOCAL_QT_6_2_4_MSVC2019_64_PATH>/lib/cmake/Qt6"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug-local",
+      "configurePreset": "vs2022-x64-local",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release-local",
+      "configurePreset": "vs2022-x64-local",
+      "configuration": "Release"
+    }
+  ]
+}

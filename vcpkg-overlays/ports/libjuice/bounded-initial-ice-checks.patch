@@ -1,0 +1,86 @@
+diff --git a/include/juice/juice.h b/include/juice/juice.h
+--- a/include/juice/juice.h
++++ b/include/juice/juice.h
+@@ -111,5 +111,6 @@
+ 
+ 	void *user_ptr;
+-	juice_cb_check_t cb_check; // optional, synchronous, no payload or credentials
++	juice_cb_check_t cb_check; // optional, synchronous, no payload or credentials
++	unsigned int initial_check_window_ms; // 0: upstream policy; otherwise <= 120000, initial ICE only
+ 
+ } juice_config_t;
+diff --git a/src/agent.h b/src/agent.h
+--- a/src/agent.h
++++ b/src/agent.h
+@@ -140,5 +140,6 @@
+ 
+ 	uint64_t ice_tiebreaker;
+-	timestamp_t pac_timestamp; // Patiently Awaiting Connectivity timer
++	timestamp_t pac_timestamp; // Patiently Awaiting Connectivity timer
++	timestamp_t initial_check_deadline; // Monotonic; never renewed by trickle/retransmission
+ 	timestamp_t nomination_timestamp;
+ 	bool gathering_done;
+diff --git a/src/agent.c b/src/agent.c
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -96,5 +96,7 @@
+ 	agent->config.cb_gathering_done = config->cb_gathering_done;
+ 	agent->config.cb_recv = config->cb_recv;
+-	agent->config.cb_check = config->cb_check;
++	agent->config.cb_check = config->cb_check;
++	agent->config.initial_check_window_ms =
++	    config->initial_check_window_ms > 120000 ? 120000 : config->initial_check_window_ms;
+ 	agent->config.user_ptr = config->user_ptr;
+ 	if (alloc_failed) {
+@@ -773,10 +775,18 @@
+ 		agent_stun_entry_t *entry = agent->entries + i;
+ 
+-		// STUN requests transmission or retransmission
+-		if (entry->state == AGENT_STUN_ENTRY_STATE_PENDING) {
+-			if (entry->next_transmission > now)
+-				continue;
+-
+-			if (entry->retransmissions >= 0) {
++		// STUN requests transmission or retransmission
++		if (entry->state == AGENT_STUN_ENTRY_STATE_PENDING) {
++			const bool initial_check = entry->type == AGENT_STUN_ENTRY_TYPE_CHECK &&
++			    agent->state == JUICE_STATE_CONNECTING && agent->config.initial_check_window_ms;
++			if (initial_check && !agent->initial_check_deadline)
++				agent->initial_check_deadline = now + agent->config.initial_check_window_ms;
++			const bool check_expired = initial_check && now >= agent->initial_check_deadline;
++			if (!check_expired && entry->next_transmission > now)
++				continue;
++
++			// Keep early checks immediate. After the upstream burst, use the existing
++			// entry/timer at 2 s intervals while slow signaling reaches the peer.
++			// Never extend an established session, a send failure, or the absolute deadline.
++			if (!check_expired && (entry->retransmissions >= 0 || initial_check)) {
+ 				if (JLOG_DEBUG_ENABLED) {
+ 					char record_str[ADDR_MAX_STRING_LEN];
+@@ -797,13 +807,17 @@
+ 				}
+ 
+-				if (ret >= 0) {
+-					--entry->retransmissions;
+-					if (entry->retransmissions < 0) {
+-						entry->next_transmission = now + LAST_STUN_RETRANSMISSION_TIMEOUT;
+-					} else {
+-						entry->next_transmission = now + entry->retransmission_timeout;
+-						entry->retransmission_timeout *= 2;
+-					}
+-					continue;
++				if (ret >= 0) {
++					if (entry->retransmissions >= 0) --entry->retransmissions;
++					if (initial_check && entry->retransmissions < 0) {
++						entry->next_transmission = now + 2000;
++					} else if (entry->retransmissions < 0) {
++						entry->next_transmission = now + LAST_STUN_RETRANSMISSION_TIMEOUT;
++					} else {
++						entry->next_transmission = now + entry->retransmission_timeout;
++						entry->retransmission_timeout *= 2;
++					}
++					if (initial_check && entry->next_transmission > agent->initial_check_deadline)
++						entry->next_transmission = agent->initial_check_deadline;
++					continue;
+ 				}
+ 			}
