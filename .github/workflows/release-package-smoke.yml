@@ -1,0 +1,67 @@
+name: release-package-smoke
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git releaseTag to verify, for example v0.1.1
+        required: true
+        default: v0.1.1
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portable-package:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout the releasedTag source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Resolve release tag
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'release') {
+            '${{ github.event.release.tag_name }}'
+          } else {
+            '${{ inputs.tag }}'
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid release tag: $tag"
+          }
+          "REDCLAW_RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Download published assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $downloadDirectory = Join-Path $env:GITHUB_WORKSPACE 'build/release-package-smoke'
+          New-Item -ItemType Directory -Path $downloadDirectory -Force | Out-Null
+          gh release download $env:REDCLAW_RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern "RedClawDesktop-windows-x64-$($env:REDCLAW_RELEASE_TAG).zip" `
+            --pattern 'SHA256SUMS.txt' `
+            --dir $downloadDirectory
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to download release assets for $env:REDCLAW_RELEASE_TAG"
+          }
+
+      - name: Verify and run the portable package command entry
+        shell: pwsh
+        run: |
+          $downloadDirectory = Join-Path $env:GITHUB_WORKSPACE 'build/release-package-smoke'
+          $resultPath = Join-Path $downloadDirectory 'result.json'
+          .\scripts\release\test-portable-package.ps1 `
+            -ArchivePath (Join-Path $downloadDirectory "RedClawDesktop-windows-x64-$($env:REDCLAW_RELEASE_TAG).zip") `
+            -ChecksumPath (Join-Path $downloadDirectory 'SHA256SUMS.txt') `
+            -OutputJsonPath $resultPath
+          '### Portable package smoke' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '```json' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Get-Content -LiteralPath $resultPath | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

@@ -43,7 +43,7 @@ jobs:
         run: |
           pwsh -File "$env:GITHUB_WORKSPACE/installer/scripts/build-wix-installer.ps1" `
             -Configuration Release `
-            -Version 0.1.0-ci `
+            -Version 0.1.1-ci `
             -BuildOutputDirectory "$env:GITHUB_WORKSPACE/build/ci-installer/src/Release"
 
       - name: Upload MSI artifact

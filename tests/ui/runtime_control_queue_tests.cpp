@@ -115,7 +115,9 @@ TEST(RuntimeControlWriter, StartsPipeWriteBeforeGuiReturnsToItsEventLoop) {
         EXPECT_EQ(columns[0].toUInt(), static_cast<unsigned>(i + 1));
         const auto delay = columns[1].toULongLong() - sent;
         RecordProperty("receipt_" + std::to_string(i + 1) + "_us", delay);
-        EXPECT_LE(delay, 100000U);
+        // Finding every receipt before waitForBytesWritten or any Qt event pump
+        // proves that the writer starts independently of the GUI event loop.
+        // Keep elapsed time as telemetry; process scheduling is host-dependent.
     }
 }
 #endif

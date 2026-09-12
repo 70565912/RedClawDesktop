@@ -10,12 +10,13 @@
 - [CMake Tools 故障排查](setup/cmake-tools-api-failure-troubleshooting.md)
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
+- [v0.1.1 Release notes](releases/v0.1.1.md)
 - [v0.1.0 Release notes](releases/v0.1.0.md)
 
 发布 Windows x64 便携包使用：
 
 ```powershell
-.\scripts\release\publish-github-release.ps1 -Version 0.1.0 -PackageOnly
+.\scripts\release\publish-github-release.ps1 -Version 0.1.1 -PackageOnly
 ```
 
 去掉 `-PackageOnly` 后，脚本会校验干净的公开 `main`、创建注释标签并发布 GitHub Pre-release。
@@ -41,6 +42,7 @@
 - [远端 Agent 联调](testing/remote-development-agent-integration-runbook.md)
 - [Debug Bridge 联调](testing/p2p-debug-bridge-integration-runbook.md)
 - [产品性能基线](testing/product-performance-baseline-v1.md)
+- [GitHub Actions 验证范围](testing/github-actions-validation.md)
 - [特权输入与 DirectX 检查表](testing/e2e-privileged-directx-checklist.md)
 
 本地或双机证据应写入被 Git 忽略的 `build/reports/` 或 `reports/`。运行信令、密钥、机器路径、真实网络地址和完整日志不得提交。
@@ -52,6 +54,7 @@
 - [Agent 执行协议](runtime/AGENT_EXECUTION_PROTOCOL.md)
 - [模块规格](modules/module-specs.md)
 - [阶段日志](logs/DEVLOG.md)
+- [v0.1.1 发布说明](releases/v0.1.1.md)
 - [v0.1.0 发布说明](releases/v0.1.0.md)
 
 ## AI coding 配置

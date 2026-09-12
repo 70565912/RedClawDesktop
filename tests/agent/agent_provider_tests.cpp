@@ -8,6 +8,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,30 @@
 #include "redclaw/agent/agent_providers.h"
 
 namespace {
+
+#ifdef _WIN32
+class ScopedEnvironment final {
+public:
+    ScopedEnvironment(const char* name, const std::string& value)
+        : name_(name) {
+        char* existing = nullptr;
+        std::size_t existing_size = 0;
+        if (_dupenv_s(&existing, &existing_size, name) == 0 && existing != nullptr) {
+            previous_ = existing;
+            std::free(existing);
+        }
+        _putenv_s(name_.c_str(), value.c_str());
+    }
+
+    ~ScopedEnvironment() {
+        _putenv_s(name_.c_str(), previous_ ? previous_->c_str() : "");
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
+#endif
 
 TEST(DebugFixtureProvider, IsExplicitlyIdentifiedAndUnavailableInRelease) {
     auto provider = redclaw::agent::make_debug_fixture_agent_provider();
@@ -64,11 +89,11 @@ public:
         std::string*) override {
         probes.push_back(executable + " " + (arguments.empty() ? "" : arguments.front()));
         probe_timeouts.push_back(timeout_ms);
-        if (probe_codex_priority_config_failure
+        if (probe_codex_service_tier_config_failure
             && arguments.size() > 1U && arguments[0] == "login"
             && arguments[1] == "status") {
             *exit_code = 1;
-            *output = "service_tier unknown variant priority";
+            *output = "service_tier unknown variant default";
             return true;
         }
         *exit_code = probe_exit_code;
@@ -130,7 +155,7 @@ public:
 
     bool executable_ready = true;
     bool probe_runs = true;
-    bool probe_codex_priority_config_failure = false;
+    bool probe_codex_service_tier_config_failure = false;
     int probe_exit_code = 0;
     int models_failures_remaining = 0;
     std::string probe_status = "Logged in";
@@ -367,10 +392,10 @@ TEST(AgentProviders, CodexRequiresAuthenticationAndRefreshes) {
     provider->shutdown();
 }
 
-TEST(AgentProviders, CodexUsesScopedFastCompatibilityForUnsupportedPriorityConfig) {
+TEST(AgentProviders, CodexUsesScopedFastCompatibilityForUnsupportedServiceTierConfig) {
     auto process = std::make_unique<FakeAgentProcess>();
     auto* raw_process = process.get();
-    raw_process->probe_codex_priority_config_failure = true;
+    raw_process->probe_codex_service_tier_config_failure = true;
     auto provider = redclaw::agent::make_codex_app_server_provider(std::move(process));
     ASSERT_TRUE(provider->probe().available);
     std::string error;
@@ -383,6 +408,43 @@ TEST(AgentProviders, CodexUsesScopedFastCompatibilityForUnsupportedPriorityConfi
 }
 
 #ifdef _WIN32
+TEST(AgentProcess, PrefersCodexDesktopCliBeforePowerShellFallback) {
+    const auto unique_suffix = std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto fixture_directory = std::filesystem::temp_directory_path()
+        / ("redclaw-codex-discovery-" + unique_suffix);
+    const auto path_directory = fixture_directory / "path";
+    const auto local_app_data = fixture_directory / "local";
+    const auto desktop_bin = local_app_data / "OpenAI" / "Codex" / "bin" / "current";
+    std::filesystem::create_directories(path_directory);
+    std::filesystem::create_directories(desktop_bin);
+    {
+        std::ofstream script(path_directory / "codex.ps1", std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(script.is_open());
+        script << "exit 0\n";
+    }
+    const auto desktop_cli = desktop_bin / "codex.exe";
+    {
+        std::ofstream executable(desktop_cli, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(executable.is_open());
+        executable << "fixture";
+    }
+
+    ScopedEnvironment path("PATH", path_directory.string());
+    ScopedEnvironment local("LOCALAPPDATA", local_app_data.string());
+    redclaw::agent::AgentResolvedCommand resolved;
+    std::string error;
+    ASSERT_TRUE(redclaw::agent::resolve_agent_command(
+        "codex", {"login"}, &resolved, &error)) << error;
+    EXPECT_EQ(resolved.target, desktop_cli);
+    EXPECT_EQ(resolved.application, desktop_cli);
+    ASSERT_EQ(resolved.arguments.size(), 1U);
+    EXPECT_EQ(resolved.arguments.front(), "login");
+
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(fixture_directory, cleanup_error);
+}
+
 TEST(AgentProviders, RealProviderReadinessWhenExplicitlyEnabled) {
     const char* selected = std::getenv("REDCLAW_REAL_AGENT_PROVIDER");
     if (selected == nullptr) {

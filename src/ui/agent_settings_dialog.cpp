@@ -8,6 +8,7 @@
 
 #include <QCloseEvent>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -21,6 +22,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QSettings>
+#include <QScrollArea>
 #include <QTextCursor>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -174,8 +176,15 @@ struct AgentSettingsDialog::Impl {
         for (const auto& model : probe.models) {
             models.push_back(QString::fromStdString(model));
         }
-        provider->models->setText(models.isEmpty() ? "Host default / unavailable"
-                                                   : models.join(", "));
+        const QString model_list = models.join(", ");
+        provider->models->setToolTip(model_list);
+        provider->models->setText(models.isEmpty()
+            ? "Host default / unavailable"
+            : models.size() <= 2
+            ? model_list
+            : QString("%1 models: %2, %3, …")
+                  .arg(models.size())
+                  .arg(models[0], models[1]));
         update_controls();
     }
 
@@ -307,6 +316,9 @@ struct AgentSettingsDialog::Impl {
         account_cancelled = false;
         account_timed_out = false;
         account_output->clear();
+        append_account_output(
+            ("Using " + QDir::toNativeSeparators(
+                QString::fromStdWString(command.target.wstring())) + "\n").toUtf8());
         account_process->setProgram(QString::fromStdWString(command.application.wstring()));
         QStringList process_arguments;
         for (const auto& argument : command.arguments) {
@@ -328,7 +340,13 @@ AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
     resize(760, 620);
 
     auto* layout = new QVBoxLayout(this);
-    auto* provider_group = new QGroupBox("Local provider accounts", this);
+    auto* settings_scroll = new QScrollArea(this);
+    settings_scroll->setObjectName("agentSettingsScrollArea");
+    settings_scroll->setWidgetResizable(true);
+    settings_scroll->setFrameShape(QFrame::NoFrame);
+    auto* settings_content = new QWidget(settings_scroll);
+    auto* settings_layout = new QVBoxLayout(settings_content);
+    auto* provider_group = new QGroupBox("Local provider accounts", settings_content);
     auto* provider_layout = new QFormLayout(provider_group);
     impl_->providers[0].provider = AgentProviderKindV1::kCodex;
     impl_->providers[1].provider = AgentProviderKindV1::kCursor;
@@ -365,9 +383,9 @@ AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
                 }
             });
     }
-    layout->addWidget(provider_group);
+    settings_layout->addWidget(provider_group);
 
-    auto* project_group = new QGroupBox("Registered Host projects", this);
+    auto* project_group = new QGroupBox("Registered Host projects", settings_content);
     auto* project_layout = new QVBoxLayout(project_group);
     impl_->projects = new QListWidget(project_group);
     project_layout->addWidget(impl_->projects);
@@ -378,7 +396,7 @@ AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
     project_actions->addWidget(impl_->remove_project);
     project_actions->addStretch(1);
     project_layout->addLayout(project_actions);
-    layout->addWidget(project_group, 1);
+    settings_layout->addWidget(project_group, 1);
     for (const auto& root : settings->value("host/agent_project_roots").toStringList()) {
         impl_->add_project_root(root);
     }
@@ -398,6 +416,9 @@ AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
     });
     QObject::connect(impl_->projects, &QListWidget::currentItemChanged, this,
         [this]() { impl_->update_controls(); });
+
+    settings_scroll->setWidget(settings_content);
+    layout->addWidget(settings_scroll, 1);
 
     auto* bottom = new QHBoxLayout();
     impl_->refresh = new QPushButton("Refresh", this);

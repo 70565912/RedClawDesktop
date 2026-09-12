@@ -4,7 +4,7 @@ Updated: 2026-09-12
 
 ## Current release
 
-RedClawDesktop `v0.1.0` is the first Windows x64 Developer Preview. Its scope is the GUI Host/Controller workflow, public-DHT rendezvous, ICE connectivity, real desktop capture and codec path, D3D11 presentation, explicitly authorized input, and the optional remote Agent channel.
+RedClawDesktop `v0.1.1` is the current Windows x64 Developer Preview. Its scope is the GUI Host/Controller workflow, public-DHT rendezvous, ICE connectivity, real desktop capture and codec path, D3D11 presentation, explicitly authorized input, and the optional remote Agent channel. This patch release improves local Codex CLI discovery and keeps Agent account feedback reachable in the settings dialog.
 
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
@@ -14,6 +14,7 @@ The portable ZIP is the only binary distribution for this release. The service M
 - The local two-GUI path has exercised real capture, encode, transport, decode, presentation, authorized input, and Control/Media/Agent channel activity.
 - The default ICE UDP port is 55000. GUI, CLI, runtime profiles, and integration scripts propagate the same setting. Local two-process tests use Controller 55001.
 - UPnP targets the configured ICE UDP port. DHT keeps its independent listening port and does not request a router mapping.
+- GitHub Release publication triggers a checksum, archive-content, and packaged command-entry smoke on a fresh hosted Windows runner. Real capture, GPU presentation, router mapping, cross-site traversal, input, and Provider login remain local or physical acceptance work.
 - Startup reserves the configured ICE port so an occupied port fails early instead of silently changing the runtime contract.
 
 ## Verified cross-LAN checkpoint
@@ -37,4 +38,4 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-After `v0.1.0`, continue the cross-LAN playbook with independently recorded versions, negotiated capabilities, artifact hashes, Host ICE UDP 55000, and runtime evidence. Supported versions must interoperate through their common capability set. Treat a connected state as preliminary until real capture, receive, decode, and presentation counters advance.
+After `v0.1.1`, continue the cross-LAN playbook with independently recorded versions, negotiated capabilities, artifact hashes, Host ICE UDP 55000, and runtime evidence. Supported versions must interoperate through their common capability set. Treat a connected state as preliminary until real capture, receive, decode, and presentation counters advance.
