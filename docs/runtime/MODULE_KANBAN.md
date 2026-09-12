@@ -2,7 +2,7 @@
 
 Updated: 2026-09-12
 
-This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current priority is the Windows two-machine product path and the `v0.1.0` Developer Preview.
+This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current priority is the Windows two-machine product path and the `v0.1.1` Developer Preview.
 
 Status values: `done`, `in-progress`, `planned`.
 
@@ -67,6 +67,8 @@ Status values: `done`, `in-progress`, `planned`.
 - `X00-T03` `v0.1.0` clean public repository and portable prerelease — done.
 - `X00-T04` One physical cross-LAN public-DHT/direct-NAT real-video checkpoint — done; remote input, real Provider, mixed-version, and TURN coverage remain open.
 - `X00-T05` Expanded physical cross-LAN and TURN acceptance — planned.
+- `X00-T06` `v0.1.1` Agent login consistency and published-package cloud smoke — done.
+- `X00-T06` `v0.1.1` Agent login consistency and published-package cloud smoke — done.
 
 ## Release gate
 

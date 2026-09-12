@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cwctype>
 #include <cstdio>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -164,6 +165,49 @@ std::optional<std::wstring> search_windows_path(
     return std::nullopt;
 }
 
+std::optional<std::wstring> search_codex_desktop_cli() {
+    const DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
+    if (required == 0) {
+        return std::nullopt;
+    }
+    std::vector<wchar_t> local_app_data(required, L'\0');
+    if (GetEnvironmentVariableW(
+            L"LOCALAPPDATA", local_app_data.data(),
+            static_cast<DWORD>(local_app_data.size())) == 0) {
+        return std::nullopt;
+    }
+
+    const std::filesystem::path bin_root = std::filesystem::path(local_app_data.data())
+        / L"OpenAI" / L"Codex" / L"bin";
+    std::error_code error;
+    if (!std::filesystem::is_directory(bin_root, error)) {
+        return std::nullopt;
+    }
+
+    std::optional<std::filesystem::path> newest;
+    std::filesystem::file_time_type newest_time{};
+    for (std::filesystem::directory_iterator entries(
+             bin_root, std::filesystem::directory_options::skip_permission_denied, error);
+         !error && entries != std::filesystem::directory_iterator();
+         entries.increment(error)) {
+        const auto candidate = entries->path() / L"codex.exe";
+        if (!std::filesystem::is_regular_file(candidate, error)) {
+            error.clear();
+            continue;
+        }
+        const auto write_time = std::filesystem::last_write_time(candidate, error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (!newest || write_time > newest_time) {
+            newest = candidate;
+            newest_time = write_time;
+        }
+    }
+    return newest ? std::optional<std::wstring>(newest->wstring()) : std::nullopt;
+}
+
 std::wstring lowercase_extension(const std::wstring& path) {
     const std::size_t separator = path.find_last_of(L"\\/");
     const std::size_t dot = path.find_last_of(L'.');
@@ -198,6 +242,12 @@ bool resolve_windows_launch(
     if (requested_extension.empty() || requested_extension == L".exe") {
         target = search_windows_path(
             requested, requested_extension.empty() ? L".exe" : nullptr);
+    }
+    std::wstring requested_name = requested;
+    std::transform(requested_name.begin(), requested_name.end(), requested_name.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    if (!target && requested_extension.empty() && requested_name == L"codex") {
+        target = search_codex_desktop_cli();
     }
     if (!target && (requested_extension.empty() || requested_extension == L".ps1")) {
         target = search_windows_path(

@@ -67,11 +67,10 @@ bool reports_not_authenticated(const std::string& output) {
         || normalized.find("login required") != std::string::npos;
 }
 
-bool reports_unsupported_priority_service_tier(const std::string& output) {
+bool reports_unsupported_service_tier(const std::string& output) {
     const std::string normalized = lowercase(output);
     return normalized.find("service_tier") != std::string::npos
-        && normalized.find("unknown variant") != std::string::npos
-        && normalized.find("priority") != std::string::npos;
+        && normalized.find("unknown variant") != std::string::npos;
 }
 
 std::vector<std::string> codex_arguments(
@@ -381,7 +380,7 @@ private:
             "codex", {"login", "status"}, 10000,
             &status_exit, &status_output, &ignored);
         if ((!status_ran || status_exit != 0)
-            && reports_unsupported_priority_service_tier(status_output)) {
+            && reports_unsupported_service_tier(status_output)) {
             status_output.clear();
             ignored.clear();
             status_ran = process_->run_probe(

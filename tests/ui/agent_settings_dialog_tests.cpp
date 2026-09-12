@@ -106,9 +106,39 @@ TEST(AgentSettingsDialog, ShowsLoginOutputAndNonZeroExit) {
     login->click();
 
     ASSERT_TRUE(wait_until([&] { return status->text().contains("exited with code 17"); }));
+    EXPECT_TRUE(output->toPlainText().contains("Using "));
+    EXPECT_TRUE(output->toPlainText().contains("codex.exe"));
     EXPECT_TRUE(output->toPlainText().contains("Open browser to continue"));
     EXPECT_TRUE(output->toPlainText().contains("Browser launch unavailable"));
     EXPECT_TRUE(status->text().contains("codex login --device-auth"));
+#endif
+}
+
+TEST(AgentSettingsDialog, KeepsAccountFeedbackInsideVisibleDialog) {
+#ifndef _WIN32
+    GTEST_SKIP() << "Agent provider account commands are Windows-only";
+#else
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(write_provider_fixtures(directory.path()));
+    ScopedEnvironment path("PATH", fixture_path(directory.path()));
+    QSettings settings(directory.filePath("settings.ini"), QSettings::IniFormat);
+    redclaw::ui::AgentSettingsDialog dialog(&settings);
+    dialog.resize(760, 620);
+    dialog.show();
+    ASSERT_TRUE(wait_for_initial_probe(&dialog));
+
+    auto* status = dialog.findChild<QLabel*>("agentAccountOperationStatus");
+    auto* output = dialog.findChild<QPlainTextEdit*>("agentAccountOperationOutput");
+    auto* cancel = dialog.findChild<QPushButton*>("agentAccountCancelButton");
+    ASSERT_NE(status, nullptr);
+    ASSERT_NE(output, nullptr);
+    ASSERT_NE(cancel, nullptr);
+    EXPECT_TRUE(status->isVisible());
+    EXPECT_TRUE(output->isVisible());
+    EXPECT_TRUE(cancel->isVisible());
+    EXPECT_LE(output->mapTo(&dialog, output->rect().bottomRight()).y(),
+        dialog.contentsRect().bottom());
 #endif
 }
 

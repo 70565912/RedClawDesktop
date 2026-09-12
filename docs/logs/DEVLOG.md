@@ -2,6 +2,19 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
+## 2026-09-12 — v0.1.1 package verification
+
+- Documented the boundary between GitHub-hosted checks and physical desktop acceptance, including the reason a fresh hosted runner installs its own vcpkg dependencies.
+- Added a release-triggered Windows package smoke that downloads the final published ZIP, verifies its checksum and required files, and runs the packaged command entry without rebuilding the program.
+- Kept real capture, GPU presentation, UPnP, cross-site ICE, focus-sensitive input, and real Provider login in the local or physical acceptance scope.
+- Replaced the runtime-control writer's host-speed threshold with a deterministic pre-event-loop receipt check while retaining its measured delay as test telemetry.
+
+## 2026-09-12 — Local Agent login consistency
+
+- Made Codex CLI discovery consistent for GUI launches that do not inherit Codex Desktop's temporary PATH: an explicitly available native CLI still wins, then the current user's Codex Desktop CLI is discovered before an older PowerShell launcher fallback.
+- Kept Agent account status, cancellation, and command output inside the visible settings window, displayed the selected local CLI path when an account command starts, and compacted long Provider model lists.
+- Verified the focused Provider and GUI tests, published Debug, and confirmed through the standard Controller launcher that Codex reports ready with the current CLI while the account feedback controls remain visible.
+
 ## 2026-09-11 — offsite desktop stream checkpoint
 
 - Completed one physical cross-LAN Controller-to-Host run through public DHT and a direct NAT path. ICE connected, all four negotiated channels opened, and real H.264 capture, transport, hardware decode, and GUI presentation advanced without decode or present failures.

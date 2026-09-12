@@ -4,10 +4,10 @@
 
 **面向开发者的 Windows P2P 远程桌面与远端 Agent 工作台**
 
-[English](README.en.md) · [下载 v0.1.0](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.0) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
+[English](README.en.md) · [下载 v0.1.1](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.0-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.0)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.0)
+[![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,7 +16,7 @@
 
 RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，在同一个界面中查看真实桌面、发送经过授权的键鼠输入，并与开发机上的 AI coding Agent 交互。连接采用在线 DHT rendezvous 与 ICE/STUN/TURN 协商，优先建立端到端 P2P 直连。
 
-> `v0.1.0` 是 Windows x64 Developer Preview。它适合开发者测试和双机联调，尚未提供签名安装器，也尚未覆盖所有异地 NAT/TURN 组合。
+> `v0.1.1` 是 Windows x64 Developer Preview。它适合开发者测试和双机联调，尚未提供签名安装器，也尚未覆盖所有异地 NAT/TURN 组合。
 
 ![RedClawDesktop Controller 正在显示真实视频链路与 Agent 面板](docs/assets/redclaw-controller-desktop-stream.png)
 
@@ -30,7 +30,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 当前能力
 
-| 能力 | v0.1.0 状态 |
+| 能力 | v0.1.1 状态 |
 | --- | --- |
 | Windows Host / Controller 图形界面 | 可用 |
 | 机器码与 public-DHT 在线 rendezvous | 可用 |
@@ -44,11 +44,11 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 快速开始
 
-1. 从 [v0.1.0 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.0) 下载 `RedClawDesktop-windows-x64-v0.1.0.zip` 和 `SHA256SUMS.txt`。
+1. 从 [v0.1.1 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1) 下载 `RedClawDesktop-windows-x64-v0.1.1.zip` 和 `SHA256SUMS.txt`。
 2. 校验 ZIP：
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.0.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.1.zip -Algorithm SHA256
    ```
 
 3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。Host 和 Controller 必须使用同一版本。
@@ -65,7 +65,15 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 - 手工映射时选择 **UDP**，内部端口和外部端口均填写该设备配置的 ICE UDP 端口。
 - DHT 监听端口只承担 rendezvous，无需手工端口映射。
 
-不同 NAT、CGNAT、防火墙和运营商策略会影响直连结果。无法直连时可配置 TURN；`v0.1.0` 尚未完成所有异地网络组合的覆盖测试。
+不同 NAT、CGNAT、防火墙和运营商策略会影响直连结果。无法直连时可配置 TURN；`v0.1.1` 尚未完成所有异地网络组合的覆盖测试。
+
+## GitHub 云端验证范围
+
+GitHub Actions 在每次任务中使用新建的 Windows 虚拟机。本机已经安装的 vcpkg 依赖不会自动出现在云端；单元测试流水线当前会在 CMake 配置阶段安装自己的 Qt、FFmpeg 等依赖，因此首次执行耗时较长。
+
+发布 Pre-release 后，独立的包检查会直接下载 GitHub Release 中的最终 ZIP，核对 `SHA256SUMS.txt`，检查便携包必需文件，并运行包内 `redclaw_desktop.exe --help`。这项检查不重新构建程序，主要发现上传损坏、缺少 DLL 或命令入口无法启动等问题。
+
+GitHub 托管虚拟机不作为真实桌面验收环境。桌面采集、D3D11 硬件解码与呈现、UPnP、异地 ICE 穿透及真实键鼠输入仍由本地或物理双机验证。详细边界见 [GitHub Actions 验证说明](docs/testing/github-actions-validation.md)。
 
 ## 安全模型
 
@@ -89,7 +97,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 项目状态
 
-`v0.1.0` 已覆盖 Windows 本机双 GUI 的真实采集、编码、传输、解码、呈现，以及 Control / Media / Agent 三通道回归。严格性能目标作为持续观测项，不阻塞本次功能预发布；性能结果会随硬件、驱动、分辨率和网络环境变化。
+`v0.1.1` 已覆盖 Windows 本机双 GUI 的真实采集、编码、传输、解码、呈现，以及 Control / Media / Agent 三通道回归。严格性能目标作为持续观测项，不阻塞本次功能预发布；性能结果会随硬件、驱动、分辨率和网络环境变化。
 
 下一阶段重点是扩大异地网络与 TURN 覆盖、完善无人值守安装和升级、补充代码签名，并继续降低 GUI 与 Agent 大输出下的调度开销。当前执行状态见 [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md)。
 
