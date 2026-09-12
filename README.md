@@ -69,7 +69,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## GitHub 云端验证范围
 
-GitHub Actions 在每次任务中使用新建的 Windows 虚拟机。本机已经安装的 vcpkg 依赖不会自动出现在云端；单元测试流水线当前会在 CMake 配置阶段安装自己的 Qt、FFmpeg 等依赖，因此首次执行耗时较长。
+GitHub Actions 在每次任务中使用新建的 Windows 虚拟机。本机已经安装的 vcpkg 依赖不会自动出现在云端；单元测试流水线会在 CMake 配置阶段安装自己的 Qt、FFmpeg 等依赖。相同 vcpkg 版本和依赖清单会复用云端二进制缓存，缓存尚未建立或依赖变化时仍需完成一次较长的构建。
 
 发布 Pre-release 后，独立的包检查会直接下载 GitHub Release 中的最终 ZIP，核对 `SHA256SUMS.txt`，检查便携包必需文件，并运行包内 `redclaw_desktop.exe --help`。这项检查不重新构建程序，主要发现上传损坏、缺少 DLL 或命令入口无法启动等问题。
 

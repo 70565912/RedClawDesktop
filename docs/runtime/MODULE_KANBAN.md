@@ -68,7 +68,7 @@ Status values: `done`, `in-progress`, `planned`.
 - `X00-T04` One physical cross-LAN public-DHT/direct-NAT real-video checkpoint — done; remote input, real Provider, mixed-version, and TURN coverage remain open.
 - `X00-T05` Expanded physical cross-LAN and TURN acceptance — planned.
 - `X00-T06` `v0.1.1` Agent login consistency and published-package cloud smoke — done.
-- `X00-T06` `v0.1.1` Agent login consistency and published-package cloud smoke — done.
+- `X00-T07` GitHub unit baseline linkage and reusable vcpkg binary cache — done.
 
 ## Release gate
 

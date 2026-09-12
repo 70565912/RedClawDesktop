@@ -69,7 +69,7 @@ Direct connectivity depends on NAT, CGNAT, firewall, and ISP policy. Configure T
 
 ## GitHub cloud validation boundary
 
-GitHub Actions uses a newly provisioned Windows virtual machine for each job. Dependencies already installed in a developer's local vcpkg tree are not available in that VM. The unit workflow currently installs its own Qt, FFmpeg, and other dependencies during CMake configuration, so an initial run can take a long time.
+GitHub Actions uses a newly provisioned Windows virtual machine for each job. Dependencies already installed in a developer's local vcpkg tree are not available in that VM. The unit workflow installs its own Qt, FFmpeg, and other dependencies during CMake configuration. Matching vcpkg revisions and dependency manifests reuse a hosted binary cache; a missing cache or a dependency change still requires one longer build.
 
 After a prerelease is published, a separate package check downloads the final ZIP from GitHub Releases, verifies it against `SHA256SUMS.txt`, checks required portable files, and runs `redclaw_desktop.exe --help` from the archive. It does not rebuild the application; it detects damaged uploads, missing DLLs, and a broken command entry point.
 

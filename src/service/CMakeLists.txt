@@ -3,6 +3,7 @@ find_package(OpenSSL REQUIRED)
 set(REDCLAW_SERVICE_SOURCES
   src/service_module.cpp
   src/dht_rendezvous.cpp
+  src/dht_listen_port_selection.cpp
   src/dht_publication_transaction.cpp
   src/ipc_channel_contracts.cpp
   src/ipc_channel.cpp
@@ -24,14 +25,15 @@ set(REDCLAW_SERVICE_PRIVATE_LIBS
 if(REDCLAW_ENABLE_DHT_BACKENDS)
   find_package(LibtorrentRasterbar CONFIG REQUIRED)
   find_package(miniupnpc CONFIG REQUIRED)
-  list(APPEND REDCLAW_SERVICE_SOURCES src/dht_rendezvous_libtorrent.cpp src/dht_listen_port_selection.cpp)
+  list(APPEND REDCLAW_SERVICE_SOURCES src/dht_rendezvous_libtorrent.cpp)
   list(APPEND REDCLAW_SERVICE_PRIVATE_LIBS
     LibtorrentRasterbar::torrent-rasterbar
     miniupnpc::miniupnpc
   )
-  if(WIN32)
-    list(APPEND REDCLAW_SERVICE_PRIVATE_LIBS ws2_32)
-  endif()
+endif()
+
+if(WIN32)
+  list(APPEND REDCLAW_SERVICE_PRIVATE_LIBS ws2_32)
 endif()
 
 add_library(redclaw_service STATIC

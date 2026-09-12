@@ -2,6 +2,13 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
+## 2026-09-12 — GitHub unit baseline repair
+
+- Kept backend-independent DHT listen-port selection in the base service library so the default unit build links its matching tests without installing the optional libtorrent and miniupnpc feature set.
+- Added a vcpkg binary cache keyed by the runner, vcpkg revision, manifest, configuration, and overlays. Cold or changed dependency inputs still perform one complete build; matching later jobs can reuse compiled packages.
+- Aligned the public vcpkg manifest version with the `0.1.1` CMake project version.
+- Preserved the non-E2E Windows unit baseline and kept physical public-DHT, desktop, GPU, UPnP, and input acceptance outside the hosted runner.
+
 ## 2026-09-12 — v0.1.1 package verification
 
 - Documented the boundary between GitHub-hosted checks and physical desktop acceptance, including the reason a fresh hosted runner installs its own vcpkg dependencies.
