@@ -6,11 +6,11 @@ GitHub-hosted Windows runners provide repeatable build and package checks on a n
 
 The unit workflow clones its own vcpkg checkout. During CMake configuration, manifest mode installs Qt, FFmpeg, libdatachannel, Boost, OpenSSL, and the remaining native dependencies into the runner workspace. A developer's local vcpkg installation and compiled packages are not available to that virtual machine.
 
-The current unit workflow does not restore a shared vcpkg binary cache. Its first configuration on a new runner therefore includes dependency work. This is independent from the locally built portable package uploaded to GitHub Releases.
+The unit workflow stores compiled vcpkg packages in a GitHub Actions cache keyed by the Windows runner, vcpkg revision, manifest, configuration, and overlays. A matching later job can restore those binaries, while a cold cache or changed dependency input still performs the full dependency build. This is independent from the locally built portable package uploaded to GitHub Releases.
 
 ## Automated cloud checks
 
-`ci-unit-tests.yml` configures the Windows build, compiles the selected non-E2E unit targets, and runs CTest.
+`ci-unit-tests.yml` configures the Windows build without optional libtorrent/miniupnpc backends, compiles the selected non-E2E unit targets, and runs CTest. The backend-independent DHT codec, publication, validation, and listen-port selection tests remain part of this baseline; physical public-DHT behavior is covered separately.
 
 `release-package-smoke.yml` runs after a GitHub Release is published and can also be started manually for an existing tag. It:
 
