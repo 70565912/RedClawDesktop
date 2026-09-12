@@ -8,6 +8,7 @@ This public log records release-level changes. Machine-specific paths, addresses
 - Added a release-triggered Windows package smoke that downloads the final published ZIP, verifies its checksum and required files, and runs the packaged command entry without rebuilding the program.
 - Kept real capture, GPU presentation, UPnP, cross-site ICE, focus-sensitive input, and real Provider login in the local or physical acceptance scope.
 - Replaced the runtime-control writer's host-speed threshold with a deterministic pre-event-loop receipt check while retaining its measured delay as test telemetry.
+- Fixed strict-mode CMake preset discovery so the release publisher can call the standard build entry point when visible presets omit the optional `hidden` field.
 
 ## 2026-09-12 — Local Agent login consistency
 
