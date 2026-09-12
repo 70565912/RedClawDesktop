@@ -101,6 +101,16 @@ function Get-PresetDocument {
     return Get-Content $PresetPath -Raw | ConvertFrom-Json
 }
 
+function Test-PresetHidden {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Preset
+    )
+
+    $hiddenProperty = $Preset.PSObject.Properties['hidden']
+    return $null -ne $hiddenProperty -and $hiddenProperty.Value -eq $true
+}
+
 function Get-ConfigurePresetNames {
     $names = [System.Collections.Generic.List[string]]::new()
     foreach ($presetFile in @("CMakeUserPresets.json", "CMakePresets.json")) {
@@ -110,7 +120,7 @@ function Get-ConfigurePresetNames {
         }
 
         foreach ($preset in $document.configurePresets) {
-            if ($preset.hidden -eq $true) {
+            if (Test-PresetHidden -Preset $preset) {
                 continue
             }
             if (-not [string]::IsNullOrWhiteSpace($preset.name) -and $names -notcontains $preset.name) {
@@ -131,7 +141,7 @@ function Get-BuildPresetNames {
         }
 
         foreach ($preset in $document.buildPresets) {
-            if ($preset.hidden -eq $true) {
+            if (Test-PresetHidden -Preset $preset) {
                 continue
             }
             if (-not [string]::IsNullOrWhiteSpace($preset.name) -and $names -notcontains $preset.name) {
