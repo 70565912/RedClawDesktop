@@ -2,6 +2,40 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
+## 2026-09-14 — Agent conversation panel content-sized window
+
+- Connected the virtualized conversation viewport's measured content height to its top-level window size hint. The Agent panel now grows as remote replies and expanded activity details are measured, coalesces streaming resize requests, and clamps the result to the active screen so long histories remain scrollable.
+- Added UI regressions for window growth/shrink and expanded wrapped activity details. The shared Debug build and full UI connection-flow suite passed after using a consistent MSVC 14.44 compiler/header environment; seven related suites passed together. The latest Release publication and physical two-machine UI validation remain pending.
+
+## 2026-09-14 — Opt-in input delivery diagnostics
+
+- Extend the existing bounded input-stage recorder with category counts, explicit mapping/rejection stages, and native SendInput return/context observations; no key values or text are retained. Add a Debug-only diagnostic launch option, independent of synthetic Agent fixtures.
+- Add a passive Host diagnostic window to distinguish OS native-message delivery from API insertion. It observes only its own window, does not install global hooks or grant input authority, and leaves normal Control/Agent wire formats unchanged.
+- Debug desktop build with the online DHT backend and all seven focused suites passed: runtime options/receipts, input session, UI connection flow, Agent provider, coordination, broker and isolation. Physical deployment and target-window delivery evidence remain pending; no latency or UAC-control improvement is claimed.
+
+## 2026-09-14 — Agent approval identity and bounded result replay
+
+- Scoped durable approval lookup to task plus request ID. A provider counter reused after Host restart must not inherit another task's accepted/rejected approval; the existing journal schema is retained and replayed with the corrected key. Same-task duplicate decisions still fail closed; ordinary request uniqueness and cross-task replacement semantics are preserved.
+- Changed transcript synchronization to cursor-based bounded batches. Transport queue pressure requests replay from the durable acknowledgment instead of reporting retained text as permanently lost; real provider/cache loss remains explicit. Added a long-history/small-queue regression.
+- Applied bounded backpressure to dedicated provider pipe readers, waking blocked readers before shutdown. Preserved Codex command-output payloads, reported failed/interrupted turn completion correctly, and released failed process/turn ownership so an explicit retry can resume the registered thread.
+- Retained the related Cursor first-approval retry repair: an unlaunched registered task starts only after fresh approval, while an already launched task must resume its registered chat.
+- Agent v1 wire fields and security gates are unchanged. Debug build/publication and packaged startup passed, as did the six focused Agent/IPC test suites (including the 60-second isolation gate). Physical mixed-version runtime validation is tracked on `X00-T10`; remote UAC remains a field-evidence gate, not a conclusion from input counters.
+- Physical upgraded-Controller/old-Host reconnection and task-scoped approval reuse succeeded. A read-only remote probe and Agent report readback found Default input desktop, no consent/LogonUI, and matching Host/probe sessions at sampling time; this does not reconstruct the earlier input failure. Host-side result-flood deployment/acceptance remains open.
+
+## 2026-09-14 — Cursor and Codex conversation output parsing
+
+- Parsed Cursor `stream-json` assistant content from nested `message.content`, enabled partial output, surfaced bounded tool-call summaries, and used the terminal `result` as a fallback when no assistant message was emitted. Duplicate buffered/final assistant output is filtered per turn.
+- Extended Codex app-server handling beyond `params.delta` to nested `item` content and completion text, while keeping tool item details visible as bounded activity summaries. No Agent wire schema change was required.
+- Added Provider regressions for nested assistant text, tool details, completion fallback, Cursor result de-duplication, and the existing approval/resume path. The full Agent Provider suite passed 18 tests with one opt-in real-provider readiness test skipped; all 17 conversation-panel tests passed.
+- Release rebuild and packaged `--help` startup validation remain required after this parser change; physical two-machine Cursor/Codex validation remains open.
+
+## 2026-09-14 — Agent message layout and Cursor approval retry
+
+- Removed the blue background band around outgoing messages while retaining a single 1 px outline. Expanding or collapsing remote activity now invalidates that row's cached height, remeasures wrapped details, and repositions subsequent messages.
+- Fixed follow-up submission after the first Cursor approval is rejected, expires, or is interrupted: register the task's model and workspace before approval, distinguish an unlaunched task from an existing chat, and require fresh approval before starting the new instruction. Started conversations still resume their recorded chat; unknown tasks and launched tasks without a chat ID remain rejected. No wire schema or capability changes were required.
+- Reproduced both the stale expansion height and the exact missing-chat error with regression tests before fixing them. After the fix, 17 conversation-panel tests, 15 Provider tests, and five broker approval tests passed; the opt-in real Provider readiness test was skipped. Native Qt screenshot validation confirmed the single border and fully visible expanded Chinese/English details.
+- Built and published the Release program through `build.ps1`, verified the published executable matches the build hash, and passed its `--help` startup check. The existing Debug instances were left running. Real two-machine Cursor conversation validation remains open.
+
 ## 2026-09-12 — GitHub unit baseline repair
 
 - Kept backend-independent DHT listen-port selection in the base service library so the default unit build links its matching tests without installing the optional libtorrent and miniupnpc feature set.

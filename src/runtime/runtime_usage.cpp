@@ -49,6 +49,7 @@ void print_usage() {
         << "  --log-dir <path>           Local rolling-log directory\n"
         << "  --run-id <value>           Correlation id for integration evidence\n"
         << "  --enable-debug-control     Enable current-user local GUI debug control\n"
+        << "  --input-diagnostics        Debug-only bounded input delivery evidence; requires stream smoke\n"
         << "  --debug-control-name <value>  Override local debug control endpoint name\n"
         << "  --enable-agent-control     Enable current-user typed normal-Agent control\n"
         << "  --agent-control-name <value>  Override local normal-Agent control endpoint\n"

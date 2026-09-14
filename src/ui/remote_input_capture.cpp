@@ -803,7 +803,14 @@ bool ControllerRemoteInputCapture::send_message(
         if (!pending_input_acks_.remember(message.input_sequence, sent_us, kind)) return false;
     }
     if (qa_send_observer_) qa_send_observer_(message, sent_us);
-    return send_message_callback_(message, &error);
+    const bool sent = send_message_callback_(message, &error);
+    if (sent && message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch) {
+        for (const auto& event : message.input_events) {
+            const auto kind = static_cast<std::size_t>(event.type);
+            if (kind < sent_event_counts_.size()) ++sent_event_counts_[kind];
+        }
+    }
+    return sent;
 }
 
 bool ControllerRemoteInputCapture::normalized_position(

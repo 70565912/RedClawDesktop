@@ -1,5 +1,6 @@
 #if defined(_WIN32)
 #include "ui/qa_input_probe.h"
+#include "ui/input_diagnostic_target.h"
 #include <gtest/gtest.h>
 #include <QAbstractEventDispatcher>
 
@@ -29,6 +30,22 @@ TEST(QaInputProbe, RejectsTargetOutsideCapturedRegionAndMissingLease) {
     redclaw::ui::QaInputProbe probe(canvas, capture);
     QString error;
     EXPECT_FALSE(probe.start(&error)); EXPECT_FALSE(error.isEmpty());
+}
+
+TEST(InputDiagnosticTarget, CountsOnlyOwnNativeMessagesAndNeverConsumesThem) {
+    redclaw::ui::InputDiagnosticTarget target;
+    target.start(false);
+    MSG message{}; message.message = WM_KEYDOWN; message.hwnd = reinterpret_cast<HWND>(target.winId());
+    qintptr result = 0;
+    const auto previous = SetMessageExtraInfo(redclaw::input::kRedClawInputExtraInfo);
+    EXPECT_FALSE(target.nativeEventFilter("windows_generic_MSG", &message, &result));
+    message.hwnd = nullptr;
+    EXPECT_FALSE(target.nativeEventFilter("windows_generic_MSG", &message, &result));
+    SetMessageExtraInfo(previous);
+    EXPECT_EQ(target.snapshot().value("marked_native_counts").toArray()[0].toInteger(), 1);
+    target.stop(); message.hwnd = reinterpret_cast<HWND>(target.winId());
+    EXPECT_FALSE(target.nativeEventFilter("windows_generic_MSG", &message, &result));
+    EXPECT_EQ(target.snapshot().value("marked_native_counts").toArray()[0].toInteger(), 1);
 }
 
 TEST(ControllerRemoteInputCapture, ShutdownDetachesNativeLifecycleBeforeWidgetDestruction) {

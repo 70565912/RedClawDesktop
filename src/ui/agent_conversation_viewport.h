@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <QAbstractScrollArea>
+#include <QSize>
 
 namespace redclaw::ui {
 
@@ -18,10 +19,16 @@ public:
     using UpdateRow = std::function<bool(std::size_t, QWidget*)>;
     using CanReuseRow = std::function<bool(std::size_t, QWidget*)>;
     using InitialHeight = std::function<int(std::size_t)>;
+    using ContentSizeChanged = std::function<void()>;
     explicit AgentConversationViewport(QWidget* parent = nullptr);
     void set_rows(std::vector<std::uint64_t> ids, CreateRow create, UpdateRow update,
                   CanReuseRow reuse = {}, InitialHeight initial_height = {});
     void clear_rows();
+    void invalidate_row(std::uint64_t id);
+    void set_content_size_changed_callback(ContentSizeChanged callback);
+    [[nodiscard]] int content_height_hint() const noexcept;
+
+    [[nodiscard]] QSize sizeHint() const override;
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void scrollContentsBy(int dx, int dy) override;
@@ -34,6 +41,7 @@ private:
     CreateRow create_;
     UpdateRow update_;
     CanReuseRow reuse_;
+    ContentSizeChanged content_size_changed_;
     QWidget* spare_ = nullptr;
     bool queued_ = false;
     bool refreshing_ = false;

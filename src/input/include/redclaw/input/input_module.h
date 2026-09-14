@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -157,10 +158,29 @@ private:
 	SecureDesktopBackendGate& secure_backend_gate_;
 };
 
+// Count-only opt-in evidence. Desktop: 0 unknown, 1 Default, 2 Winlogon, 3 other.
+// Context is sampled on the actual injector thread, never inferred from an Agent.
+struct SendInputDiagnostic {
+    std::uint64_t begin_us = 0, end_us = 0;
+    std::array<std::uint32_t, 7> counts{};
+    std::uint32_t requested = 0, inserted = 0, error = 0;
+    bool context_sampled = false, cursor_before_valid = false, cursor_after_valid = false;
+    std::uint32_t process_id = 0, thread_id = 0, session_id = UINT32_MAX;
+    std::uint32_t input_desktop = 0, thread_desktop = 0, desktop_error = 0;
+    std::uint32_t foreground_pid = 0, foreground_session = UINT32_MAX, focus_pid = 0;
+    std::uint32_t process_integrity = 0, foreground_integrity = 0;
+    std::uint32_t process_integrity_error = 0, foreground_integrity_error = 0;
+    std::int32_t cursor_before_x = 0, cursor_before_y = 0, cursor_after_x = 0, cursor_after_y = 0;
+};
+
 class WindowsSendInputInjectorBackend final : public IInputInjectorBackend {
 public:
 	bool inject(const InputEvent& event) override;
 	bool inject_batch(const std::vector<InputEvent>& events) override;
+    void set_diagnostic_observer(std::function<void(const SendInputDiagnostic&)> observer);
+private:
+    std::function<void(const SendInputDiagnostic&)> diagnostic_observer_;
+    std::uint64_t last_context_us_ = 0;
 };
 
 struct DesktopGeometry {

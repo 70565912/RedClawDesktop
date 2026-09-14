@@ -405,6 +405,17 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
         }
     }
 
+    if (options.input_diagnostics) {
+#ifdef NDEBUG
+        *error = "--input-diagnostics is Debug-only";
+        return false;
+#else
+        if (!options.stream_smoke || options.log_dir.empty()) {
+            *error = "--input-diagnostics requires stream smoke and an explicit log directory";
+            return false;
+        }
+#endif
+    }
     if (options.agent_qa_fixture_provider) {
 #ifdef NDEBUG
         *error = "--agent-qa-fixture-provider is Debug-only";

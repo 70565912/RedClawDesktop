@@ -91,6 +91,42 @@ TEST(AgentConversationPanel, HostWindowSharesConversationAndClosingOnlyHidesIt) 
   EXPECT_EQ(panel->current_task_id(), "same-task");
 }
 
+TEST(AgentConversationPanel, WindowHeightFollowsConversationContent) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  QDialog host;
+  host.resize(520, 760);
+  auto* layout = new QVBoxLayout(&host);
+  auto* panel = new AgentConversationPanel(&settings, &host);
+  layout->addWidget(panel);
+  make_panel_ready(panel);
+  host.show();
+  panel->set_current_task_id("task-resize", AgentTaskStateV1::kRunning);
+  QApplication::processEvents();
+  const int before = host.height();
+
+  AgentMessageEnvelopeV1 reply;
+  reply.type = AgentMessageTypeV1::kEvent;
+  reply.task_id = "task-resize";
+  reply.task_state = AgentTaskStateV1::kRunning;
+  reply.event_kind = "agentMessage/delta";
+  QString body;
+  for (int line = 0; line < 35; ++line) {
+    if (!body.isEmpty()) body += '\n';
+    body += QString("Line %1: the conversation window should grow with this content.")
+        .arg(line + 1);
+  }
+  reply.text = body.toUtf8().toStdString();
+  panel->apply_task_message(reply);
+  ASSERT_TRUE(wait_for_panel_render([&] { return host.height() > before; }));
+  const int grown = host.height();
+  EXPECT_GT(grown, before);
+
+  panel->set_current_task_id("task-empty", AgentTaskStateV1::kQueued);
+  ASSERT_TRUE(wait_for_panel_render([&] { return host.height() < grown; }));
+}
+
 TEST(AgentConversationPanel, MapsNewRunningAndCompletedTasksToExpectedCommands) {
   QTemporaryDir directory;
   ASSERT_TRUE(directory.isValid());
@@ -201,6 +237,60 @@ TEST(AgentConversationPanel, RejectsComposerTextBeyondProtocolLimit) {
   EXPECT_TRUE(panel.status_text().contains("16384"));
 }
 
+TEST(AgentConversationPanel, ExpandedActivityRemeasuresWrappedDetailsAndFollowingRow) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings);
+  make_panel_ready(&panel);
+  panel.resize(420, 900);
+  panel.show();
+
+  AgentMessageEnvelopeV1 event;
+  event.type = AgentMessageTypeV1::kEvent;
+  event.task_id = "expanded-activity";
+  event.task_state = AgentTaskStateV1::kRunning;
+  event.event_kind = "tool_result";
+  event.text = "A long remote response must wrap at the available panel width.\n"
+      "The second line must remain visible when the triangle is expanded.\n"
+      "The final line must fit inside the activity card.";
+  panel.apply_task_message(event);
+  event.type = AgentMessageTypeV1::kTaskComplete;
+  event.task_state = AgentTaskStateV1::kCompleted;
+  event.event_kind = "completed";
+  event.text = "Following message";
+  panel.apply_task_message(event);
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return panel.findChildren<QFrame*>("agentActivityGroup").size() == 2;
+  }));
+  const auto cards = panel.findChildren<QFrame*>("agentActivityGroup");
+  auto* card = cards[0]->findChild<QLabel*>()->text().contains("A long") ? cards[0] : cards[1];
+  auto* following = card == cards[0] ? cards[1] : cards[0];
+  auto* row = card->parentWidget();
+  auto* details = card->findChild<QLabel*>("agentActivityDetails");
+  auto* toggle = card->findChild<QToolButton*>();
+  ASSERT_NE(details, nullptr);
+  ASSERT_NE(toggle, nullptr);
+  const int collapsed_height = row->height();
+  toggle->click();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return row->height() > collapsed_height
+        && details->height() >= details->heightForWidth(details->width())
+        && following->parentWidget()->y() >= row->geometry().bottom();
+  }));
+  EXPECT_TRUE(card->rect().contains(details->geometry()));
+  EXPECT_TRUE(row->rect().contains(card->geometry()));
+  const int expanded_width = row->width();
+  panel.resize(340, 900);
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return row->width() < expanded_width
+        && details->height() >= details->heightForWidth(details->width())
+        && following->parentWidget()->y() >= row->geometry().bottom();
+  }));
+  toggle->click();
+  ASSERT_TRUE(wait_for_panel_render([&] { return row->height() == collapsed_height; }));
+  EXPECT_TRUE(details->isHidden());
+}
+
 TEST(AgentConversationPanel, ReconnectClearsOfflineHintWithoutHeartbeatOverwritingTaskState) {
   QTemporaryDir directory;
   QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
@@ -294,6 +384,11 @@ TEST(AgentConversationPanel, FitsPersistedWidthAndCanRenderVisualReference) {
   QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
   AgentConversationPanel panel(&settings);
   make_panel_ready(&panel);
+  panel.set_submit_callback([](AgentSubmitMode, const QString&) {
+    return AgentSubmitResult{.ok = true, .task_id = "task-visual"};
+  });
+  panel.set_instruction_text("本地消息使用单线边框。\n检查对端返回的多行内容能否完整展开。");
+  ASSERT_TRUE(panel.trigger_submit(AgentSubmitMode::kCreateTask));
   panel.set_current_task_id("task-visual", AgentTaskStateV1::kRunning);
 
   AgentMessageEnvelopeV1 reply;
@@ -306,7 +401,9 @@ TEST(AgentConversationPanel, FitsPersistedWidthAndCanRenderVisualReference) {
 
   AgentMessageEnvelopeV1 activity = reply;
   activity.event_kind = "tool_result";
-  activity.text = "build.ps1 completed with exit code 0";
+  activity.text = "build.ps1 completed with exit code 0\n"
+      "The remote response wraps across multiple lines at this panel width.\n"
+      "最后一行也应完整显示在展开的消息控件内。";
   panel.apply_task_message(activity);
 
   panel.resize(420, 760);
@@ -318,6 +415,14 @@ TEST(AgentConversationPanel, FitsPersistedWidthAndCanRenderVisualReference) {
   EXPECT_EQ(panel.width(), 420);
   EXPECT_NE(panel.findChild<QWidget*>("agentReplyText"), nullptr);
   EXPECT_FALSE(panel.findChildren<QFrame*>("agentActivityGroup").isEmpty());
+  auto* card = panel.findChild<QFrame*>("agentActivityGroup");
+  auto* details = card->findChild<QLabel*>("agentActivityDetails");
+  const int collapsed_height = card->parentWidget()->height();
+  card->findChild<QToolButton*>()->click();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return card->parentWidget()->height() > collapsed_height
+        && details->height() >= details->heightForWidth(details->width());
+  }));
 
   const QString screenshot_path = qEnvironmentVariable(
       "REDCLAW_AGENT_PANEL_SCREENSHOT");

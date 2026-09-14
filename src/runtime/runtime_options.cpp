@@ -341,6 +341,10 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             options->stream_qa_native_size = true;
             continue;
         }
+        if (arg == "--input-diagnostics") {
+            options->input_diagnostics = true;
+            continue;
+        }
         if (arg == "--agent-qa-fixture-provider") {
             options->agent_qa_fixture_provider = true;
             continue;

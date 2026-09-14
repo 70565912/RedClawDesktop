@@ -205,6 +205,56 @@ TEST(NormalAgentControlStateV1, ApprovalDecisionMatchesPendingTaskAndIsSingleUse
     std::filesystem::remove_all(directory);
 }
 
+TEST(NormalAgentControlStateV1, ReusedProviderApprovalIdIsScopedToTaskAcrossJournalReload) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    using State = redclaw::protocol::AgentTaskStateV1;
+    const auto directory = test_directory("approval-id-reuse");
+    const auto path = directory / "journal.jsonl";
+    auto state = initialized_state(path);
+    publish_catalogs(&state);
+    std::string error;
+    auto first = task_request("old-task", "create-old");
+    auto second = task_request("new-task", "create-new", 2);
+    ASSERT_TRUE(state.prepare_outbound(first, {}, "scoped_request", 2001, &error));
+    ASSERT_TRUE(state.prepare_outbound(second, {}, "scoped_request", 2002, &error));
+    auto pending = remote_message(Type::kApprovalRequest, 3);
+    pending.task_id = first.task_id;
+    pending.request_id = "cursor-turn-4";
+    pending.event_sequence = 1;
+    pending.task_state = State::kAwaitingApproval;
+    ASSERT_TRUE(state.observe_remote(pending, 2003, &error));
+    auto decision = first;
+    decision.type = Type::kApprovalDecision;
+    decision.request_id = pending.request_id;
+    decision.approval_decision = redclaw::protocol::AgentApprovalDecisionV1::kAccept;
+    ASSERT_TRUE(state.prepare_outbound(decision, {}, "explicit_decision", 2004, &error));
+    pending.task_id = second.task_id;
+    ++pending.message_id;
+    ASSERT_TRUE(state.observe_remote(pending, 2005, &error));
+    ASSERT_EQ(state.task_snapshot(second.task_id)->task_state, State::kAwaitingApproval);
+
+    redclaw::agent::NormalAgentControlStateV1 reloaded({.journal_path = path});
+    ASSERT_TRUE(reloaded.initialize(&error)) << error;
+    // Reconcile both live tasks without replaying their already durable events.
+    for (const auto& task : {first.task_id, second.task_id}) {
+        auto snapshot = remote_message(Type::kTaskSnapshot, task == first.task_id ? 1 : 2);
+        snapshot.task_id = task;
+        snapshot.event_sequence = 1;
+        snapshot.task_state = task == first.task_id ? State::kRunning : State::kAwaitingApproval;
+        if (task == second.task_id) {
+            snapshot.request_id = pending.request_id;
+            snapshot.event_kind = "approval_pending";
+        }
+        ASSERT_TRUE(reloaded.observe_remote(snapshot, 2010, &error)) << error;
+    }
+    decision.task_id = second.task_id;
+    EXPECT_TRUE(reloaded.prepare_outbound(decision, {}, "explicit_decision", 2011, &error)) << error;
+    EXPECT_FALSE(reloaded.prepare_outbound(decision, {}, "explicit_decision", 2012, &error));
+    decision.task_id = first.task_id;
+    EXPECT_FALSE(reloaded.prepare_outbound(decision, {}, "explicit_decision", 2013, &error));
+    std::filesystem::remove_all(directory);
+}
+
 TEST(CoordinationJournalV1, SerializesConcurrentWritersByJournalPath) {
     const auto directory = test_directory("concurrent");
     const auto journal_path = directory / "coordination-v1.jsonl";

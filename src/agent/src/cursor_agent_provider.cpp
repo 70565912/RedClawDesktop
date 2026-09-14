@@ -8,6 +8,7 @@
 #include <deque>
 #include <sstream>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -32,6 +33,62 @@ std::optional<std::string> string_field(
         return std::nullopt;
     }
     return std::string(found->value().as_string());
+}
+
+std::string content_text(const boost::json::value& value, std::size_t limit) {
+    if (limit == 0U) {
+        return {};
+    }
+    if (value.is_string()) {
+        const std::string text(value.as_string());
+        return text.substr(0, limit);
+    }
+    if (value.is_array()) {
+        std::string result;
+        for (const auto& entry : value.as_array()) {
+            const auto part = content_text(entry, limit - result.size());
+            result += part;
+            if (result.size() >= limit) break;
+        }
+        return result;
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+    const auto& object = value.as_object();
+    if (const auto text = string_field(object, "text"); text.has_value()) {
+        return text->substr(0, limit);
+    }
+    for (const auto* key : {"content", "message", "item"}) {
+        const auto found = object.find(key);
+        if (found != object.end()) {
+            const auto result = content_text(found->value(), limit);
+            if (!result.empty()) return result;
+        }
+    }
+    return {};
+}
+
+std::string cursor_tool_summary(const boost::json::object& object) {
+    const std::string type = string_field(object, "type").value_or("tool_call");
+    const std::string subtype = string_field(object, "subtype").value_or("event");
+    std::string summary = type + " · " + subtype;
+    const auto tool = object.find("tool_call");
+    if (tool == object.end() || !tool->value().is_object()) return summary;
+    for (const auto& [name, value] : tool->value().as_object()) {
+        summary += "\n" + std::string(name);
+        if (!value.is_object()) continue;
+        const auto& details = value.as_object();
+        const auto args = details.find("args");
+        if (args != details.end() && args->value().is_object()) {
+            if (const auto path = string_field(args->value().as_object(), "path");
+                path.has_value()) {
+                summary += "\npath: " + path->substr(0, 1536);
+            }
+        }
+        if (details.contains("result")) summary += "\nresult: completed";
+    }
+    return summary.substr(0, redclaw::protocol::kMaxAgentEventChunkBytes);
 }
 
 bool cursor_account_ready(std::string status) {
@@ -139,6 +196,10 @@ public:
             assign_error("Cursor provider already owns an active turn", error);
             return false;
         }
+        task_sessions_[request.task_id] = TaskSession{
+            .model = request.model,
+            .working_directory = request.working_directory,
+        };
         pending_ = PendingTurn{
             .request = request,
             .approval_request_id = "cursor-turn-" + std::to_string(next_approval_id_++),
@@ -169,7 +230,8 @@ public:
             assign_error("requested Cursor model was not advertised by cursor-agent", error);
             return false;
         }
-        if (!chat_ids_.contains(request.task_id)) {
+        const auto session = task_sessions_.find(request.task_id);
+        if (session == task_sessions_.end() || session->second.chat_id.empty()) {
             assign_error("Cursor chat id is not registered for this RedClaw task", error);
             return false;
         }
@@ -180,7 +242,7 @@ public:
         pending_ = PendingTurn{
             .request = request,
             .approval_request_id = "cursor-turn-" + std::to_string(next_approval_id_++),
-            .resume_chat_id = chat_ids_.at(request.task_id),
+            .resume_chat_id = session->second.chat_id,
         };
         emit_locked({
             .task_id = request.task_id,
@@ -198,21 +260,26 @@ public:
         const std::string& instruction,
         std::string* error) override {
         AgentProviderTaskRequest request;
+        bool launched = false;
         {
             std::lock_guard lock(mutex_);
-            const auto found = chat_ids_.find(task_id);
-            if (found == chat_ids_.end()) {
+            const auto found = task_sessions_.find(task_id);
+            if (found == task_sessions_.end()) {
                 assign_error("Cursor chat id is not registered for this RedClaw task", error);
                 return false;
             }
             request = AgentProviderTaskRequest{
                 .task_id = task_id,
-                .model = task_models_[task_id],
-                .working_directory = task_directories_[task_id],
+                .model = found->second.model,
+                .working_directory = found->second.working_directory,
                 .instruction = instruction,
             };
+            launched = found->second.launched;
         }
-        return resume_task(request, error);
+        // A rejected, expired or interrupted first approval never launches the
+        // CLI, so it has no chat ID to resume. Keep its registered workspace and
+        // model, and require fresh approval for the new instruction.
+        return launched ? resume_task(request, error) : start_task(request, error);
     }
 
     bool steer(const std::string&, const std::string&, std::string* error) override {
@@ -267,11 +334,15 @@ public:
                 return true;
             }
             active_task_id_ = task_id;
-            task_models_[task_id] = turn.request.model;
-            task_directories_[task_id] = turn.request.working_directory;
+            auto& session = task_sessions_.at(task_id);
+            session.model = turn.request.model;
+            session.working_directory = turn.request.working_directory;
+            session.launched = true;
+            assistant_output_emitted_.clear();
         }
         std::vector<std::string> arguments{
-            "--print", "--output-format", "stream-json", "--trust", "--force",
+            "--print", "--output-format", "stream-json", "--stream-partial-output",
+            "--trust", "--force",
         };
         if (!turn.request.model.empty()) {
             arguments.push_back("--model");
@@ -303,8 +374,8 @@ public:
             }
             shutting_down_ = true;
         }
-        process_->stop();
         pending_events_.stop();
+        process_->stop();
         if (dispatch_thread_.joinable()
             && dispatch_thread_.get_id() != std::this_thread::get_id()) {
             dispatch_thread_.join();
@@ -312,6 +383,13 @@ public:
     }
 
 private:
+    struct TaskSession {
+        std::string model;
+        std::filesystem::path working_directory;
+        std::string chat_id;
+        bool launched = false;
+    };
+
     struct PendingTurn {
         AgentProviderTaskRequest request;
         std::string approval_request_id;
@@ -422,15 +500,66 @@ private:
             .value_or(string_field(object, "session_id").value_or(std::string{}));
         if (!chat_id.empty()) {
             std::lock_guard lock(mutex_);
-            chat_ids_[task_id] = chat_id;
+            if (const auto session = task_sessions_.find(task_id); session != task_sessions_.end()) {
+                session->second.chat_id = chat_id;
+            }
         }
-        std::string text = string_field(object, "text")
-            .value_or(string_field(object, "delta").value_or(std::string{}));
-        for (std::size_t offset = 0; offset < text.size();
-             offset += redclaw::protocol::kMaxAgentEventChunkBytes) {
+        const std::string type = string_field(object, "type").value_or("cursor_event");
+        if (type == "assistant" && object.contains("timestamp_ms")
+            && object.contains("model_call_id")) {
+            // Cursor emits a buffered copy immediately before a tool call. The
+            // timestamped delta without model_call_id is the only new text.
+            return;
+        }
+        if (type == "assistant" || type == "result") {
+            std::string text = string_field(object, "text")
+                .value_or(string_field(object, "delta").value_or(std::string{}));
+            if (text.empty()) {
+                const auto message = object.find("message");
+                if (message != object.end()) text = content_text(
+                    message->value(), redclaw::protocol::kMaxAgentEventChunkBytes);
+            }
+            if (type == "result" && text.empty()) {
+                const auto result = object.find("result");
+                if (result != object.end()) text = content_text(
+                    result->value(), redclaw::protocol::kMaxAgentEventChunkBytes);
+            }
+            if (!text.empty()) emit_cursor_text(task_id, "assistant", std::move(text));
+            return;
+        }
+        if (type == "tool_call") {
             queue_event({
                 .task_id = task_id,
-                .event_kind = string_field(object, "type").value_or("cursor_event"),
+                .event_kind = type,
+                .text = cursor_tool_summary(object),
+                .state = redclaw::protocol::AgentTaskStateV1::kRunning,
+            });
+            return;
+        }
+        const std::string text = content_text(object,
+            redclaw::protocol::kMaxAgentEventChunkBytes);
+        if (!text.empty()) {
+            queue_event({
+                .task_id = task_id,
+                .event_kind = type,
+                .text = text,
+                .state = redclaw::protocol::AgentTaskStateV1::kRunning,
+            });
+        }
+    }
+
+    void emit_cursor_text(
+        const std::string& task_id,
+        const std::string& kind,
+        std::string text) {
+        std::lock_guard lock(mutex_);
+        if (text.empty() || text == assistant_output_emitted_) return;
+        assistant_output_emitted_ += text;
+        for (std::size_t offset = 0; offset < text.size();
+             offset += redclaw::protocol::kMaxAgentEventChunkBytes) {
+            emit_locked({
+                .task_id = task_id,
+                .event_kind = kind,
                 .text = text.substr(offset, redclaw::protocol::kMaxAgentEventChunkBytes),
                 .state = redclaw::protocol::AgentTaskStateV1::kRunning,
                 .text_delta = true,
@@ -517,9 +646,8 @@ private:
     std::atomic<std::uint64_t> process_generation_{0};
     AgentProviderEventSink sink_;
     std::optional<PendingTurn> pending_;
-    std::unordered_map<std::string, std::string> chat_ids_;
-    std::unordered_map<std::string, std::string> task_models_;
-    std::unordered_map<std::string, std::filesystem::path> task_directories_;
+    std::unordered_map<std::string, TaskSession> task_sessions_;
+    std::string assistant_output_emitted_;
     std::string active_task_id_;
     std::string version_;
     std::vector<std::string> models_;

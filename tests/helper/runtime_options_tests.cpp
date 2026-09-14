@@ -164,6 +164,22 @@ TEST(RuntimeOptions, FixtureProviderIsDebugOnlyAndOptIn) {
 #endif
 }
 
+TEST(RuntimeOptions, InputDiagnosticsAreExplicitAndDoNotEnableAgentFixturesOrInputAuthorization) {
+    RuntimeOptions options;
+    EXPECT_FALSE(options.input_diagnostics);
+    std::string error;
+    const bool accepted = parse({"--role", "host", "--stream-smoke", "--log-dir", "diagnostic-test",
+        "--input-diagnostics"}, &options, &error);
+#ifdef NDEBUG
+    EXPECT_FALSE(accepted);
+#else
+    ASSERT_TRUE(accepted) << error;
+    EXPECT_TRUE(options.input_diagnostics);
+    EXPECT_FALSE(options.agent_qa_fixture_provider);
+    EXPECT_FALSE(options.allow_remote_input);
+#endif
+}
+
 TEST(RuntimeOptions, AgentExecutionAuthorizationIsNotADesktopRoleRestriction) {
     for (const auto role : {"host", "controller"}) {
         RuntimeOptions options;

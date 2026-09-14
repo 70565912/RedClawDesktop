@@ -41,6 +41,8 @@ param(
 
     [switch]$AutoStart,
 
+    [switch]$InputDiagnostics,
+
     [switch]$SkipPrep,
 
     [switch]$DryRun
@@ -261,6 +263,10 @@ if (-not [string]::IsNullOrWhiteSpace($NetworkBindAddress)) {
 }
 if ($AutoStart) {
     $arguments += '--gui-auto-start'
+}
+if ($InputDiagnostics) {
+    if ($Configuration -ne 'Debug') { throw 'Input diagnostics require Debug.' }
+    $arguments += '--input-diagnostics'
 }
 
 $argumentLine = ($arguments | ForEach-Object { ConvertTo-CommandLineArgument -Value $_ }) -join ' '

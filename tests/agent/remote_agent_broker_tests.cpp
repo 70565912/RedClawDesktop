@@ -379,7 +379,7 @@ TEST(RemoteAgentBroker, FollowUpTurnsShareTheSingleActiveTurnQueue) {
     EXPECT_EQ(broker->queued_turn_count(), 0U);
 }
 
-TEST(RemoteAgentBroker, AgentTransportQueueIsBoundedAndReportsGap) {
+TEST(RemoteAgentBroker, AgentTransportQueueIsBoundedAndReplaysRetainedOutput) {
     FakeAgentProvider* provider = nullptr;
     redclaw::agent::RemoteAgentBrokerConfig config{
         .authorized = true,
@@ -408,19 +408,72 @@ TEST(RemoteAgentBroker, AgentTransportQueueIsBoundedAndReportsGap) {
     });
     broker->tick();
     broker->tick();
-    const auto outbound = broker->take_outbound(64);
+    std::vector<redclaw::protocol::AgentMessageEnvelopeV1> outbound;
+    for (int batch = 0; batch < 20; ++batch) {
+        auto messages = broker->take_outbound(8);
+        outbound.insert(outbound.end(), messages.begin(), messages.end());
+    }
     EXPECT_TRUE(std::any_of(outbound.begin(), outbound.end(), [](const auto& item) {
         return item.type == redclaw::protocol::AgentMessageTypeV1::kTaskComplete;
     }));
-    EXPECT_TRUE(std::any_of(outbound.begin(), outbound.end(), [](const auto& item) {
+    EXPECT_FALSE(std::any_of(outbound.begin(), outbound.end(), [](const auto& item) {
         return item.type == redclaw::protocol::AgentMessageTypeV1::kTaskSnapshot
             && item.gap && item.event_sequence > 0;
     }));
     const auto metrics = broker->metrics();
     EXPECT_EQ(metrics.task_create_total, 1U);
     EXPECT_GE(metrics.event_total, 81U);
-    EXPECT_GT(metrics.gap_total, 0U);
+    EXPECT_EQ(metrics.gap_total, 0U);
     EXPECT_LE(metrics.outbound_queue_peak, 8U);
+}
+
+TEST(RemoteAgentBroker, LongReplayDeliversContiguousHistoryBeforeFinalSnapshot) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    FakeAgentProvider* provider = nullptr;
+    auto broker = make_broker(&provider, {.authorized = true, .max_outbound_messages = 8});
+    ASSERT_TRUE(broker->handle_message(task_request(1, "long-replay")));
+    (void)broker->take_outbound();
+    for (int index = 0; index < 100; ++index) {
+        provider->emit({.task_id = "long-replay", .event_kind = "text_delta",
+            .text = "part-" + std::to_string(index),
+            .state = redclaw::protocol::AgentTaskStateV1::kRunning, .text_delta = true});
+        (void)broker->take_outbound();
+    }
+    provider->emit({.task_id = "long-replay", .event_kind = "turn_completed", .text = "answer",
+        .state = redclaw::protocol::AgentTaskStateV1::kCompleted, .terminal = true});
+    (void)broker->take_outbound();
+    auto sync = task_request(2, "long-replay");
+    sync.type = Type::kTaskSyncRequest;
+    ASSERT_TRUE(broker->handle_message(sync));
+    // Results handed to transport but lost on disconnect are not durable ACKs.
+    (void)broker->take_outbound(3);
+    broker->disconnect();
+    broker->connect("reconnected-epoch");
+    (void)broker->take_outbound();
+    sync.session_epoch = "reconnected-epoch";
+    sync.message_id = 1;
+    ASSERT_TRUE(broker->handle_message(sync));
+    std::uint64_t last_sequence = 0;
+    bool completed = false;
+    for (int batch = 0; batch < 40; ++batch) {
+        const auto messages = broker->take_outbound(3);
+        ASSERT_LE(messages.size(), 3U);
+        for (const auto& message : messages) {
+            EXPECT_FALSE(message.gap);
+            if (message.type == Type::kTaskSnapshot) {
+                EXPECT_EQ(last_sequence, 102U);
+                EXPECT_EQ(message.event_sequence, last_sequence);
+                completed = true;
+            } else {
+                EXPECT_EQ(message.event_sequence, ++last_sequence);
+            }
+        }
+    }
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(broker->metrics().gap_total, 0U);
+    EXPECT_EQ(broker->metrics().replayed_event_total, 105U);
+    EXPECT_LE(broker->metrics().outbound_queue_peak, 8U);
+    EXPECT_EQ(provider->start_count, 1);
 }
 
 TEST(RemoteAgentBroker, OneMiBTextFloodKeepsEventAndOutboundCachesBounded) {
