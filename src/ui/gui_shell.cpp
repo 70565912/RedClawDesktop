@@ -8,6 +8,7 @@
 #include "ui/runtime_control_writer.h"
 #include "ui/runtime_log_view.h"
 #include "ui/qa_input_probe.h"
+#include "ui/input_diagnostic_target.h"
 #include "playback/playback_canvas.h"
 #include "playback/direct_frame_receiver.h"
 
@@ -430,6 +431,7 @@ struct GuiAutoStartOptions {
   QString stream_qa_force_required_channel_close;
   bool agent_qa_force_channel_close_after_event = false;
   bool agent_qa_fixture_provider = false;
+  bool input_diagnostics = false;
   bool enable_ice_tcp = false;
   bool enable_port_mapping = false;
   bool enable_debug_control = false;
@@ -619,6 +621,10 @@ bool parse_gui_auto_start_options(
     }
     if (arg == "--stream-qa-native-size") {
       options->stream_qa_native_size = true;
+      continue;
+    }
+    if (arg == "--input-diagnostics") {
+      options->input_diagnostics = true;
       continue;
     }
     if (arg == "--agent-qa-fixture-provider") {
@@ -842,6 +848,17 @@ bool parse_gui_auto_start_options(
       }
       return false;
     }
+  }
+  if (options->input_diagnostics) {
+#ifdef NDEBUG
+    if (error_detail) *error_detail = "--input-diagnostics is Debug-only";
+    return false;
+#else
+    if (!options->enable_debug_control || !options->stream_smoke || options->agent_qa_fixture_provider) {
+      if (error_detail) *error_detail = "Input diagnostics require Debug control, stream smoke and a real Agent provider";
+      return false;
+    }
+#endif
   }
   if (options->agent_qa_fixture_provider) {
 #ifdef NDEBUG
@@ -2071,9 +2088,13 @@ bool launch_gui_shell(
       border: none;
     }
     QFrame#agentUserBubble {
-      background-color: #1d4ed8;
+      background-color: transparent;
       border: 1px solid #3b82f6;
       border-radius: 12px;
+    }
+    QFrame#agentUserBubble QLabel {
+      background-color: transparent;
+      border: none;
     }
     QTextBrowser#agentReplyMarkdown, QPlainTextEdit#agentReplyPlain {
       background-color: transparent;
@@ -2918,6 +2939,9 @@ bool launch_gui_shell(
       playback_canvas_widget, playback_window);
 #if defined(_WIN32) && !defined(NDEBUG)
   std::unique_ptr<QaInputProbe> qa_input_probe;
+  std::unique_ptr<InputDiagnosticTarget> input_diagnostic_target;
+  if (gui_auto_start.input_diagnostics && gui_auto_start.role == "host")
+    input_diagnostic_target = std::make_unique<InputDiagnosticTarget>();
   if (gui_auto_start.agent_qa_fixture_provider && gui_auto_start.enable_debug_control && gui_auto_start.role == "controller")
     qa_input_probe = std::make_unique<QaInputProbe>(*playback_canvas_widget, *remote_input_capture);
 #endif
@@ -5694,6 +5718,7 @@ bool launch_gui_shell(
       if (gui_auto_start.agent_qa_fixture_provider) {
         args << "--agent-qa-fixture-provider";
       }
+      if (gui_auto_start.input_diagnostics) args << "--input-diagnostics";
       if (role == "host" && gui_auto_start.stream_qa_native_size) {
         args << "--stream-qa-native-size";
       }
@@ -6091,7 +6116,9 @@ bool launch_gui_shell(
             case DebugControlAction::kInputProbeStop:
             case DebugControlAction::kInputProbeExport: {
 #if defined(_WIN32) && !defined(NDEBUG)
-              if (!gui_auto_start.agent_qa_fixture_provider) { fail("fixture_required", "Native input evidence requires the explicit local fixture."); break; }
+              if (!gui_auto_start.agent_qa_fixture_provider && !gui_auto_start.input_diagnostics) {
+                fail("fixture_required", "Input evidence requires explicit input diagnostics or a local fixture."); break;
+              }
               if (parsed.request.action == DebugControlAction::kInputProbeExport) {
                 redclaw::protocol::StreamControlMessageV1 command;
                 command.type = redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll;
@@ -6099,6 +6126,19 @@ bool launch_gui_shell(
                 command.sent_at_ms = QDateTime::currentMSecsSinceEpoch(); command.input_sequence = gui_monotonic_us();
                 if (!controller.send_control_message(command, &control_error)) fail("input_export_failed", control_error);
                 result.insert("generation", qint64(command.input_sequence));
+              }
+              if (gui_auto_start.input_diagnostics) {
+                if (input_diagnostic_target) {
+                  if (parsed.request.action == DebugControlAction::kInputProbeStart) input_diagnostic_target->start();
+                  else input_diagnostic_target->stop();
+                  result.insert("input_target", input_diagnostic_target->snapshot());
+                  if (parsed.request.action == DebugControlAction::kInputProbeExport) {
+                    const auto path = QDir(effective_log_dir).filePath("input-target-" + QString::number(result.value("generation").toInteger()) + ".json");
+                    deferred_work = input_diagnostic_target->export_work(path);
+                    result.insert("receipt_path", path);
+                  }
+                }
+                break;
               }
               if (role_combo->currentText() == "host") break;
               if (!qa_input_probe) { fail("fixture_controller_required", "Native target probe is available on the fixture Controller."); }
@@ -6568,6 +6608,14 @@ bool launch_gui_shell(
                 "application_ack_rtt_ms",
                 static_cast<qint64>(remote_input_capture->last_application_ack_rtt_ms()));
             result.insert("remote_input", remote_input_result);
+            if (gui_auto_start.input_diagnostics) {
+              QJsonArray counts;
+              for (const auto count : remote_input_capture->sent_event_counts()) counts.append(qint64(count));
+              result.insert("input_sent_event_counts", counts);
+#if defined(_WIN32) && !defined(NDEBUG)
+              if (input_diagnostic_target) result.insert("input_target", input_diagnostic_target->snapshot());
+#endif
+            }
           }
 
           debug_status.runtime_running = controller.is_running();

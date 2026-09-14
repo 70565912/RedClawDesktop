@@ -3037,11 +3037,14 @@ int run_runtime_mode(
     redclaw::input::InputPolicyGate remote_input_policy_gate;
     redclaw::input::WindowsSendInputInjectorBackend remote_input_backend;
     redclaw::runtime::InputQaReceipts input_qa_receipts(
-        options.agent_qa_fixture_provider, options.log_dir);
+        options.agent_qa_fixture_provider || options.input_diagnostics, options.log_dir);
     redclaw::input::RemoteInputSession remote_input_session(
         remote_input_policy_gate, remote_input_backend);
-    if (options.agent_qa_fixture_provider && options.role == RuntimeRole::kHost)
+    if ((options.agent_qa_fixture_provider || options.input_diagnostics) && options.role == RuntimeRole::kHost)
         remote_input_session.set_injection_observer([&input_qa_receipts](const auto& receipt) { input_qa_receipts.record(receipt); });
+    if (options.input_diagnostics && options.role == RuntimeRole::kHost)
+        remote_input_backend.set_diagnostic_observer(
+            [&input_qa_receipts](const auto& receipt) { input_qa_receipts.record_native(receipt); });
     remote_input_session.set_authorized(
         options.role == RuntimeRole::kHost && options.allow_remote_input);
     redclaw::input::DesktopGeometry remote_input_geometry;
@@ -6939,7 +6942,7 @@ int run_runtime_mode(
                 || command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll;
             const bool gui_receiver_stats = command.type
                 == redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats;
-            if (options.agent_qa_fixture_provider && command.input_sequence != 0
+            if ((options.agent_qa_fixture_provider || options.input_diagnostics) && command.input_sequence != 0
                 && command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll) {
                 (void)input_qa_receipts.request_export(command.input_sequence);
                 // A fixture export generation is local metadata. Controller
@@ -7330,6 +7333,7 @@ int run_runtime_mode(
                 }
                 if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch) {
                     if (command.desktop_geometry_revision != current_geometry.revision) {
+                        input_qa_receipts.command(redclaw::runtime::InputQaStage::kGeometryRejected, command);
                         remote_input_session.release_all();
                         status_changed = true;
                         continue;
@@ -7343,9 +7347,12 @@ int run_runtime_mode(
                             break;
                         }
                     }
-                    if (!mapped
-                        || !remote_input_session.enqueue_batch(
-                            command.input_sequence, std::move(events), now_unix_ms(), &input_error)) {
+                    const bool enqueued = mapped && remote_input_session.enqueue_batch(
+                        command.input_sequence, std::move(events), now_unix_ms(), &input_error);
+                    input_qa_receipts.command(!mapped ? redclaw::runtime::InputQaStage::kMappingRejected
+                        : enqueued ? redclaw::runtime::InputQaStage::kSessionEnqueued
+                        : redclaw::runtime::InputQaStage::kSessionRejected, command);
+                    if (!enqueued) {
                         status_changed = true;
                     }
                     continue;

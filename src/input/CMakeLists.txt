@@ -9,3 +9,6 @@ target_include_directories(redclaw_input
 
 target_compile_features(redclaw_input PUBLIC cxx_std_20)
 redclaw_apply_warnings(redclaw_input)
+if(WIN32)
+  target_link_libraries(redclaw_input PRIVATE user32 advapi32)
+endif()

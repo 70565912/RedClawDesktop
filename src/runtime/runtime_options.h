@@ -50,6 +50,7 @@ struct RuntimeOptions {
     std::string stream_qa_force_required_channel_close;
     bool agent_qa_force_channel_close_after_event = false;
     bool agent_qa_fixture_provider = false;
+    bool input_diagnostics = false;
     std::uint32_t stream_preview_width = 160;
     std::uint32_t stream_video_max_width = 0;
     std::string stream_frame_pipe;

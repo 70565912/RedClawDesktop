@@ -54,6 +54,59 @@ std::optional<std::string> nested_string(
     return json_string(found->value().as_object(), key);
 }
 
+std::string content_text(const boost::json::value& value, std::size_t limit) {
+    if (limit == 0U) {
+        return {};
+    }
+    if (value.is_string()) {
+        const std::string text(value.as_string());
+        return text.substr(0, limit);
+    }
+    if (value.is_array()) {
+        std::string result;
+        for (const auto& entry : value.as_array()) {
+            const auto part = content_text(entry, limit - result.size());
+            result += part;
+            if (result.size() >= limit) break;
+        }
+        return result;
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+    const auto& object = value.as_object();
+    if (const auto text = json_string(object, "text"); text.has_value()) {
+        return text->substr(0, limit);
+    }
+    for (const auto* key : {"content", "message", "item", "output", "result"}) {
+        const auto found = object.find(key);
+        if (found != object.end()) {
+            const auto result = content_text(found->value(), limit);
+            if (!result.empty()) return result;
+        }
+    }
+    return {};
+}
+
+std::string codex_item_summary(
+    const std::string& method,
+    const boost::json::object& params) {
+    std::string summary = method;
+    const auto append_fields = [&](const boost::json::object& source) {
+        for (const auto* key : {"type", "subtype", "status", "command", "cwd", "path", "name"}) {
+            if (const auto value = json_string(source, key); value.has_value() && !value->empty()) {
+                summary += "\n" + std::string(key) + ": " + value->substr(0, 1536);
+            }
+        }
+    };
+    append_fields(params);
+    const auto item = params.find("item");
+    if (item != params.end() && item->value().is_object()) append_fields(item->value().as_object());
+    const auto tool = params.find("tool");
+    if (tool != params.end() && tool->value().is_object()) append_fields(tool->value().as_object());
+    return summary.substr(0, redclaw::protocol::kMaxAgentEventChunkBytes);
+}
+
 std::string lowercase(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
         [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -136,6 +189,7 @@ public:
         model_ = request.model;
         working_directory_ = request.working_directory;
         pending_instruction_ = request.instruction;
+        turn_output_emitted_.clear();
         if (!initialized_) {
             begin_after_initialize_ = BeginAfterInitialize::kStart;
             return true;
@@ -161,6 +215,7 @@ public:
         current_task_id_ = request.task_id;
         thread_id_ = registered_thread;
         pending_instruction_ = request.instruction;
+        turn_output_emitted_.clear();
         if (!initialized_) {
             begin_after_initialize_ = BeginAfterInitialize::kResume;
             return true;
@@ -180,7 +235,11 @@ public:
         const std::string& task_id,
         const std::string& instruction,
         std::string* error) override {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_);
+        if (pending_events_.failed()) {
+            assign_error("Agent provider event capacity exhausted", error);
+            return false;
+        }
         if (!current_task_id_.empty() || !turn_id_.empty()) {
             assign_error("Codex task is not ready for a new turn", error);
             return false;
@@ -190,8 +249,15 @@ public:
             assign_error("Codex thread is not registered for this RedClaw task", error);
             return false;
         }
+        if (!process_running_) {
+            AgentProviderTaskRequest request{.task_id = task_id, .model = model_,
+                .working_directory = working_directory_, .instruction = instruction};
+            lock.unlock();
+            return resume_task(request, error);
+        }
         current_task_id_ = task_id;
         thread_id_ = registered->second;
+        turn_output_emitted_.clear();
         return send_turn_locked(instruction, error);
     }
 
@@ -269,10 +335,10 @@ public:
             shutting_down_ = true;
             process = &process_;
         }
+        pending_events_.stop();
         if (*process != nullptr) {
             (*process)->stop();
         }
-        pending_events_.stop();
         if (dispatch_thread_.joinable()
             && dispatch_thread_.get_id() != std::this_thread::get_id()) {
             dispatch_thread_.join();
@@ -566,6 +632,7 @@ private:
         const std::string& method,
         const boost::json::object& params,
         const boost::json::object& full_object) {
+        if (current_task_id_.empty()) return;
         if (method.find("requestApproval") != std::string::npos) {
             const auto id_found = full_object.find("id");
             if (id_found == full_object.end()) {
@@ -606,36 +673,64 @@ private:
             });
             return;
         }
+        if (method.find("agentMessage") != std::string::npos
+            || method.find("reasoning") != std::string::npos) {
+            std::string text = json_string(params, "delta").value_or(std::string{});
+            if (text.empty()) text = content_text(
+                params, redclaw::protocol::kMaxAgentEventChunkBytes);
+            emit_text_chunks_locked(method, text);
+            return;
+        }
         if (method == "turn/completed") {
+            const std::string final_text = content_text(
+                params, redclaw::protocol::kMaxAgentEventChunkBytes);
+            if (!final_text.empty() && final_text != turn_output_emitted_) {
+                emit_text_chunks_locked("agentMessage", final_text, true);
+            }
             turn_id_.clear();
             const std::string completed_task_id = current_task_id_;
+            const auto status = nested_string(params, "turn", "status").value_or("completed");
+            const bool failed = status == "failed";
+            const bool interrupted = status == "interrupted";
             emit_locked({
                 .task_id = completed_task_id,
-                .event_kind = "turn_completed",
-                .text = "Codex turn completed",
-                .state = redclaw::protocol::AgentTaskStateV1::kCompleted,
+                .event_kind = failed ? "turn_failed" : interrupted ? "turn_interrupted" : "turn_completed",
+                .text = "Codex turn " + status,
+                .error_code = failed ? "provider_turn_failed" : std::string{},
+                .state = failed ? redclaw::protocol::AgentTaskStateV1::kFailed
+                    : interrupted ? redclaw::protocol::AgentTaskStateV1::kInterrupted
+                    : redclaw::protocol::AgentTaskStateV1::kCompleted,
                 .terminal = true,
             });
             current_task_id_.clear();
             thread_id_.clear();
             return;
         }
-        if (method.find("agentMessage/delta") != std::string::npos
-            || method.find("reasoning") != std::string::npos) {
-            const std::string delta = json_string(params, "delta").value_or(std::string{});
-            emit_text_chunks_locked(method, delta);
+        if (method == "item/commandExecution/outputDelta") {
+            emit_text_chunks_locked(method, json_string(params, "delta").value_or(std::string{}));
             return;
         }
         if (method.find("item/") != std::string::npos) {
             emit_locked({
                 .task_id = current_task_id_,
                 .event_kind = method,
+                .text = codex_item_summary(method, params),
                 .state = redclaw::protocol::AgentTaskStateV1::kRunning,
             });
         }
     }
 
-    void emit_text_chunks_locked(const std::string& kind, const std::string& text) {
+    void emit_text_chunks_locked(
+        const std::string& kind,
+        const std::string& text,
+        bool deduplicate = false) {
+        if (text.empty()) return;
+        if (deduplicate && text == turn_output_emitted_) return;
+        if (kind.find("agentMessage") != std::string::npos
+            && turn_output_emitted_.size() <= redclaw::protocol::kMaxAgentEventChunkBytes) {
+            turn_output_emitted_ += text.substr(0,
+                redclaw::protocol::kMaxAgentEventChunkBytes + 1 - turn_output_emitted_.size());
+        }
         std::size_t offset = 0;
         do {
             const std::size_t count = std::min(
@@ -696,6 +791,14 @@ private:
     }
 
     void emit_locked(AgentProviderEvent event) {
+        if (event.terminal && event.task_id == current_task_id_) {
+            current_task_id_.clear();
+            turn_id_.clear();
+            thread_id_.clear();
+            pending_requests_.clear();
+            approval_rpc_ids_.clear();
+            undescribed_approvals_.clear();
+        }
         pending_events_.push_back(std::move(event));
     }
 
@@ -740,6 +843,7 @@ private:
     std::string pending_instruction_;
     std::string thread_id_;
     std::string turn_id_;
+    std::string turn_output_emitted_;
     std::uint64_t next_rpc_id_ = 1;
     std::uint64_t next_approval_id_ = 1;
     std::unordered_map<std::uint64_t, PendingRequest> pending_requests_;

@@ -30,6 +30,12 @@ constexpr std::size_t kMaxJournalLineBytes = 16U * 1024U;
 constexpr std::uint64_t kMaxLifecycleApprovalTtlMs = 120U * 1000U;
 constexpr std::uint32_t kJournalLockTimeoutMs = 10000;
 
+std::string request_key(std::string_view task_id, std::string_view request_id) {
+    // Provider counters restart with the Host. Approval IDs are only unique
+    // within a task, not across the durable journal's lifetime.
+    return std::string(task_id) + '\n' + std::string(request_id);
+}
+
 void assign_error(std::string value, std::string* error) {
     if (error != nullptr) {
         *error = std::move(value);
@@ -693,7 +699,8 @@ bool CoordinationJournalV1::append_if_authority(
             || (record.record_type == CoordinationRecordTypeV1::kEvidence
                 && record.authorization_state == "scoped_request"))
         && !record.request_id.empty()) {
-        const auto found = pending_approvals_.find(record.request_id);
+        const auto found = pending_approvals_.find(record.authorization_state == "explicit_decision"
+            ? request_key(record.task_id, record.request_id) : record.request_id);
         if (record.authorization_state == "explicit_decision") {
             if (found == pending_approvals_.end() || !found->second) {
                 assign_error("approval was already decided or is not pending", error);
@@ -712,9 +719,13 @@ void CoordinationJournalV1::index_record(const CoordinationJournalRecordV1& reco
         current_authority_ = record.authority;
     }
     if (!record.request_id.empty()) {
-        if (record.authorization_state == "explicit_decision") decided_approvals_.insert(record.request_id);
-        pending_approvals_[record.request_id] = record.authorization_state == "pending"
-            && !decided_approvals_.contains(record.request_id);
+        const auto scoped_key = request_key(record.task_id, record.request_id);
+        const auto& key = record.authorization_state == "pending"
+                || record.authorization_state == "explicit_decision"
+                || pending_approvals_.contains(scoped_key) ? scoped_key : record.request_id;
+        if (record.authorization_state == "explicit_decision") decided_approvals_.insert(key);
+        pending_approvals_[key] = record.authorization_state == "pending"
+            && !decided_approvals_.contains(key);
     }
 }
 
@@ -851,9 +862,13 @@ bool NormalAgentControlStateV1::rebuild(std::string* error) {
             authority_ = record.authority;
         }
         if (!record.request_id.empty()) {
-            const bool decided = requests_[record.request_id].approval_decided
+            const auto scoped_key = request_key(record.task_id, record.request_id);
+            const auto& key = record.authorization_state == "pending"
+                    || record.authorization_state == "explicit_decision"
+                    || requests_.contains(scoped_key) ? scoped_key : record.request_id;
+            const bool decided = requests_[key].approval_decided
                 || record.authorization_state == "explicit_decision";
-            requests_[record.request_id] = {record.task_id, record.request_state,
+            requests_[key] = {record.task_id, record.request_state,
                 record.authorization_state == "pending" && !decided, decided};
         }
         if (!record.task_id.empty()) {
@@ -877,7 +892,7 @@ bool NormalAgentControlStateV1::rebuild(std::string* error) {
                 continue;
             }
             if (record.authorization_state == "pending") {
-                const auto approval = requests_.find(record.request_id);
+                const auto approval = requests_.find(request_key(record.task_id, record.request_id));
                 if (approval != requests_.end() && !approval->second.approval_decided)
                     snapshot.task_state = redclaw::protocol::AgentTaskStateV1::kAwaitingApproval;
                 // An already-decided approval replay cannot revive old state.
@@ -1059,9 +1074,10 @@ bool NormalAgentControlStateV1::prepare_outbound(
     if (!validate_catalog_request(message, error)) {
         return false;
     }
-    const auto prior_request = requests_.find(message.request_id);
     const bool approval_decision = message.type
         == redclaw::protocol::AgentMessageTypeV1::kApprovalDecision;
+    const auto prior_request = requests_.find(approval_decision
+        ? request_key(message.task_id, message.request_id) : message.request_id);
     if (approval_decision && (prior_request == requests_.end()
             || !prior_request->second.awaiting_approval
             || prior_request->second.task_id != message.task_id)) {
@@ -1233,7 +1249,7 @@ bool NormalAgentControlStateV1::observe_remote(
     const bool approval_request = message.type == redclaw::protocol::AgentMessageTypeV1::kApprovalRequest
         || (snapshot && message.task_state == redclaw::protocol::AgentTaskStateV1::kAwaitingApproval
             && message.event_kind == "approval_pending" && !message.request_id.empty());
-    const auto prior_request = requests_.find(message.request_id);
+    const auto prior_request = requests_.find(request_key(message.task_id, message.request_id));
     const bool decided_approval = approval_request
         && prior_request != requests_.end() && prior_request->second.approval_decided;
     const auto prior_task = task_snapshot(message.task_id);

@@ -11,6 +11,7 @@
 #include "redclaw/agent/local_agent_pipe.h"
 #include "redclaw/agent/bounded_agent_events.h"
 #include "redclaw/agent/agent_providers.h"
+#include "redclaw/agent/provider_dispatch_queue.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -109,6 +110,47 @@ TEST(AgentIsolation, ProviderCriticalOverflowIsBoundedAndExplicit) {
     }
     EXPECT_LE(count, 513);
     EXPECT_TRUE(explicit_error);
+}
+
+TEST(AgentIsolation, ProviderStdoutBurstBackpressuresWithoutLosingApprovalJson) {
+    redclaw::agent::ProviderDispatchQueue queue;
+    using ProcessEvent = redclaw::agent::ProviderProcessEvent;
+    std::atomic<int> pushed = 0;
+    std::jthread producer([&] {
+        for (int index = 0; index < 600; ++index) {
+            queue.push_process({ProcessEvent::Kind::kStdout, std::to_string(index), 0, 1});
+            ++pushed;
+        }
+    });
+    EXPECT_TRUE(wait_until([&] { return pushed.load() == 512; }));
+    EXPECT_FALSE(queue.failed());
+    for (int index = 0; index < 600; ++index) {
+        auto item = queue.take();
+        ASSERT_TRUE(item.has_value());
+        const auto* event = std::get_if<ProcessEvent>(&*item);
+        ASSERT_NE(event, nullptr);
+        EXPECT_EQ(event->line, std::to_string(index));
+    }
+    queue.stop();
+    producer.join();
+    EXPECT_EQ(pushed.load(), 600);
+    EXPECT_FALSE(queue.failed());
+}
+
+TEST(AgentIsolation, ProviderShutdownWakesBackpressuredReader) {
+    redclaw::agent::ProviderDispatchQueue queue;
+    using ProcessEvent = redclaw::agent::ProviderProcessEvent;
+    for (int index = 0; index < 512; ++index)
+        queue.push_process({ProcessEvent::Kind::kStdout, "output", 0, 1});
+    std::atomic<bool> returned = false;
+    std::jthread reader([&] {
+        queue.push_process({ProcessEvent::Kind::kStdout, "approval JSON", 0, 1});
+        returned = true;
+    });
+    queue.stop();
+    EXPECT_TRUE(wait_until([&] { return returned.load(); }));
+    reader.join();
+    EXPECT_FALSE(queue.take().has_value());
 }
 
 TEST(AgentIsolation, SixtySecondProviderWaitKeepsCallerResponsive) {

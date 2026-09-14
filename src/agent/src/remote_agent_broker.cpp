@@ -211,6 +211,7 @@ struct RemoteAgentBroker::TaskRecord {
     bool cache_gap = false;
     bool transport_gap_pending = false;
     bool cache_exhausted = false;
+    std::optional<std::uint64_t> replay_after_sequence;
     std::deque<CachedEvent> events;
 };
 
@@ -347,6 +348,7 @@ void RemoteAgentBroker::disconnect() {
     incoming_guard_.reset();
     for (auto& [task_id, task] : tasks_) {
         (void)task_id;
+        task->replay_after_sequence.reset();
         if (!task->pending_approval_request_id.empty()) {
             if (auto* provider = provider_locked(task->provider); provider != nullptr) {
                 std::string ignored;
@@ -904,7 +906,6 @@ void RemoteAgentBroker::append_event_locked(TaskRecord& task, AgentProviderEvent
         return;
     }
     if (event.error_code == "provider_output_gap") {
-        task.transport_gap_pending = true;
         ++metrics_.gap_total;
     }
     const std::uint64_t sequence = task.next_event_sequence++;
@@ -918,7 +919,7 @@ void RemoteAgentBroker::append_event_locked(TaskRecord& task, AgentProviderEvent
         .bytes = bytes,
         .event = std::move(event),
     });
-    if (connected_) {
+    if (connected_ && !task.replay_after_sequence) {
         const auto& cached = task.events.back();
         redclaw::protocol::AgentMessageEnvelopeV1 message;
         message.task_id = task.task_id;
@@ -999,8 +1000,16 @@ void RemoteAgentBroker::start_next_queued_locked() {
 }
 
 void RemoteAgentBroker::publish_snapshot_locked(
-    const TaskRecord& task,
+    TaskRecord& task,
     std::uint64_t after_sequence) {
+    // Keep one cursor, not a second copy of the entire retained transcript.
+    // A replay larger than the transport queue must not evict its own prefix.
+    if (!task.replay_after_sequence) task.replay_after_sequence = after_sequence;
+}
+
+void RemoteAgentBroker::pump_snapshot_locked(TaskRecord& task, std::size_t limit) {
+    if (!task.replay_after_sequence || limit == 0) return;
+    auto& after_sequence = *task.replay_after_sequence;
     redclaw::protocol::AgentMessageEnvelopeV1 snapshot;
     snapshot.type = redclaw::protocol::AgentMessageTypeV1::kTaskSnapshot;
     snapshot.task_id = task.task_id;
@@ -1012,7 +1021,7 @@ void RemoteAgentBroker::publish_snapshot_locked(
     if (task.cache_exhausted) {
         snapshot.error_code = "agent_cache_exhausted";
         snapshot.text = "Agent stopped: critical event capacity exhausted; inspect task before retrying";
-        snapshot.gap = true;
+        snapshot.gap = after_sequence < task.next_event_sequence - 1;
     }
     snapshot.gap = snapshot.gap || (task.cache_gap && after_sequence < task.evicted_through_sequence);
     if (snapshot.gap) {
@@ -1022,13 +1031,16 @@ void RemoteAgentBroker::publish_snapshot_locked(
         // Persist the missing-history boundary before replaying its tail.
         // Sequence zero would request the same unfillable tail forever.
         auto gap = snapshot;
-        gap.event_sequence = task.evicted_through_sequence;
+        gap.event_sequence = task.cache_exhausted
+            ? task.next_event_sequence - 1 : task.evicted_through_sequence;
         gap.event_kind = "history_gap";
         if (gap.error_code.empty()) {
             gap.error_code = "history_unavailable";
             gap.text = "Earlier Agent output is unavailable. Retained task state follows; missing text was not delivered.";
         }
+        after_sequence = std::max(after_sequence, gap.event_sequence);
         enqueue_outbound_locked(std::move(gap));
+        if (--limit == 0) return;
     }
     for (const auto& cached : task.events) {
         if (cached.sequence <= after_sequence) {
@@ -1056,6 +1068,8 @@ void RemoteAgentBroker::publish_snapshot_locked(
         message.text = cached.event.text;
         message.gap = cached.event.error_code == "provider_output_gap";
         enqueue_outbound_locked(std::move(message));
+        after_sequence = cached.sequence;
+        if (--limit == 0) return;
     }
     // Current state follows history, so replay cannot leave a finished task running.
     snapshot.gap = false;
@@ -1072,6 +1086,7 @@ void RemoteAgentBroker::publish_snapshot_locked(
         }
     }
     enqueue_outbound_locked(std::move(snapshot));
+    task.replay_after_sequence.reset();
 }
 
 void RemoteAgentBroker::enqueue_outbound_locked(
@@ -1086,15 +1101,13 @@ void RemoteAgentBroker::enqueue_outbound_locked(
             });
         if (droppable != outbound_.end()) {
             if (const auto task = tasks_.find(droppable->task_id); task != tasks_.end()) {
-                task->second->transport_gap_pending = true;
+                publish_snapshot_locked(*task->second, task->second->acknowledged_event_sequence);
             }
             outbound_.erase(droppable);
-            ++metrics_.gap_total;
         } else {
             if (const auto task = tasks_.find(message.task_id); task != tasks_.end()) {
-                task->second->transport_gap_pending = true;
+                publish_snapshot_locked(*task->second, task->second->acknowledged_event_sequence);
             }
-            ++metrics_.gap_total;
             return;
         }
     }
@@ -1115,6 +1128,15 @@ std::vector<redclaw::protocol::AgentMessageEnvelopeV1> RemoteAgentBroker::take_o
     while (!outbound_.empty() && messages.size() < max_messages) {
         messages.push_back(std::move(outbound_.front()));
         outbound_.pop_front();
+    }
+    for (const auto& task_id : task_order_) {
+        if (messages.size() >= max_messages) break;
+        pump_snapshot_locked(*tasks_.at(task_id), std::min(
+            max_messages - messages.size(), config_.max_outbound_messages - outbound_.size()));
+        while (!outbound_.empty() && messages.size() < max_messages) {
+            messages.push_back(std::move(outbound_.front()));
+            outbound_.pop_front();
+        }
     }
     if (messages.size() < max_messages) {
         for (const auto& task_id : task_order_) {

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QEvent>
+#include <array>
 #include <QAbstractNativeEventFilter>
 #include <QObject>
 #include <QPointer>
@@ -87,6 +88,7 @@ public:
         std::uintptr_t message_extra_info);
     [[nodiscard]] std::size_t queued_critical_event_count() const;
     [[nodiscard]] std::uint64_t sent_batch_count() const;
+    [[nodiscard]] const std::array<std::uint64_t, 7>& sent_event_counts() const { return sent_event_counts_; }
     [[nodiscard]] std::uint64_t merged_mouse_move_count() const;
     [[nodiscard]] std::uint64_t suppressed_mouse_loopback_count() const;
     [[nodiscard]] std::uint64_t blocked_control_click_hint_count() const;
@@ -104,6 +106,7 @@ protected:
 
 private:
     static constexpr std::size_t kCriticalQueueCapacity = 256;
+    std::array<std::uint64_t, 7> sent_event_counts_{};
 
     [[nodiscard]] bool install_keyboard_capture(QString* error);
     void uninstall_keyboard_capture();

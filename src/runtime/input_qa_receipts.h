@@ -19,7 +19,8 @@ enum class InputQaStage {
     kLoopSleep, kBeforeLocalInput, kLocalInput, kBeforeHostInput, kHostInput,
     kAgentPump, kAfterAgent, kMaintenance, kAdaptation, kOtherSignaling,
     kDht, kNegotiation, kPeriodicStats, kLoopTail,
-    kLogLock, kOutputWrite, kFileWrite, kFlush, kDhtListenPort
+    kLogLock, kOutputWrite, kFileWrite, kFlush, kDhtListenPort,
+    kGeometryRejected, kMappingRejected, kSessionRejected, kSessionEnqueued
 };
 
 // Explicit Debug fixture telemetry. Injection only appends bounded metadata;
@@ -32,6 +33,7 @@ public:
         if (!enabled_) return;
         active_.reserve(kCapacity); pending_.reserve(kCapacity);
         stages_.reserve(kStageCapacity); pending_stages_.reserve(kStageCapacity);
+        native_calls_.reserve(kCapacity); pending_native_calls_.reserve(kCapacity);
         worker_ = std::thread([this] { run(); });
     }
     ~InputQaReceipts() {
@@ -44,7 +46,14 @@ public:
         if (active_.size() == kCapacity) ++overflow_;
         else active_.push_back(receipt);
     }
-    // Only the explicit fixture's consented input intervals record detailed stages.
+    void record_native(const redclaw::input::SendInputDiagnostic& receipt) {
+        if (!enabled_ || !recording_) return;
+        std::lock_guard lock(mutex_);
+        if (!recording_) return;
+        if (native_calls_.size() == kCapacity) ++native_overflow_;
+        else native_calls_.push_back(receipt);
+    }
+    // Only explicitly enabled, consented input intervals record detailed stages.
     void command(InputQaStage stage, const redclaw::protocol::StreamControlMessageV1& message,
                  std::uint64_t at_us = 0) {
         using Type = redclaw::protocol::StreamControlMessageTypeV1;
@@ -52,7 +61,15 @@ public:
         if (message.type == Type::kInputControlRequest && message.input_requested_active)
             recording_ = true;
         if (message.type != Type::kInputBatch && message.type != Type::kInputStateSync) return;
-        append(stage, message.input_sequence, at_us ? at_us : redclaw::diag::monotonic_time_us(), 0, 0);
+        std::array<std::uint32_t, 7> counts{};
+        if (message.type == Type::kInputBatch) {
+            for (const auto& event : message.input_events) {
+                const auto index = static_cast<std::size_t>(event.type);
+                if (index < counts.size()) ++counts[index];
+            }
+        }
+        append(stage, message.input_sequence, at_us ? at_us : redclaw::diag::monotonic_time_us(), 0, 0,
+               counts, message.type == Type::kInputBatch);
     }
     class LoopTiming final {
     public:
@@ -99,17 +116,22 @@ public:
         if (!enabled_ || pending_export_ || exporting_) return false;
         active_.swap(pending_); pending_overflow_ = overflow_; overflow_ = 0;
         stages_.swap(pending_stages_); pending_stage_overflow_ = stage_overflow_; stage_overflow_ = 0;
+        native_calls_.swap(pending_native_calls_); pending_native_overflow_ = native_overflow_; native_overflow_ = 0;
         recording_ = false;
         generation_ = generation; pending_export_ = true; wake_.notify_one(); return true;
     }
 private:
-    struct StageSample { InputQaStage stage; std::uint64_t sequence, begin_us, end_us, cpu_us; };
-    void append(InputQaStage stage, std::uint64_t sequence, std::uint64_t begin, std::uint64_t end, std::uint64_t cpu) {
+    struct StageSample {
+        InputQaStage stage; std::uint64_t sequence, begin_us, end_us, cpu_us;
+        std::array<std::uint32_t, 7> counts{}; bool batch = false;
+    };
+    void append(InputQaStage stage, std::uint64_t sequence, std::uint64_t begin, std::uint64_t end, std::uint64_t cpu,
+                std::array<std::uint32_t, 7> counts = {}, bool batch = false) {
         if (!recording_) return;
         std::lock_guard lock(mutex_);
         if (!recording_) return;
         if (stages_.size() == kStageCapacity) ++stage_overflow_;
-        else stages_.push_back({stage, sequence, begin, end ? end : begin, cpu});
+        else stages_.push_back({stage, sequence, begin, end ? end : begin, cpu, counts, batch});
     }
     void run() {
         for (;;) {
@@ -125,7 +147,7 @@ private:
                 + " complete=" + (written ? "true\n" : "false\n");
             std::cout.write(complete.data(), static_cast<std::streamsize>(complete.size())); std::cout.flush();
             {
-                std::lock_guard lock(mutex_); pending_.clear(); pending_stages_.clear(); exporting_ = false;
+                std::lock_guard lock(mutex_); pending_.clear(); pending_stages_.clear(); pending_native_calls_.clear(); exporting_ = false;
             }
         }
     }
@@ -151,7 +173,10 @@ private:
                     if (!first) output << ','; first = false;
                     output << "{\"stage\":" << static_cast<unsigned>(s.stage) << ",\"sequence\":" << s.sequence
                            << ",\"begin_us\":" << s.begin_us << ",\"end_us\":" << s.end_us
-                           << ",\"cpu_us\":" << s.cpu_us << '}';
+                           << ",\"cpu_us\":" << s.cpu_us << ",\"batch\":" << (s.batch ? "true" : "false")
+                           << ",\"counts\":[";
+                    for (std::size_t i = 0; i < s.counts.size(); ++i) { if (i) output << ','; output << s.counts[i]; }
+                    output << "]}";
                 }
                 output << "]}";
             })) return false;
@@ -168,6 +193,27 @@ private:
                     << ",\"begin_us\":" << r.begin_us << ",\"end_us\":" << r.end_us
                     << ",\"injected\":" << (r.injected ? "true" : "false") << '}';
             }
+            output << "],\"native_overflow\":" << pending_native_overflow_ << ",\"send_input_calls\":[";
+            first = true;
+            for (const auto& r : pending_native_calls_) {
+                if (!first) output << ','; first = false;
+                output << "{\"begin_us\":" << r.begin_us << ",\"end_us\":" << r.end_us
+                    << ",\"requested\":" << r.requested << ",\"inserted\":" << r.inserted << ",\"error\":" << r.error
+                    << ",\"context_sampled\":" << (r.context_sampled ? "true" : "false")
+                    << ",\"pid\":" << r.process_id << ",\"tid\":" << r.thread_id << ",\"session\":" << r.session_id
+                    << ",\"input_desktop\":" << r.input_desktop << ",\"thread_desktop\":" << r.thread_desktop
+                    << ",\"desktop_error\":" << r.desktop_error << ",\"foreground_pid\":" << r.foreground_pid
+                    << ",\"foreground_session\":" << r.foreground_session << ",\"focus_pid\":" << r.focus_pid
+                    << ",\"process_integrity\":" << r.process_integrity << ",\"foreground_integrity\":" << r.foreground_integrity
+                    << ",\"process_integrity_error\":" << r.process_integrity_error
+                    << ",\"foreground_integrity_error\":" << r.foreground_integrity_error
+                    << ",\"cursor_before_valid\":" << (r.cursor_before_valid ? "true" : "false")
+                    << ",\"cursor_after_valid\":" << (r.cursor_after_valid ? "true" : "false")
+                    << ",\"cursor_before_x\":" << r.cursor_before_x << ",\"cursor_before_y\":" << r.cursor_before_y
+                    << ",\"cursor_after_x\":" << r.cursor_after_x << ",\"cursor_after_y\":" << r.cursor_after_y << ",\"counts\":[";
+                for (std::size_t i = 0; i < r.counts.size(); ++i) { if (i) output << ','; output << r.counts[i]; }
+                output << "]}";
+            }
             output << "],\"stage_overflow\":" << pending_stage_overflow_
                    << ",\"stage_count\":" << pending_stages_.size() << ",\"stage_file\":\"" << stage_name << "\"}";
             });
@@ -179,6 +225,8 @@ private:
     std::condition_variable wake_;
     std::vector<redclaw::input::InputInjectionReceipt> active_, pending_;
     std::vector<StageSample> stages_, pending_stages_;
+    std::vector<redclaw::input::SendInputDiagnostic> native_calls_, pending_native_calls_;
+    std::uint64_t native_overflow_ = 0, pending_native_overflow_ = 0;
     std::atomic_bool recording_{false};
     std::uint64_t stage_overflow_ = 0, pending_stage_overflow_ = 0;
     std::uint64_t generation_ = 0, overflow_ = 0, pending_overflow_ = 0;

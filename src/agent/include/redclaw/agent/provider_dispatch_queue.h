@@ -20,7 +20,15 @@ class ProviderDispatchQueue final {
 public:
     using Item = std::variant<ProviderProcessEvent, AgentProviderEvent>;
     void push_process(ProviderProcessEvent event) {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_);
+        // Backpressure only the dedicated process pipe readers. Brief stdout
+        // bursts must not kill a task or discard JSON containing an approval.
+        // stop() wakes these readers before process teardown joins them.
+        changed_.wait(lock, [&] {
+            return stopping_ || source_failed_ || event.line.size() > 4U * 1024U * 1024U
+                || (sources_.size() < 512
+                    && source_bytes_ + event.line.size() <= 4U * 1024U * 1024U);
+        });
         if (stopping_ || source_failed_) return;
         if (sources_.size() >= 512 || source_bytes_ + event.line.size() > 4U * 1024U * 1024U) {
             source_failed_ = true;
@@ -49,6 +57,7 @@ public:
         source_bytes_ -= sources_.front().line.size();
         auto event = std::move(sources_.front());
         sources_.pop_front();
+        changed_.notify_all();
         return event;
     }
     void stop() {

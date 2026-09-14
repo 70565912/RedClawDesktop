@@ -34,6 +34,7 @@ void AgentConversationViewport::clear_rows() {
     scan_offset_ = 0;
     scan_changed_ = false;
     verticalScrollBar()->setRange(0, 0);
+    updateGeometry();
 }
 
 void AgentConversationViewport::set_rows(
@@ -56,6 +57,7 @@ void AgentConversationViewport::set_rows(
     }
     scan_offset_ = 0;
     scan_changed_ = false;
+    updateGeometry();
     schedule_refresh();
 }
 
@@ -63,6 +65,39 @@ void AgentConversationViewport::schedule_refresh() {
     if (queued_ || refreshing_) return;
     queued_ = true;
     QTimer::singleShot(16, this, [this] { queued_ = false; refresh(); });
+}
+
+void AgentConversationViewport::invalidate_row(std::uint64_t id) {
+    const auto found = rows_.find(id);
+    if (found == rows_.end()) return;
+    // Expansion changes geometry without changing the message text or width.
+    found->second.width = -1;
+    scan_offset_ = 0;
+    schedule_refresh();
+}
+
+void AgentConversationViewport::set_content_size_changed_callback(
+    ContentSizeChanged callback) {
+    content_size_changed_ = std::move(callback);
+}
+
+int AgentConversationViewport::content_height_hint() const noexcept {
+    int total = 8;
+    for (const auto id : ids_) {
+        const auto found = rows_.find(id);
+        if (found == rows_.end()) continue;
+        total += std::max(24, found->second.height) + 8;
+    }
+    return total;
+}
+
+QSize AgentConversationViewport::sizeHint() const {
+    QSize hint = QAbstractScrollArea::sizeHint();
+    // Keep the parent panel's preferred height tied to the retained rows. The
+    // outer window still clamps this value to the available screen height, so
+    // long histories remain scrollable instead of forcing an off-screen window.
+    hint.setHeight(std::clamp(content_height_hint(), 48, 720));
+    return hint;
 }
 
 void AgentConversationViewport::resizeEvent(QResizeEvent* event) {
@@ -153,10 +188,15 @@ void AgentConversationViewport::refresh() {
     }
     refreshing_ = false;
     if (spare_) spare_->hide();
+    const bool content_size_changed = scan_changed_;
     const bool more = scan_offset_ < ids_.size() || scan_changed_;
     if (scan_offset_ == ids_.size()) {
         scan_offset_ = 0;
         scan_changed_ = false;
+    }
+    if (content_size_changed) {
+        updateGeometry();
+        if (content_size_changed_) content_size_changed_();
     }
     if (more) schedule_refresh();
     setProperty("refresh_count", property("refresh_count").toULongLong() + 1);

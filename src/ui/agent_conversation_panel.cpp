@@ -23,6 +23,7 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
@@ -227,6 +228,7 @@ struct AgentConversationPanel::Impl {
     bool sync_required = false;
     bool rebuilding = false;
     bool rebuild_queued = false;
+    bool window_resize_queued = false;
     std::uint64_t next_item_id = 1;
     QString rendered_task;
 
@@ -331,6 +333,9 @@ struct AgentConversationPanel::Impl {
 
         scroll = new AgentConversationViewport(owner);
         scroll->setObjectName("agentConversationScroll");
+        scroll->set_content_size_changed_callback([this] {
+            queue_window_resize();
+        });
         root->addWidget(scroll, 1);
 
         approval = new QFrame(owner);
@@ -734,6 +739,32 @@ struct AgentConversationPanel::Impl {
         });
     }
 
+    void queue_window_resize() {
+        owner->updateGeometry();
+        if (window_resize_queued) return;
+        window_resize_queued = true;
+        // Streaming output can update the row model many times per second.
+        // Coalesce those changes so a top-level resize does not compete with
+        // text layout or cause repeated viewport commits.
+        QTimer::singleShot(80, owner, [this] {
+            window_resize_queued = false;
+            QWidget* top = owner->window();
+            if (top == nullptr || top == owner) return;
+            const QScreen* screen = top->screen();
+            const int available_height = screen != nullptr
+                ? screen->availableGeometry().height()
+                : top->height();
+            const int minimum_height = (std::max)(240, top->minimumHeight());
+            const int maximum_height = (std::min)(
+                top->maximumHeight(), (std::max)(minimum_height, available_height));
+            const int desired_height = std::clamp(
+                top->sizeHint().height(), minimum_height, maximum_height);
+            if (desired_height != top->height()) {
+                top->resize(top->width(), desired_height);
+            }
+        });
+    }
+
     QWidget* create_message_widget(const ConversationItem& item, QWidget* parent) {
         GuiLatencyScope timing(GuiStage::kAgentCreate);
         auto* row = new QWidget(parent);
@@ -790,10 +821,10 @@ struct AgentConversationPanel::Impl {
             details->setTextInteractionFlags(Qt::TextSelectableByMouse);
             details->setVisible(item.failed);
             QObject::connect(toggle, &QToolButton::toggled, activity,
-                [this, toggle, details](bool shown) {
+                [this, toggle, details, id = item.id](bool shown) {
                     toggle->setArrowType(shown ? Qt::DownArrow : Qt::RightArrow);
                     details->setVisible(shown);
-                    queue_conversation_rebuild();
+                    scroll->invalidate_row(id);
                 });
             activity_layout->addWidget(toggle);
             activity_layout->addWidget(details);
@@ -822,6 +853,7 @@ struct AgentConversationPanel::Impl {
                     ? "Start a new task to talk to the remote Agent."
                     : "Waiting for the remote Agent…"}, parent);
             }, {});
+            queue_window_resize();
             return;
         }
         std::vector<std::uint64_t> ids;
@@ -866,6 +898,7 @@ struct AgentConversationPanel::Impl {
             return item.role == ConversationRole::kAgent
                 && (item.text.size() > 4096 || item.text.count('\n') > 64) ? 720 : 32;
         });
+        queue_window_resize();
     }
 
     AgentSubmitResult submit(AgentSubmitMode mode, const QString& text) {

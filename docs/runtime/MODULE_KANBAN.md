@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-12
+Updated: 2026-09-14
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current priority is the Windows two-machine product path and the `v0.1.1` Developer Preview.
 
@@ -28,8 +28,11 @@ Status values: `done`, `in-progress`, `planned`.
 
 ## M05 Input
 
+Updated: 2026-09-14
+
 - `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done.
 - `M05-T02` Wider DPI/rotation/multi-display validation — in-progress.
+- `M05-T03` Opt-in cross-machine category/stage, native SendInput context and passive target-window delivery diagnostics — in-progress; Debug DHT build and seven focused suites passed; physical deployment and field validation pending. API insertion and application receipt remain separate evidence gates.
 
 ## M06 Session
 
@@ -53,6 +56,8 @@ Status values: `done`, `in-progress`, `planned`.
 
 ## M10 UI
 
+Updated: 2026-09-14
+
 - `M10-T01` Device-code Host/Controller GUI and playback workspace — done.
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
 
@@ -62,6 +67,8 @@ Status values: `done`, `in-progress`, `planned`.
 
 ## X00 Cross-module delivery
 
+Updated: 2026-09-14
+
 - `X00-T01` Real local dual-GUI desktop stream with three channels — done.
 - `X00-T02` Fixed ICE UDP port, early reservation, and ICE-targeted UPnP — done.
 - `X00-T03` `v0.1.0` clean public repository and portable prerelease — done.
@@ -69,6 +76,9 @@ Status values: `done`, `in-progress`, `planned`.
 - `X00-T05` Expanded physical cross-LAN and TURN acceptance — planned.
 - `X00-T06` `v0.1.1` Agent login consistency and published-package cloud smoke — done.
 - `X00-T07` GitHub unit baseline linkage and reusable vcpkg binary cache — done.
+- `X00-T08` Agent single-line message borders, expanded activity sizing, content-sized conversation window, and Cursor retry after first-turn approval expires — done; shared Debug build and full UI connection-flow suite passed. Latest Release publication and physical two-machine Cursor validation remain open.
+- `X00-T09` Cursor/Codex nested Agent output, tool-call summaries, final-result fallback, and duplicate-output filtering — done; local Provider and conversation-panel regressions passed, physical two-machine Provider validation remains open.
+- `X00-T10` Task-scoped approval identity, bounded Agent transcript replay, and failed Codex turn recovery — in-progress; six focused local Agent/IPC suites and Debug publication passed; upgraded Controller/old Host reconnected and reused approval IDs executed successfully. Read-only UAC sampling/readback returned Default desktop with no consent/LogonUI in the shared session; historical input failure remains unresolved. Host-side deployment/flood acceptance remains open.
 
 ## Release gate
 

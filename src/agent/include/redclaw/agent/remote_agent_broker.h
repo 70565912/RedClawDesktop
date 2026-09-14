@@ -182,7 +182,8 @@ private:
     struct TaskRecord;
     void publish_capabilities_locked();
     void publish_projects_locked();
-    void publish_snapshot_locked(const TaskRecord& task, std::uint64_t after_sequence);
+    void publish_snapshot_locked(TaskRecord& task, std::uint64_t after_sequence);
+    void pump_snapshot_locked(TaskRecord& task, std::size_t limit);
     void append_provider_event(AgentProviderEvent event);
     void drain_provider_events();
     void append_event_locked(TaskRecord& task, AgentProviderEvent event);

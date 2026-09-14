@@ -8,6 +8,7 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include "windows_input_diagnostics.h"
 #endif
 
 namespace redclaw::input {
@@ -253,6 +254,12 @@ bool WindowsSendInputInjectorBackend::inject(const InputEvent& event) {
     return inject_batch(std::vector<InputEvent>{event});
 }
 
+void WindowsSendInputInjectorBackend::set_diagnostic_observer(
+    std::function<void(const SendInputDiagnostic&)> observer) {
+    diagnostic_observer_ = std::move(observer);
+    last_context_us_ = 0;
+}
+
 bool WindowsSendInputInjectorBackend::inject_batch(const std::vector<InputEvent>& events) {
 #if !defined(_WIN32)
     (void)events;
@@ -353,7 +360,33 @@ bool WindowsSendInputInjectorBackend::inject_batch(const std::vector<InputEvent>
         }
         inputs.push_back(input);
     }
+    SendInputDiagnostic diagnostic;
+    const auto clock_us = [] { return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count()); };
+    if (diagnostic_observer_) {
+        const auto now = clock_us();
+        if (!last_context_us_ || now - last_context_us_ >= 250000) {
+            detail::sample_context(diagnostic); last_context_us_ = now;
+        }
+        for (const auto& event : events) {
+            const auto kind = static_cast<std::size_t>(event.type);
+            if (kind < diagnostic.counts.size()) ++diagnostic.counts[kind];
+        }
+        diagnostic.requested = static_cast<std::uint32_t>(inputs.size());
+        diagnostic.begin_us = clock_us();
+        SetLastError(ERROR_SUCCESS);
+    }
     const UINT inserted = SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+    if (diagnostic_observer_) {
+        diagnostic.error = inserted == inputs.size() ? 0U : GetLastError();
+        diagnostic.end_us = clock_us(); diagnostic.inserted = inserted;
+        if (diagnostic.context_sampled) {
+            POINT cursor{}; diagnostic.cursor_after_valid = GetCursorPos(&cursor) != FALSE;
+            diagnostic.cursor_after_x = cursor.x; diagnostic.cursor_after_y = cursor.y;
+        }
+        diagnostic_observer_(diagnostic);
+    }
     if (inserted == inputs.size()) {
         return true;
     }
