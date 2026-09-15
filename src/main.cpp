@@ -11072,6 +11072,13 @@ int run_runtime_mode(
                 }
                 std::cout << '\n';
 
+                if (options.role == RuntimeRole::kHost) {
+                    if (const auto timing = stream_transport_estimator.timing_snapshot()) {
+                        std::cout << redclaw::net::format_media_transport_timing_sample(
+                            *timing, now_steady_ms() * 1000ULL,
+                            adaptive_control.last_rtt_queue_delay_ms) << '\n';
+                    }
+                }
                 std::cout << "Runtime media transport feedback stats role=" << role_name
                           << " feedback_sent_total=" << transport_feedback_sent
                           << " feedback_received_total=" << transport_feedback_received

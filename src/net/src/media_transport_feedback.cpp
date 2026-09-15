@@ -6,8 +6,11 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
+#include <iomanip>
 #include <limits>
+#include <locale>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include "media_transport_limits.h"
@@ -124,6 +127,7 @@ struct MediaTransportEstimator::Impl {
     std::uint32_t acknowledged_bitrate_kbps = 0;
     std::uint32_t loss_per_mille = 0;
     std::uint32_t queue_delay_ms = 0;
+    MediaTransportTimingSample timing_sample;
 
     void expire_in_flight(std::uint64_t host_steady_us, std::uint32_t smoothed_rtt_ms) {
         const std::uint64_t timeout_us = resolve_transport_in_flight_expiry_us(smoothed_rtt_ms);
@@ -275,6 +279,7 @@ bool MediaTransportEstimator::apply_feedback(
                 continue;
             }
             impl_->acknowledged_window.push_back({arrival.receiver_steady_us, sent.wire_bytes});
+            double relative_transit_us = 0.0;
             if (!impl_->anchor_ready) {
                 impl_->anchor_ready = true;
                 impl_->anchor_send_us = sent.steady_send_us;
@@ -286,7 +291,7 @@ bool MediaTransportEstimator::apply_feedback(
                     sent.steady_send_us - impl_->anchor_send_us);
                 const auto arrival_delta = static_cast<std::int64_t>(
                     arrival.receiver_steady_us - impl_->anchor_arrival_us);
-                const double relative_transit_us = static_cast<double>(
+                relative_transit_us = static_cast<double>(
                     arrival_delta - send_delta);
                 impl_->smoothed_relative_transit_us =
                     impl_->smoothed_relative_transit_us * 0.9
@@ -301,6 +306,26 @@ bool MediaTransportEstimator::apply_feedback(
                 impl_->queue_delay_ms = static_cast<std::uint32_t>(
                     std::min<double>(queue_us / 1000.0, 120000.0));
             }
+            // Fixed-size overwrite under the existing lock: no allocation or
+            // disk I/O here. Retain the exact pair before the local sent copy expires.
+            impl_->timing_sample = {
+                .sample_count = impl_->timing_sample.sample_count + 1,
+                .feedback_id = feedback.feedback_id,
+                .transport_sequence = sent.transport_sequence,
+                .frame_id = sent.frame_id,
+                .sent_rate_revision = sent.rate_revision,
+                .feedback_rate_revision = feedback.observed_rate_revision,
+                .feedback_host_us = host_steady_us,
+                .steady_send_us = sent.steady_send_us,
+                .receiver_steady_us = arrival.receiver_steady_us,
+                .anchor_send_us = impl_->anchor_send_us,
+                .anchor_arrival_us = impl_->anchor_arrival_us,
+                .relative_transit_us = relative_transit_us,
+                .smoothed_relative_transit_us = impl_->smoothed_relative_transit_us,
+                .minimum_smoothed_relative_transit_us =
+                    impl_->minimum_smoothed_relative_transit_us,
+                .queue_delay_ms = impl_->queue_delay_ms,
+            };
         }
         if (!blocked_by_newer_revision) {
             impl_->last_processed_sequence = std::max(
@@ -352,6 +377,42 @@ MediaTransportEstimate MediaTransportEstimator::snapshot(
     return result;
 }
 
+std::optional<MediaTransportTimingSample> MediaTransportEstimator::timing_snapshot() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->timing_sample.sample_count == 0) {
+        return std::nullopt;
+    }
+    return impl_->timing_sample;
+}
+
+std::string format_media_transport_timing_sample(
+    const MediaTransportTimingSample& sample,
+    std::uint64_t log_host_us,
+    std::uint32_t rtt_queue_latest_ms) {
+    std::ostringstream line;
+    line.imbue(std::locale::classic());
+    line << std::fixed << std::setprecision(3)
+         << "Runtime media transport timing role=host v=1"
+         << " samples=" << sample.sample_count
+         << " feedback_id=" << sample.feedback_id
+         << " sequence=" << sample.transport_sequence
+         << " frame_id=" << sample.frame_id
+         << " sent_revision=" << sample.sent_rate_revision
+         << " feedback_revision=" << sample.feedback_rate_revision
+         << " send_us=" << sample.steady_send_us
+         << " recv_us=" << sample.receiver_steady_us
+         << " ack_host_us=" << sample.feedback_host_us
+         << " log_host_us=" << log_host_us
+         << " anchor_send_us=" << sample.anchor_send_us
+         << " anchor_recv_us=" << sample.anchor_arrival_us
+         << " relative_us=" << sample.relative_transit_us
+         << " ewma_us=" << sample.smoothed_relative_transit_us
+         << " min_us=" << sample.minimum_smoothed_relative_transit_us
+         << " queue_ms=" << sample.queue_delay_ms
+         << " rtt_queue_latest_ms=" << rtt_queue_latest_ms;
+    return line.str();
+}
+
 void MediaTransportEstimator::reset() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->sent.clear();
@@ -380,6 +441,7 @@ void MediaTransportEstimator::reset() {
     impl_->acknowledged_bitrate_kbps = 0;
     impl_->loss_per_mille = 0;
     impl_->queue_delay_ms = 0;
+    impl_->timing_sample = {};
 }
 
 }  // namespace redclaw::net

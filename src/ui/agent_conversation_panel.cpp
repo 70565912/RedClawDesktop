@@ -1038,9 +1038,8 @@ void AgentConversationPanel::set_transport_state(
     impl_->channel_open = channel_open;
     impl_->sync_required = sync_required;
     impl_->connection_status->setText(
-        authorized && channel_open && !sync_required ? "Connected"
-        : sync_required ? "Syncing"
-        : channel_open ? "Unauthorized" : "Offline");
+        !channel_open ? "Offline" : !authorized ? "Unauthorized"
+        : sync_required ? "Syncing" : "Connected");
     impl_->connection_status->setProperty(
         "connected", authorized && channel_open && !sync_required);
     impl_->connection_status->style()->unpolish(impl_->connection_status);
@@ -1049,6 +1048,8 @@ void AgentConversationPanel::set_transport_state(
         impl_->set_status(detail, false);
     } else if (!channel_open) {
         impl_->set_status("Agent channel disconnected. Conversation is preserved while reconnecting.", false);
+    } else if (!authorized) {
+        impl_->set_status("Remote Agent is not authorized. Authorization must be handled on the remote device; conversation and pending synchronization are preserved.", false);
     } else if (sync_required) {
         impl_->set_status("Synchronizing the active Agent task before accepting new work.", false);
     } else if (authorized && !was_ready) {

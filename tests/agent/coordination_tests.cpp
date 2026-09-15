@@ -455,6 +455,7 @@ TEST(NormalAgentControlStateV1, FailedPersistenceNeverAdvancesAckOrTaskState) {
     ASSERT_TRUE(state.prepare_outbound(task_request("task", "request"), {}, "scoped_request", 2000, &error));
     std::filesystem::resize_file(path, 0);
     auto terminal = remote_message(redclaw::protocol::AgentMessageTypeV1::kTaskComplete, 3);
+    terminal.session_epoch = "remote-epoch-2";
     terminal.task_id = "task";
     terminal.request_id = "request";
     terminal.event_sequence = 1;
@@ -462,6 +463,13 @@ TEST(NormalAgentControlStateV1, FailedPersistenceNeverAdvancesAckOrTaskState) {
     EXPECT_FALSE(state.observe_remote(terminal, 2100, &error));
     EXPECT_EQ(state.acknowledged_event_sequence("task"), 0U);
     EXPECT_NE(state.task_snapshot("task")->task_state, redclaw::protocol::AgentTaskStateV1::kCompleted);
+    auto capability = remote_message(redclaw::protocol::AgentMessageTypeV1::kCapabilities, 4);
+    capability.session_epoch = terminal.session_epoch;
+    capability.complete = true;
+    capability.available = true;
+    EXPECT_TRUE(state.observe_remote(capability, 2101, &error)) << error;
+    EXPECT_EQ(state.acknowledged_event_sequence("task"), 0U);
+    EXPECT_TRUE(state.journal().invalid()); // Authorization cannot repair a failed journal.
     std::filesystem::remove_all(directory);
 }
 
@@ -685,6 +693,166 @@ TEST(NormalAgentControlStateV1, LocalAckAndStatusPreservePeerStateAcrossJournalR
         EXPECT_EQ(restored.acknowledged_event_sequence("task"), 1U);
         std::filesystem::remove_all(directory);
     }
+}
+
+TEST(NormalAgentControlStateV1, RequestRejectionDoesNotRewriteDurableTaskOrApproval) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    using State = redclaw::protocol::AgentTaskStateV1;
+    for (const auto prior_state : {State::kCompleted, State::kAwaitingApproval}) {
+        const auto directory = test_directory("request-rejection");
+        const auto journal_path = directory / "coordination-v1.jsonl";
+        auto state = initialized_state(journal_path);
+        publish_catalogs(&state);
+        std::string error;
+        auto prior = remote_message(Type::kTaskSnapshot, 3);
+        prior.task_id = "task-1";
+        prior.task_state = prior_state;
+        prior.event_sequence = 58;
+        prior.gap = true;
+        prior.request_id = "approval-1";
+        if (prior_state == State::kAwaitingApproval) prior.event_kind = "approval_pending";
+        ASSERT_TRUE(state.observe_remote(prior, 1003, &error)) << error;
+        state.request_sync(prior.task_id);
+        const auto record_count = state.journal().records().size();
+
+        auto rejection = remote_message(Type::kTaskError, 4);
+        rejection.task_id = prior.task_id;
+        rejection.request_id = "sync-task-1";
+        rejection.task_state = State::kPaused;
+        rejection.event_kind = "request_rejected";
+        rejection.error_code = "agent_request_rejected";
+        rejection.text = "remote agent is not authorized";
+        bool apply = true;
+        EXPECT_FALSE(state.observe_remote(rejection, 1004, &error, &apply));
+        EXPECT_FALSE(apply);
+        EXPECT_NE(error.find("request rejected"), std::string::npos);
+        EXPECT_EQ(state.task_snapshot(prior.task_id)->task_state, prior_state);
+        EXPECT_EQ(state.journal().records().size(), record_count);
+        EXPECT_EQ(state.acknowledged_event_sequence(prior.task_id), 58U);
+        EXPECT_TRUE(state.sync_required());
+
+        redclaw::agent::NormalAgentControlStateV1 restored({.journal_path = journal_path});
+        ASSERT_TRUE(restored.initialize(&error)) << error;
+        EXPECT_EQ(restored.task_snapshot(prior.task_id)->task_state, prior_state);
+        if (prior_state == State::kAwaitingApproval) {
+            prior.message_id = 5;
+            prior.gap = false;
+            ASSERT_TRUE(state.observe_remote(prior, 1005, &error)) << error;
+            auto decision = task_request(prior.task_id, "approval-1");
+            decision.type = Type::kApprovalDecision;
+            decision.approval_decision = redclaw::protocol::AgentApprovalDecisionV1::kReject;
+            EXPECT_TRUE(state.prepare_outbound(decision, {}, "explicit_decision", 2000, &error)) << error;
+            EXPECT_FALSE(state.prepare_outbound(decision, {}, "explicit_decision", 2001, &error));
+        }
+        std::filesystem::remove_all(directory);
+    }
+}
+
+TEST(NormalAgentControlStateV1, AuthorizationDenialSuspendsSyncUntilExplicitCapabilityRecovery) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    using State = redclaw::protocol::AgentTaskStateV1;
+    const auto directory = test_directory("sync-authorization");
+    auto state = initialized_state(directory / "coordination-v1.jsonl");
+    publish_catalogs(&state);
+    std::string error;
+    auto prior = remote_message(Type::kTaskSnapshot, 3);
+    prior.task_id = "task-1";
+    prior.task_state = State::kRunning;
+    prior.event_sequence = 58;
+    prior.gap = true;
+    ASSERT_TRUE(state.observe_remote(prior, 1003, &error)) << error;
+    std::uint64_t next_id = 1;
+    EXPECT_TRUE(state.take_sync_requests("local", &next_id, 2000).empty());
+
+    auto capability = remote_message(Type::kCapabilities, 4);
+    capability.complete = true;
+    capability.available = false;
+    capability.error_code = "not_authorized";
+    ASSERT_TRUE(state.observe_remote(capability, 2001, &error)) << error;
+    EXPECT_TRUE(state.sync_required());
+    EXPECT_TRUE(state.take_sync_requests("local", &next_id, 10000).empty());
+    auto new_task = task_request("task-2", "request-2");
+    EXPECT_FALSE(state.prepare_outbound(new_task, {}, "scoped_request", 10001, &error));
+    EXPECT_NE(error.find("not authorized"), std::string::npos);
+    auto manual_sync = task_request(prior.task_id, "manual-sync");
+    manual_sync.type = Type::kTaskSyncRequest;
+    EXPECT_FALSE(state.prepare_outbound(manual_sync, {}, "scoped_request", 10002, &error));
+
+    // An in-flight snapshot received during denial is not recovery sync.
+    prior.message_id = 5;
+    prior.gap = false;
+    ASSERT_TRUE(state.observe_remote(prior, 10003, &error)) << error;
+    EXPECT_FALSE(state.sync_required());
+    EXPECT_FALSE(state.prepare_outbound(new_task, {}, "scoped_request", 10003, &error));
+    auto provider = remote_message(Type::kCapabilities, 6);
+    provider.provider = redclaw::protocol::AgentProviderKindV1::kCodex;
+    provider.available = true;
+    provider.provider_readiness = redclaw::protocol::AgentProviderReadinessV1::kReady;
+    ASSERT_TRUE(state.observe_remote(provider, 10003, &error)) << error;
+    EXPECT_TRUE(state.take_sync_requests("local", &next_id, 10004).empty());
+
+    capability.message_id = 7;
+    capability.available = true;
+    capability.error_code.clear();
+    ASSERT_TRUE(state.observe_remote(capability, 10005, &error)) << error;
+    const auto resumed = state.take_sync_requests("local", &next_id, 10006);
+    ASSERT_EQ(resumed.size(), 1U);
+    EXPECT_EQ(resumed.front().acknowledged_event_sequence, 58U);
+    EXPECT_FALSE(state.prepare_outbound(new_task, {}, "scoped_request", 10007, &error));
+    EXPECT_NE(error.find("synchronization"), std::string::npos);
+    prior.message_id = 8;
+    prior.gap = false;
+    ASSERT_TRUE(state.observe_remote(prior, 10008, &error)) << error;
+    EXPECT_FALSE(state.sync_required());
+    EXPECT_TRUE(state.prepare_outbound(new_task, {}, "scoped_request", 10009, &error)) << error;
+    std::filesystem::remove_all(directory);
+}
+
+TEST(NormalAgentControlStateV1, NewEpochRequiresFreshAuthorizationAndInvalidEnvelopeChangesNothing) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    const auto directory = test_directory("sync-epoch-authorization");
+    auto state = initialized_state(directory / "coordination-v1.jsonl");
+    publish_catalogs(&state);
+    std::string error;
+    auto event = remote_message(Type::kEvent, 3);
+    event.task_id = "task-1";
+    event.task_state = redclaw::protocol::AgentTaskStateV1::kRunning;
+    event.event_sequence = 1;
+    ASSERT_TRUE(state.observe_remote(event, 1003, &error)) << error;
+    auto capability = remote_message(Type::kCapabilities, 4);
+    capability.complete = true;
+    capability.available = true;
+    ASSERT_TRUE(state.observe_remote(capability, 1004, &error)) << error;
+
+    auto provider = remote_message(Type::kCapabilities, 0);
+    provider.session_epoch = "remote-epoch-2";
+    provider.provider = redclaw::protocol::AgentProviderKindV1::kCodex;
+    provider.provider_readiness = redclaw::protocol::AgentProviderReadinessV1::kReady;
+    provider.available = true;
+    EXPECT_FALSE(state.observe_remote(provider, 1005, &error));
+    EXPECT_FALSE(state.sync_required());
+    provider.message_id = 1;
+    ASSERT_TRUE(state.observe_remote(provider, 1006, &error)) << error;
+    EXPECT_TRUE(state.sync_required());
+    std::uint64_t next_id = 1;
+    EXPECT_TRUE(state.take_sync_requests("local", &next_id, 1007).empty());
+    EXPECT_FALSE(state.prepare_outbound(task_request("task-2", "request-2"), {},
+        "scoped_request", 1008, &error));
+    EXPECT_NE(error.find("not authorized"), std::string::npos);
+
+    capability.session_epoch = provider.session_epoch;
+    capability.message_id = 2;
+    ASSERT_TRUE(state.observe_remote(capability, 1009, &error)) << error;
+    const auto sync = state.take_sync_requests("local", &next_id, 1010);
+    ASSERT_EQ(sync.size(), 1U);
+    EXPECT_EQ(sync.front().acknowledged_event_sequence, 1U);
+    EXPECT_TRUE(state.sync_required());
+    event.session_epoch = provider.session_epoch;
+    event.type = Type::kTaskSnapshot;
+    event.message_id = 3;
+    ASSERT_TRUE(state.observe_remote(event, 1011, &error)) << error;
+    EXPECT_FALSE(state.sync_required());
+    std::filesystem::remove_all(directory);
 }
 
 TEST(AgentLifecycleApprovalGateV1, RejectsMissingGatesAndStaleIdentityAndConsumesOnce) {
