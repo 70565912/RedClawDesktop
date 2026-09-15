@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "xterm": {
+    "version": "6.0.0",
+    "url": "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz",
+    "sha256": "908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6"
+  },
+  "fit": {
+    "version": "0.11.0",
+    "url": "https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz",
+    "sha256": "26003b4517a132b64e4ff228fd88a5fda3fff5e606c76093f6dcff772e9ecec0"
+  },
+  "runtime": {
+    "version": "153.0.4234.32",
+    "architecture": "x64",
+    "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/c3d95bc1-a0a7-4ca6-aaa1-fa0ac3dd1a37/Microsoft.WebView2.FixedVersionRuntime.153.0.4234.32.x64.cab",
+    "sha256": "2cb653a74426f0aa802c2396775c6bc674fd662d5396bd677f47bfa6e12eba9c"
+  }
+}

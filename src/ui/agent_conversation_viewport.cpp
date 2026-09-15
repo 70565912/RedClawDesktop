@@ -76,6 +76,12 @@ void AgentConversationViewport::invalidate_row(std::uint64_t id) {
     schedule_refresh();
 }
 
+void AgentConversationViewport::follow_new_content() {
+    follow_tail_ = true;
+    scan_offset_ = 0;
+    schedule_refresh();
+}
+
 void AgentConversationViewport::set_content_size_changed_callback(
     ContentSizeChanged callback) {
     content_size_changed_ = std::move(callback);

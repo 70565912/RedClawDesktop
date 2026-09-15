@@ -59,6 +59,12 @@ bool AgentExecutor::handle_message(
     const auto bytes = redclaw::protocol::agent_message_protobuf_size_v1(message);
     {
         std::lock_guard lock(mutex_);
+        if (agent_request_mutates_workspace(message.type) && !broker_->allows_workspace_mutations()) {
+            ++snapshot_.rejected_total;
+            reject_locked(message, "workspace_transfer_busy");
+            if (error) *error = "workspace_transfer_busy";
+            return false;
+        }
         if (stopping_ || desired_epoch_.empty() || commands_.size() >= kMaxCommands
             || bytes > kMaxCommandBytes - snapshot_.queued_bytes) {
             ++snapshot_.rejected_total;

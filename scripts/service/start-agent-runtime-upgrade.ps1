@@ -67,22 +67,21 @@ if (-not (Test-Path -LiteralPath $action.Execute)) {
 }
 $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
-Start-ScheduledTask -TaskName $taskName
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds(40)
-do {
-    if (Test-Path -LiteralPath $statusPath) {
-        try { $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json } catch { $status = $null }
-        if ($status -and $status.phase -eq 'handoff_ready') {
-            Assert-UpgradeIdentity $identity
-            $workerProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($status.worker_pid)"
-            if (-not $workerProcess -or $workerProcess.SessionId -ne $identity.session_id -or $workerProcess.ParentProcessId -eq $PID) { throw 'upgrade_worker_not_independent' }
-            $planHash | Set-Content -LiteralPath $plan.acknowledgment_path -Encoding ASCII
-            [pscustomobject]@{phase='independent_worker_owns_upgrade';worker_pid=$status.worker_pid;status_path=$statusPath;plan_path=$planPath;plan_sha256=$planHash} | ConvertTo-Json
-            return
+$registeredTask = $false
+try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
+    $registeredTask = $true
+    Start-ScheduledTask -TaskName $taskName
+    $workerPid = Wait-UpgradeHandoff $identity $statusPath $plan.acknowledgment_path $planHash $action.Execute $workerArguments
+    [pscustomobject]@{phase='independent_worker_owns_upgrade';worker_pid=$workerPid;status_path=$statusPath;plan_path=$planPath;plan_sha256=$planHash} | ConvertTo-Json
+} catch {
+    $failure = $_.Exception.Message
+    if (-not (Test-Path -LiteralPath $plan.acknowledgment_path)) {
+        if ($registeredTask) {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
         }
-        if ($status -and $status.phase -eq 'failed') { throw ('upgrade_worker_preflight_failed: ' + $status.detail) }
+        Write-UpgradeReceipt $statusPath 'failed' $TargetPid $failure
     }
-    Start-Sleep -Milliseconds 200
-} while ([DateTimeOffset]::UtcNow -lt $deadline)
-throw 'upgrade_worker_handoff_timeout_target_not_stopped'
+    throw
+}

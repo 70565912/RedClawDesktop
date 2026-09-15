@@ -44,7 +44,8 @@ CaptureRecoveryAction CaptureRecoveryPolicy::failure(CaptureFailure failure,
 void CaptureRecoveryPolicy::frame_captured() { reset(); }
 void CaptureRecoveryPolicy::reset() { dda_rebuild_attempted_ = false; }
 
-CaptureDesktopContext probe_capture_desktop() {
+CaptureDesktopContext probe_capture_desktop(CaptureProbeDetail detail) {
+    (void)detail;
     CaptureDesktopContext result;
 #ifdef _WIN32
     auto object_name = [](HANDLE object) -> std::string {
@@ -101,6 +102,7 @@ CaptureDesktopContext probe_capture_desktop() {
         && _stricmp(result.input_desktop.c_str(), "Default") == 0
         && _stricmp(result.thread_desktop.c_str(), "Default") == 0
         ? CaptureDesktopAccess::kOrdinary : CaptureDesktopAccess::kDenied;
+    if (detail == CaptureProbeDetail::kAccessOnly) return result;
     std::uint64_t signature = 1469598103934665603ULL;
     auto mix = [&](std::uint32_t value) { signature = (signature ^ value) * 1099511628211ULL; };
     DISPLAY_DEVICEW display{};

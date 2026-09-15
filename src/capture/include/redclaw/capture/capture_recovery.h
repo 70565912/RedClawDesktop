@@ -31,7 +31,8 @@ struct CaptureDesktopContext {
     std::uint64_t display_signature = 0;
     bool operator==(const CaptureDesktopContext&) const = default;
 };
-CaptureDesktopContext probe_capture_desktop();
+enum class CaptureProbeDetail { kAccessOnly, kWithDisplayState };
+CaptureDesktopContext probe_capture_desktop(CaptureProbeDetail detail = CaptureProbeDetail::kWithDisplayState);
 
 // One rebuild per incident. Only a real new frame ends the incident.
 class CaptureRecoveryPolicy {

@@ -1,0 +1,10 @@
+<RCC><qresource prefix="/terminal">
+  <file alias="index.html">@CMAKE_CURRENT_SOURCE_DIR@/web/index.html</file>
+  <file alias="terminal.js">@CMAKE_CURRENT_SOURCE_DIR@/web/terminal.js</file>
+  <file alias="terminal.css">@CMAKE_CURRENT_SOURCE_DIR@/web/terminal.css</file>
+  <file alias="xterm.js">@terminal_xterm_directory@/lib/xterm.js</file>
+  <file alias="xterm.css">@terminal_xterm_directory@/css/xterm.css</file>
+  <file alias="fit.js">@terminal_fit_directory@/lib/addon-fit.js</file>
+  <file alias="xterm-LICENSE">@terminal_xterm_directory@/LICENSE</file>
+  <file alias="fit-LICENSE">@terminal_fit_directory@/LICENSE</file>
+</qresource></RCC>

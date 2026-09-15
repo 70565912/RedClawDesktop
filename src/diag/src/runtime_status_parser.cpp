@@ -93,7 +93,7 @@ bool update_debug_runtime_status_from_line(std::string_view line, DebugRuntimeSt
         event.peer_generation = field_u64(fields, "peer_generation", 0);
         event.channel_generation = field_u64(fields, "channel_generation", 0);
         event.layer = static_cast<redclaw::net::TransportDiagnosticLayer>(layer);
-        if (kind < 5) event.channel = static_cast<redclaw::net::DataChannelKind>(kind);
+        if (kind < redclaw::net::kDataChannelKindCount) event.channel = static_cast<redclaw::net::DataChannelKind>(kind);
         event.native_state = static_cast<int>(std::min<std::uint64_t>(field_u64(fields, "native_state", 0), 255));
         event.failure = field_bool(fields, "failure", false);
         const auto pair_text = field_string(fields, "pair_id");

@@ -35,6 +35,8 @@ enum class DataChannelKind {
 	kAgent,
 	kNavigation,
 	kDebugBridge,
+	kTerminal,
+	kTransfer,
 };
 
 struct IceGatheringConfig {
@@ -80,6 +82,8 @@ inline constexpr std::string_view kControlDataChannelLabel = "redclaw-control-v1
 inline constexpr std::string_view kAgentDataChannelLabel = "redclaw-agent-v1";
 inline constexpr std::string_view kNavigationDataChannelLabel = "redclaw-navigation-v1";
 inline constexpr std::string_view kDebugBridgeDataChannelLabel = "redclaw-debug-bridge-v1";
+inline constexpr std::string_view kTerminalDataChannelLabel = "redclaw-terminal-v1";
+inline constexpr std::string_view kTransferDataChannelLabel = "redclaw-transfer-v1";
 
 [[nodiscard]] DataChannelDeliveryPolicy data_channel_delivery_policy(DataChannelKind kind);
 
@@ -136,6 +140,7 @@ struct TransportDiagnosticEvent {
     int remote_candidate_type = 0;
     std::uint64_t occurrences = 0;
 };
+inline constexpr std::size_t kDataChannelKindCount = 7;
 struct TransportDiagnostics {
     std::uint64_t event_sequence = 0;
     std::optional<TransportDiagnosticEvent> first_failure;

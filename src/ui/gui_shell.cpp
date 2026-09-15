@@ -1,7 +1,14 @@
 #include "gui_shell.h"
 #include "playback/capture_playback_state.h"
+#include "playback/playback_frame_progress.h"
+#if defined(_WIN32) && defined(REDCLAW_ENABLE_QT_GUI)
+#include "ui/terminal/terminal_panel.h"
+#include "ui/terminal/workspace_pipe_server.h"
+#endif
 
 #if defined(REDCLAW_ENABLE_QT_GUI)
+#include "ui/file_transfer_panel.h"
+#include "ui/runtime_maintenance_context.h"
 #include "ui/gui_latency_probe.h"
 #include "ui/gui_diagnostic_writer.h"
 #include "ui/gui_quit_barrier.h"
@@ -22,6 +29,7 @@
 #include <deque>
 #include <functional>
 #include <iostream>
+#include <utility>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1417,7 +1425,8 @@ QString sealed_exchange_state_text(SealedExchangeState state, const QString& det
 
 class RuntimeProcessController {
 public:
-  RuntimeProcessController() {
+  RuntimeProcessController(QStringList gui_arguments, QString previous_context)
+      : gui_arguments_(std::move(gui_arguments)), maintenance_context_(std::move(previous_context)) {
     process_.setProcessChannelMode(QProcess::SeparateChannels);
   }
 
@@ -1432,8 +1441,15 @@ public:
   QProcess& process() {
     return process_;
   }
+  void set_workspace_shutdown(std::function<void(std::function<void()>)> shutdown) {
+    workspace_shutdown_ = std::move(shutdown);
+  }
 
-  bool start(const QString& program, const QStringList& args, QString* error_detail) {
+#ifdef _WIN32
+  WorkspacePipeServer& workspace_pipe() { return workspace_pipe_; }
+#endif
+
+  bool start(const QString& program, const QStringList& args, const QString& role, QString* error_detail) {
     if (is_running()) {
       if (error_detail != nullptr) {
         *error_detail = "Runtime process is already running.";
@@ -1442,12 +1458,26 @@ public:
     }
 
     lifecycle_control_message_id_ = 0;
+    stop_requested_ = false;
     const auto pipe_name = "RedClawAgent-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     std::string pipe_error;
     const bool pipe_started = agent_pipe_.start(pipe_name.toStdString(), true, 0, &pipe_error);
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.remove("REDCLAW_AGENT_PIPE_NAME");
     environment.remove("REDCLAW_AGENT_PIPE_OWNER_PID");
+    environment.remove("REDCLAW_WORKSPACE_PIPE_NAME");
+    environment.remove("REDCLAW_WORKSPACE_PIPE_OWNER_PID");
+    environment.remove("REDCLAW_RUNTIME_MAINTENANCE_CONTEXT");
+#ifdef _WIN32
+    QString maintenance_error;
+    const bool maintenance_ready = role == "host" && maintenance_context_.prepare(&maintenance_error);
+    if (maintenance_ready) environment.insert("REDCLAW_RUNTIME_MAINTENANCE_CONTEXT", maintenance_context_.path());
+    const auto workspace_name = workspace_pipe_.listen();
+    if (!workspace_name.isEmpty()) {
+      environment.insert("REDCLAW_WORKSPACE_PIPE_NAME", workspace_name);
+      environment.insert("REDCLAW_WORKSPACE_PIPE_OWNER_PID", QString::number(QCoreApplication::applicationPid()));
+    }
+#endif
     if (pipe_started) {
       environment.insert("REDCLAW_AGENT_PIPE_NAME", pipe_name);
       environment.insert("REDCLAW_AGENT_PIPE_OWNER_PID", QString::number(QCoreApplication::applicationPid()));
@@ -1465,6 +1495,14 @@ public:
     }
 
     agent_pipe_.set_expected_peer_pid(static_cast<std::uint32_t>(process_.processId()));
+#ifdef _WIN32
+    if (maintenance_ready && !maintenance_context_.save(gui_arguments_, args, static_cast<quint64>(process_.processId()), &maintenance_error)) {
+      write_gui_log_sink("Host maintenance unavailable: " + maintenance_error);
+    } else if (role == "host" && !maintenance_ready) {
+      write_gui_log_sink("Host maintenance unavailable: " + maintenance_error);
+    }
+    workspace_pipe_.set_expected_runtime_pid(static_cast<quint32>(process_.processId()));
+#endif
     if (error_detail != nullptr) {
       error_detail->clear();
     }
@@ -1492,17 +1530,24 @@ public:
 
   redclaw::agent::LocalAgentPipeStats agent_pipe_stats() const { return agent_pipe_.stats(); }
 
-  void request_stop() {
-    if (!is_running()) {
+  void request_stop(bool end_desktop = true) {
+    if (!is_running() || stop_requested_) {
       return;
     }
+    stop_requested_ = true;
     request_remote_input_release();
-    QTimer::singleShot(100, &process_, [this]() {
-      if (is_running()) {
+    if (end_desktop && workspace_shutdown_) workspace_shutdown_([this] { terminate_after_workspace(); });
+    else terminate_after_workspace();
+  }
+
+  void terminate_after_workspace() {
+    const auto stopping_pid = process_.processId();
+    QTimer::singleShot(100, &process_, [this, stopping_pid]() {
+      if (is_running() && process_.processId() == stopping_pid) {
         process_.terminate();
       }
-      QTimer::singleShot(2500, &process_, [this]() {
-        if (is_running()) {
+      QTimer::singleShot(2500, &process_, [this, stopping_pid]() {
+        if (is_running() && process_.processId() == stopping_pid) {
           process_.kill();
         }
       });
@@ -1536,7 +1581,14 @@ private:
 
   QProcess process_;
   redclaw::agent::LocalAgentPipe agent_pipe_;
+  QStringList gui_arguments_;
+  RuntimeMaintenanceContext maintenance_context_;
+#ifdef _WIN32
+  WorkspacePipeServer workspace_pipe_;
+#endif
   std::uint64_t lifecycle_control_message_id_ = 0;
+  bool stop_requested_ = false;
+  std::function<void(std::function<void()>)> workspace_shutdown_;
 };
 
 QString service_lifecycle_error_to_text(redclaw::service::ServiceLifecycleError error) {
@@ -1674,7 +1726,27 @@ bool launch_gui_shell(
   GuiLatencyScope initialization_timing(GuiStage::kGuiInitialize);
   GuiAutoStartOptions gui_auto_start;
   QString gui_auto_start_error;
-  if (!parse_gui_auto_start_options(QCoreApplication::arguments(), &gui_auto_start, &gui_auto_start_error)) {
+  QStringList maintenance_gui_arguments = QCoreApplication::arguments();
+  QStringList maintenance_runtime_arguments;
+  QString maintenance_previous_context;
+  const auto resume_index = maintenance_gui_arguments.indexOf("--gui-maintenance-resume");
+  if (resume_index >= 0) {
+    const auto snapshot = resume_index + 1 < maintenance_gui_arguments.size()
+        ? RuntimeMaintenanceContext::read(maintenance_gui_arguments[resume_index + 1], &gui_auto_start_error) : std::nullopt;
+    if (!snapshot) {
+      if (error_detail) *error_detail = gui_auto_start_error.isEmpty() ? "maintenance_context_missing" : gui_auto_start_error.toStdString();
+      return false;
+    }
+    maintenance_gui_arguments = snapshot->gui_arguments;
+    maintenance_runtime_arguments = snapshot->runtime_arguments;
+    maintenance_previous_context = QCoreApplication::arguments()[resume_index + 1];
+  }
+  auto gui_parse_arguments = maintenance_gui_arguments;
+  if (!maintenance_runtime_arguments.isEmpty()) {
+    gui_parse_arguments.append(maintenance_runtime_arguments);
+    gui_parse_arguments << "--gui-auto-start" << "--gui-role" << "host";
+  }
+  if (!parse_gui_auto_start_options(gui_parse_arguments, &gui_auto_start, &gui_auto_start_error)) {
     if (error_detail != nullptr) {
       *error_detail = gui_auto_start_error.toStdString();
     }
@@ -2151,7 +2223,7 @@ bool launch_gui_shell(
       text-align: left;
       font: 600 9pt "Segoe UI";
     }
-    QFrame#desktopNavigationOverlay {
+    QFrame#desktopNavigationPane {
       background-color: #08111f;
       border: 1px solid #31598a;
       border-radius: 10px;
@@ -2164,7 +2236,7 @@ bool launch_gui_shell(
     }
   )");
 
-  RuntimeProcessController controller;
+  RuntimeProcessController controller(maintenance_gui_arguments, maintenance_previous_context);
 
   QMainWindow window;
   window.setWindowTitle("RedClaw Desktop");
@@ -2258,7 +2330,11 @@ bool launch_gui_shell(
   session_layout->setSpacing(0);
 
   auto* connection_entry_page = new ConnectionEntryPage(session_page);
-  auto* ui_settings = new QSettings("RedClaw", "RedClawDesktop", &window);
+  // The existing Debug-only fixture must not overwrite live connection,
+  // permission or layout preferences while isolated GUIs share this user.
+  auto* ui_settings = gui_auto_start.agent_qa_fixture_provider
+      ? new QSettings(QDir(effective_log_dir).filePath("qa-ui-settings.ini"), QSettings::IniFormat, &window)
+      : new QSettings("RedClaw", "RedClawDesktop", &window);
   const int saved_ice_udp_port = ui_settings->value("network/ice_udp_port", 55000).toInt();
   const int initial_ice_udp_port = gui_auto_start.ice_udp_port_explicit
       ? static_cast<int>(gui_auto_start.ice_udp_port)
@@ -2810,7 +2886,23 @@ bool launch_gui_shell(
   auto* playback_canvas_widget = renderer_result.widget;   // QWidget* for layout
   auto* playback_window_canvas = renderer_result.canvas;   // PlaybackCanvas* for frame delivery
   playback_canvas_widget->setObjectName("playbackWindowCanvas");
+#ifdef _WIN32
+  auto* desktop_terminal_splitter = new QSplitter(Qt::Vertical, playback_surface);
+  desktop_terminal_splitter->setObjectName("desktopTerminalSplitter");
+  desktop_terminal_splitter->setChildrenCollapsible(false);
+  desktop_terminal_splitter->addWidget(playback_canvas_widget);
+  auto* terminal_panel = new TerminalPanel(controller.workspace_pipe(), ui_settings, desktop_terminal_splitter);
+  controller.set_workspace_shutdown([weak = QPointer<TerminalPanel>(terminal_panel)](std::function<void()> finished) {
+    if (weak) weak->end_desktop(std::move(finished)); else finished();
+  });
+  desktop_terminal_splitter->addWidget(terminal_panel);
+  desktop_terminal_splitter->setStretchFactor(0, 1);
+  desktop_terminal_splitter->setStretchFactor(1, 0);
+  desktop_terminal_splitter->setSizes({600, 240});
+  playback_surface_layout->addWidget(desktop_terminal_splitter, 1);
+#else
   playback_surface_layout->addWidget(playback_canvas_widget, 1);
+#endif
   auto* playback_control_hint = new PlaybackControlHintOverlay(playback_canvas_widget);
   auto* remote_control_row = new QHBoxLayout();
   auto* remote_control_button = new QPushButton("Start Control", playback_surface);
@@ -2828,6 +2920,9 @@ bool launch_gui_shell(
   remote_control_row->addWidget(retry_capture_button);
   remote_control_row->addWidget(remote_control_status, 1);
   playback_surface_layout->addLayout(remote_control_row);
+  auto* file_transfer_panel = new FileTransferPanel(
+      [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); }, playback_surface);
+  playback_surface_layout->addWidget(file_transfer_panel);
   playback_surface_layout->addWidget(playback_window_status);
   auto* agent_sidebar = new QWidget(playback_splitter);
   agent_sidebar->setObjectName("agentSidebar");
@@ -2836,10 +2931,10 @@ bool launch_gui_shell(
   auto* agent_sidebar_layout = new QVBoxLayout(agent_sidebar);
   agent_sidebar_layout->setContentsMargins(0, 0, 0, 0);
   auto* agent_panel = new AgentConversationPanel(ui_settings);
-  auto* navigation_overlay = new DesktopNavigationOverlayHost(
+  auto* navigation_host = new DesktopNavigationHost(
       agent_panel, ui_settings, agent_sidebar);
-  auto* desktop_navigation_panel = navigation_overlay->navigation_panel();
-  agent_sidebar_layout->addWidget(navigation_overlay);
+  auto* desktop_navigation_panel = navigation_host->navigation_panel();
+  agent_sidebar_layout->addWidget(navigation_host);
   auto* agent_panel_presentation = new AgentPanelPresentation(agent_panel, &window);
   session_layout->addWidget(agent_panel_presentation->open_button());
   auto* agent_panel_rail = new QToolButton(playback_window);
@@ -2898,12 +2993,13 @@ bool launch_gui_shell(
   std::uint64_t source_reference_keyframe_id = 0;
   bool media_budget_waiting = false;
   redclaw::ui::CapturePlaybackState capture_playback_state;
-  std::uint64_t latest_displayable_frame_id = 0;
-  std::uint64_t latest_displayable_keyframe_id = 0;
-  std::uint64_t latest_presented_frame_id = 0;
+  PlaybackFrameProgress playback_progress;
+  auto& latest_displayable_frame_id = playback_progress.displayable;
+  auto& latest_displayable_keyframe_id = playback_progress.keyframe;
+  auto& latest_presented_frame_id = playback_progress.presented;
   std::uint64_t receiver_decoded_frames = 0;
   std::uint64_t receiver_rendered_frames = 0;
-  std::uint64_t last_reported_displayable_frame_id = 0;
+  auto& last_reported_displayable_frame_id = playback_progress.reported;
   bool remote_input_supported = false;
   bool remote_input_authorized = false;
   bool remote_input_frame_ready = false;
@@ -2984,7 +3080,8 @@ bool launch_gui_shell(
         && remote_input_authorized
         && remote_input_frame_ready
         && !capture_playback_state.waiting()
-        && !remote_input_request_pending);
+        && !remote_input_request_pending
+        && !file_transfer_panel->busy());
     if (!remote_input_supported) {
       remote_control_status->setText("View only — the peer has not advertised remote input support.");
     } else if (!remote_input_authorized) {
@@ -2998,13 +3095,27 @@ bool launch_gui_shell(
           "Control available. Activate this playback window, then click Start Control; mouse input stays inside the displayed desktop.");
     }
   };
+  file_transfer_panel->set_busy_callback([&](bool busy) {
+    remote_input_capture->set_local_suspension(LocalInputSuspensionReason::kWorkspaceTransfer, busy);
+    desktop_navigation_panel->set_workspace_blocked(busy);
+    agent_panel->set_workspace_blocked(busy);
+#ifdef _WIN32
+    terminal_panel->set_workspace_blocked(busy);
+#endif
+    refresh_remote_control_ui();
+  });
+  remote_input_capture->set_clipboard_paste_callback([file_transfer_panel](std::uint32_t sequence) {
+    file_transfer_panel->request_clipboard_paste(sequence);
+  });
   remote_input_capture->set_paused_callback([&](const QString& reason) {
+    file_transfer_panel->cancel_clipboard_paste();
     remote_input_request_pending = false;
     playback_control_hint->hide_hint();
     append_log(session_log, QString("Remote input capture paused: %1").arg(reason));
     refresh_remote_control_ui();
   });
   remote_input_capture->set_forwarding_changed_callback([&]() {
+    if (!remote_input_capture->clipboard_paste_context_valid()) file_transfer_panel->cancel_clipboard_paste();
     refresh_remote_control_ui();
   });
   remote_input_capture->set_blocked_click_callback([&]() {
@@ -3853,10 +3964,6 @@ bool launch_gui_shell(
     append_log(session_log, QString("Machine link workflow: host waiting through DHT with code %1").arg(local.session_code));
     connection_flow_model.start(ConnectionFlowRole::kHost);
     waiting_page->set_connection_code(local.session_code);
-    waiting_page->set_remote_control_authorized(host_wait_remote_input_authorized);
-    waiting_page->set_remote_agent_authorized(
-        host_wait_remote_agent_authorized,
-        agent_settings_dialog->readiness_summary());
     append_log(
         session_log,
         host_wait_remote_input_authorized
@@ -4091,6 +4198,7 @@ bool launch_gui_shell(
     source_reference_keyframe_id = 0;
     media_budget_waiting = false;
     capture_playback_state = {};
+    playback_progress = {};
     retry_capture_button->setVisible(false);
     latest_displayable_frame_id = 0;
     latest_displayable_keyframe_id = 0;
@@ -4367,11 +4475,9 @@ bool launch_gui_shell(
     if (!direct_frame_pipe_server.take_latest_frame(&direct_frame, &direct_frame_count)) {
       return;  // spurious wakeup or frame already consumed
     }
-    latest_displayable_frame_id = (std::max)(
-        latest_displayable_frame_id, direct_frame.frame_id);
-    if (direct_frame.keyframe) {
-      latest_displayable_keyframe_id = (std::max)(
-          latest_displayable_keyframe_id, direct_frame.frame_id);
+    if (!playback_progress.accept(direct_frame.playback_generation, direct_frame.frame_id, direct_frame.keyframe)) {
+      direct_frame_pipe_server.recycle_frame(std::move(direct_frame));
+      return;
     }
     if (source_reference_keyframe_id != 0
         && latest_displayable_keyframe_id >= source_reference_keyframe_id) {
@@ -4393,13 +4499,11 @@ bool launch_gui_shell(
     if (present_busy_drop) {
       ++direct_frame_present_busy_drops;
     } else if (present_succeeded) {
-      if (direct_frame.frame_id > latest_presented_frame_id) {
+      if (playback_progress.mark_presented(direct_frame.frame_id)) {
         ++direct_frame_presented_frames;
         app.latency.record(GuiStage::kDisplayedFrame, 0);
       } else app.latency.record(GuiStage::kRedraw, 0);
       receiver_rendered_frames = direct_frame_presented_frames;
-      latest_presented_frame_id = (std::max)(
-          latest_presented_frame_id, direct_frame.frame_id);
       capture_playback_state.presented(direct_frame.frame_id);
       retry_capture_button->setVisible(capture_playback_state.retry_available());
       direct_frame_last_present_error.clear();
@@ -4570,10 +4674,8 @@ bool launch_gui_shell(
       return;
     }
     const auto transport = direct_frame_pipe_server.stats_snapshot();
-    latest_displayable_frame_id = (std::max)(
-        latest_displayable_frame_id, transport.latest_displayable_frame_id);
-    latest_displayable_keyframe_id = (std::max)(
-        latest_displayable_keyframe_id, transport.latest_displayable_keyframe_id);
+    playback_progress.observe_transport(transport.playback_generation,
+        transport.latest_displayable_frame_id, transport.latest_displayable_keyframe_id);
     receiver_decoded_frames = transport.decoded_frames;
     receiver_rendered_frames = direct_frame_presented_frames;
     (void)send_displayable_stats(false);
@@ -4951,6 +5053,14 @@ bool launch_gui_shell(
                                     std::uint64_t emitted_monotonic_us) {
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kSourceActivityState) {
+            if (playback_progress.observe_source(control.session_epoch)) {
+#if defined(_WIN32)
+              playback_progress.reset_frames(direct_frame_pipe_server.request_session_reset());
+#endif
+              capture_playback_state = {};
+              remote_input_frame_ready = false;
+              remote_input_capture->pause(true, "Host session changed; waiting for a new frame.");
+            }
             const bool was_waiting = capture_playback_state.waiting();
             capture_playback_state.observe(control);
             retry_capture_button->setVisible(capture_playback_state.retry_available());
@@ -4978,6 +5088,9 @@ bool launch_gui_shell(
                 && latest_displayable_keyframe_id >= source_reference_keyframe_id;
             (void)send_displayable_stats(crossed_reference);
             return;
+          }
+          if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kWorkspace) {
+            file_transfer_panel->receive(control); return;
           }
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kDesktopDisplayCatalog) {
@@ -5384,7 +5497,10 @@ bool launch_gui_shell(
           remote_input_request_pending = false;
           refresh_remote_control_ui();
 #if defined(_WIN32)
-          direct_frame_pipe_server.request_session_reset();
+          playback_progress = {};
+          playback_progress.reset_frames(direct_frame_pipe_server.request_session_reset());
+          capture_playback_state = {};
+          source_activity_revision = source_reference_keyframe_id = 0;
 #endif
           reset_playback_surface(
               "Waiting for the reconnected desktop stream",
@@ -5410,6 +5526,7 @@ bool launch_gui_shell(
       &controller.process(),
       QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
       [&](int exit_code, QProcess::ExitStatus exit_status) {
+        file_transfer_panel->runtime_stopped();
         const bool debug_reconnect = debug_reconnect_requested;
         debug_reconnect_requested = false;
         const bool host_persist_wait = integration_persist_host_wait
@@ -5659,6 +5776,9 @@ bool launch_gui_shell(
     }
     if (requested_flow_role == ConnectionFlowRole::kHost) {
       waiting_page->set_connection_code(code);
+      waiting_page->set_remote_control_authorized(host_wait_remote_input_authorized);
+      waiting_page->set_remote_agent_authorized(
+          host_wait_remote_agent_authorized, agent_settings_dialog->readiness_summary());
     } else {
       connecting_page->set_connection_code(code);
     }
@@ -5884,7 +6004,8 @@ bool launch_gui_shell(
 
     QString start_error;
     const QString program = QCoreApplication::applicationFilePath();
-    if (!controller.start(program, args, &start_error)) {
+    if (role == "host" && !maintenance_runtime_arguments.isEmpty()) args = std::exchange(maintenance_runtime_arguments, {});
+    if (!controller.start(program, args, role, &start_error)) {
       set_link_workflow_running(false);
 #if defined(_WIN32)
       direct_frame_pipe_server.stop();
@@ -5978,7 +6099,7 @@ bool launch_gui_shell(
     navigation_frame_stream_enabled = false;
     desktop_navigation_panel->set_transport_available(false);
 #endif
-    controller.request_stop();
+    controller.request_stop(!debug_reconnect_requested);
     status_label->setText("Stopping");
     set_process_state("stopping");
     set_live_link_state(false);

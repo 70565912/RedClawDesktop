@@ -4,11 +4,29 @@
 #include "redclaw/capture/capture_stream_gate.h"
 #include "playback/capture_playback_state.h"
 #include <deque>
+#include <chrono>
 #ifdef _WIN32
 #include "capture_cursor_d3d11.h"
 #include "capture_backend.h"
 #endif
 using namespace redclaw::capture;
+
+TEST(CaptureDesktopProbe, AccessOnlyKeepsTheSamePermissionChecksWithoutEnumeratingDisplays) {
+    const auto full = probe_capture_desktop();
+    const auto access = probe_capture_desktop(CaptureProbeDetail::kAccessOnly);
+    EXPECT_EQ(full.access, access.access);
+    EXPECT_EQ(full.session_id, access.session_id);
+    EXPECT_EQ(full.token_restricted, access.token_restricted);
+    EXPECT_EQ(full.token_app_container, access.token_app_container);
+    EXPECT_EQ(access.display_signature, 0U);
+    const auto measure = [](CaptureProbeDetail detail) {
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 20; ++i) (void)probe_capture_desktop(detail);
+        return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count() / 20.0;
+    };
+    RecordProperty("full_probe_mean_us", std::to_string(measure(CaptureProbeDetail::kWithDisplayState)));
+    RecordProperty("access_probe_mean_us", std::to_string(measure(CaptureProbeDetail::kAccessOnly)));
+}
 
 #ifdef _WIN32
 TEST(CaptureHardwareRecovery, NativeEncoderSurvivesCaptureDeviceRecreation) {

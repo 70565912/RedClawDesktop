@@ -246,4 +246,75 @@ TEST(RemoteInputSessionTests, QueueOverflowAndInjectionFailureFailClosed) {
     EXPECT_EQ(session.pause_reason(), redclaw::input::RemoteInputPauseReason::kInjectionFailed);
 }
 
+TEST(RemoteInputSessionTests, TransferReleasesPressedKeysDropsPendingInputAndPreservesControlIntent) {
+    using namespace redclaw::input;
+    InputPolicyGate gate; InMemoryInputInjectorBackend backend; RemoteInputSession session(gate, backend);
+    session.set_authorized(true); ASSERT_TRUE(session.request_active(1000));
+    ASSERT_TRUE(session.enqueue_batch(1, {key_event(InputEventType::kKeyDown, 0x1D)}, 1100));
+    ASSERT_TRUE(session.drain(1100));
+    ASSERT_TRUE(session.enqueue_batch(2, {key_event(InputEventType::kKeyDown, 0x1E)}, 1200));
+    session.set_transfer_blocked(true, 1300);
+    EXPECT_EQ(session.queued_event_count(), 0U);
+    ASSERT_EQ(backend.injected_events().size(), 2U);
+    EXPECT_EQ(backend.injected_events().back().type, InputEventType::kKeyUp);
+    EXPECT_EQ(backend.injected_events().back().scan_code, 0x1D);
+    std::string error;
+    EXPECT_FALSE(session.enqueue_batch(3, {key_event(InputEventType::kKeyDown, 0x20)}, 1400, &error));
+    EXPECT_EQ(error, "workspace_transfer_busy");
+    EXPECT_FALSE(session.synchronize_state(4, {0x20}, 0, 1400, &error));
+    EXPECT_FALSE(session.request_active(1400));
+    EXPECT_TRUE(session.drain(60000)); EXPECT_FALSE(session.expire_lease(60000));
+    EXPECT_EQ(backend.injected_events().size(), 2U);
+    session.set_transfer_blocked(false, 60000);
+    EXPECT_EQ(session.state(), RemoteInputSessionState::kActive);
+    EXPECT_FALSE(session.enqueue_batch(3, {key_event(InputEventType::kKeyDown, 0x20)}, 60001));
+    ASSERT_TRUE(session.enqueue_batch(5, {key_event(InputEventType::kKeyDown, 0x21)}, 60001));
+    ASSERT_TRUE(session.drain(60001));
+    ASSERT_EQ(backend.injected_events().size(), 3U); EXPECT_EQ(backend.injected_events().back().scan_code, 0x21);
+}
+TEST(RemoteInputSessionTests, VerifiedClipboardPasteIsFixedAndCannotReopenOrReplayGeneralInput) {
+    using namespace redclaw::input;
+    InputPolicyGate gate; InMemoryInputInjectorBackend backend; RemoteInputSession session(gate, backend);
+    session.set_authorized(true); ASSERT_TRUE(session.request_active(1000));
+    const auto revision = session.eligibility_revision();
+    EXPECT_FALSE(session.paste_verified_clipboard(revision));
+    session.set_transfer_blocked(true, 1100);
+    EXPECT_EQ(session.eligibility_revision(), revision); ASSERT_TRUE(session.clipboard_paste_eligible());
+    ASSERT_TRUE(session.paste_verified_clipboard(revision));
+    ASSERT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_EQ(backend.injected_events()[0].key_code, 0x11); EXPECT_EQ(backend.injected_events()[1].key_code, 0x56);
+    EXPECT_EQ(backend.injected_events()[2].type, InputEventType::kKeyUp); EXPECT_EQ(backend.injected_events()[3].type, InputEventType::kKeyUp);
+    EXPECT_FALSE(session.paste_verified_clipboard(revision));
+    EXPECT_FALSE(session.enqueue_batch(1, {key_event(InputEventType::kKeyDown, 0x20)}, 1200));
+    EXPECT_EQ(backend.injected_events().size(), 4U);
+    session.pause(RemoteInputPauseReason::kGeometryChanged);
+    EXPECT_FALSE(session.clipboard_paste_eligible());
+    EXPECT_FALSE(session.paste_verified_clipboard(session.eligibility_revision()));
+    session.set_transfer_blocked(false, 1300);
+    EXPECT_EQ(session.pause_reason(), RemoteInputPauseReason::kGeometryChanged);
+}
+
+TEST(RemoteInputSessionTests, TransferCompletionCannotClearOtherPauseReasonsOrReviveExpiredConsent) {
+    using namespace redclaw::input;
+    for (const auto reason : {RemoteInputPauseReason::kNoVideo, RemoteInputPauseReason::kGeometryChanged,
+        RemoteInputPauseReason::kDisconnected, RemoteInputPauseReason::kLocalPause}) {
+        InputPolicyGate gate; InMemoryInputInjectorBackend backend; RemoteInputSession session(gate, backend);
+        session.set_authorized(true); ASSERT_TRUE(session.request_active(1000));
+        session.set_transfer_blocked(true, 1100);
+        session.pause(reason);
+        session.set_transfer_blocked(false, 60000);
+        EXPECT_EQ(session.state(), RemoteInputSessionState::kPaused); EXPECT_EQ(session.pause_reason(), reason);
+        EXPECT_FALSE(session.enqueue_batch(1, {key_event(InputEventType::kKeyDown, 0x21)}, 60001));
+        EXPECT_TRUE(backend.injected_events().empty());
+    }
+    InputPolicyGate gate; InMemoryInputInjectorBackend backend; RemoteInputSession session(gate, backend);
+    session.set_authorized(true); ASSERT_TRUE(session.request_active(1000));
+    session.set_transfer_blocked(true, 5000); session.set_transfer_blocked(false, 6000);
+    EXPECT_EQ(session.pause_reason(), RemoteInputPauseReason::kLeaseExpired);
+    ASSERT_TRUE(session.request_active(7000)); session.set_transfer_blocked(true, 7100);
+    session.set_authorized(false); session.set_transfer_blocked(false, 7200);
+    EXPECT_EQ(session.state(), RemoteInputSessionState::kDenied);
+    EXPECT_EQ(session.pause_reason(), RemoteInputPauseReason::kNotAuthorized);
+}
+
 }  // namespace

@@ -580,6 +580,46 @@ TEST(PlaybackControlHintOverlay, FrozenFrameHintCancelsPreviousTimeout) {
 }
 
 #if defined(_WIN32)
+TEST(ControllerRemoteInputCapture, ClipboardCallbackWithholdsPasteAndRepeatUntilKeyUp) {
+  QWidget window;
+  QWidget canvas(&window);
+  window.resize(640, 480); canvas.setGeometry(0, 0, 640, 480);
+  window.show(); canvas.show(); QApplication::processEvents();
+  const auto hwnd = reinterpret_cast<HWND>(window.winId());
+  SetForegroundWindow(hwnd); QApplication::processEvents();
+  if (GetForegroundWindow() != hwnd) GTEST_SKIP() << "Foreground ownership unavailable for the input callback fixture.";
+  redclaw::ui::ControllerRemoteInputCapture capture(&canvas, &window);
+  capture.set_remote_frame_size({640, 480}); capture.set_desktop_geometry_revision(1);
+  std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+  capture.set_send_message_callback([&](const auto& message, QString*) { sent.push_back(message); return true; });
+  unsigned pastes = 0;
+  capture.set_clipboard_paste_callback([&](std::uint32_t) {
+    ++pastes; capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, true);
+  });
+  QString error; ASSERT_TRUE(capture.activate(&error)) << error.toStdString();
+  ASSERT_TRUE(capture.clipboard_paste_context_valid());
+  const auto key = [&](UINT message, DWORD vk, DWORD scan) {
+    KBDLLHOOKSTRUCT event{}; event.vkCode = vk; event.scanCode = scan;
+    return capture.handle_low_level_keyboard(message, reinterpret_cast<std::uintptr_t>(&event));
+  };
+  EXPECT_EQ(key(WM_KEYDOWN, VK_LCONTROL, 0x1d), 1);
+  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 1); EXPECT_EQ(pastes, 1U);
+  EXPECT_TRUE(capture.control_enabled()); EXPECT_FALSE(capture.input_forwarding());
+  EXPECT_TRUE(capture.clipboard_paste_context_valid());
+  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 1); EXPECT_EQ(pastes, 1U);
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, false);
+  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 1); EXPECT_EQ(pastes, 1U);
+  EXPECT_EQ(key(WM_KEYUP, 'V', 0x2f), 1);
+  for (const auto& message : sent) {
+    EXPECT_NE(message.type, redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll);
+    for (const auto& event : message.input_events) EXPECT_NE(event.virtual_key, 'V');
+  }
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kLocalUiFocus, true);
+  EXPECT_FALSE(capture.clipboard_paste_context_valid());
+  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 0); EXPECT_EQ(pastes, 1U);
+  capture.pause(false, "clipboard callback fixture complete");
+  // Calls the native callback directly; does not inject keys or publish clipboard data.
+}
 TEST(ControllerRemoteInputCapture, LocalSuspensionSendsEmptySyncWithoutEndingControl) {
   QWidget playback_window;
   QWidget canvas(&playback_window);
@@ -618,6 +658,17 @@ TEST(ControllerRemoteInputCapture, LocalSuspensionSendsEmptySyncWithoutEndingCon
       true);
   EXPECT_EQ(sent.size(), release_count);
   capture.pause(false, "test complete");
+}
+TEST(ControllerRemoteInputCapture, NewControlGrantRetainsAnExistingTransferPause) {
+  QWidget canvas;
+  redclaw::ui::ControllerRemoteInputCapture capture(&canvas);
+  capture.set_remote_frame_size({640, 480}); capture.set_desktop_geometry_revision(1);
+  capture.set_send_message_callback([](const auto&, QString*) { return true; });
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, true);
+  QString error; ASSERT_TRUE(capture.activate(&error)) << error.toStdString();
+  EXPECT_TRUE(capture.control_enabled()); EXPECT_FALSE(capture.input_forwarding());
+  EXPECT_TRUE(capture.local_suspension_reason().contains("workspace_transfer_busy"));
+  capture.pause(false, "transfer grant fixture complete");
 }
 
 TEST(ControllerRemoteInputCapture, ReadsLoopbackMarkerFromWindowsMessageQueue) {

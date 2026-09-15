@@ -37,7 +37,8 @@ class AgentPeerSession final {
 public:
     using Message = redclaw::protocol::AgentMessageEnvelopeV1;
     using Deliver = std::function<bool(const Message&, std::string*)>;
-    explicit AgentPeerSession(std::unique_ptr<AgentExecutor> executor, Deliver client);
+    explicit AgentPeerSession(std::unique_ptr<AgentExecutor> executor, Deliver client,
+        std::function<bool()> mutations_allowed = {});
     ~AgentPeerSession();
 
     void open(std::string local_epoch);
@@ -58,6 +59,7 @@ private:
     void retry_client_sync();
     std::unique_ptr<AgentExecutor> executor_;
     Deliver client_;
+    std::function<bool()> mutations_allowed_;
     mutable std::mutex mutex_;
     std::deque<Message> requests_;
     std::deque<Message> results_;

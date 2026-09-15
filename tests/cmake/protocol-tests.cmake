@@ -1,4 +1,12 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_transfer_protocol_tests protocol/transfer_protocol_tests.cpp)
+target_link_libraries(redclaw_transfer_protocol_tests PRIVATE redclaw_protocol GTest::gtest_main)
+redclaw_apply_warnings(redclaw_transfer_protocol_tests)
+add_test(NAME redclaw_transfer_protocol_tests COMMAND redclaw_transfer_protocol_tests)
+add_executable(redclaw_terminal_protocol_tests protocol/terminal_protocol_tests.cpp)
+target_link_libraries(redclaw_terminal_protocol_tests PRIVATE redclaw_protocol GTest::gtest_main)
+redclaw_apply_warnings(redclaw_terminal_protocol_tests)
+add_test(NAME redclaw_terminal_protocol_tests COMMAND redclaw_terminal_protocol_tests)
 add_executable(redclaw_protocol_schema_v1_tests
   protocol/schema_v1_tests.cpp
 )

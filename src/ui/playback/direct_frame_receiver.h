@@ -6,6 +6,7 @@
 
 namespace redclaw::ui {
 struct DirectFrameTransportStats {
+  quint64 playback_generation = 1;
   quint64 observed_sequences = 0;
   quint64 skipped_sequences = 0;
   quint64 published_frames = 0;
@@ -62,7 +63,7 @@ public:
     bool take_latest_frame(DirectFrameData* frame, quint64* frame_count);
     void recycle_frame(DirectFrameData frame);
     bool has_pending_frame() const;
-    void request_session_reset();
+    quint64 request_session_reset();
     DirectFrameTransportStats stats_snapshot() const;
 private:
     class Impl;

@@ -6,6 +6,8 @@ add_library(redclaw_protocol STATIC
   src/protocol_module.cpp
   src/sdp_signaling.cpp
   src/stream_control_protocol.cpp
+  src/terminal_protocol.cpp
+  src/transfer_protocol.cpp
 )
 
 find_package(OpenSSL REQUIRED)

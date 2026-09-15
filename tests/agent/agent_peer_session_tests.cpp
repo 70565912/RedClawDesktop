@@ -71,15 +71,15 @@ struct Endpoint {
     std::shared_ptr<Counts> counts = std::make_shared<Counts>();
     std::vector<Message> client, wire;
     std::unique_ptr<AgentPeerSession> peer;
-    explicit Endpoint(bool authorized) {
+    explicit Endpoint(bool authorized, std::function<bool()> mutations_allowed = {}) {
         auto broker = std::make_unique<RemoteAgentBroker>(
-            RemoteAgentBrokerConfig{.authorized = authorized}, std::make_unique<Workspace>());
+            RemoteAgentBrokerConfig{.authorized = authorized, .mutations_allowed = mutations_allowed}, std::make_unique<Workspace>());
         broker->add_project({.project_id = "project", .display_name = "Fixture",
             .root = std::filesystem::temp_directory_path() / "peer-fixture", .git_repository = true});
         broker->add_provider(std::make_unique<Provider>(counts));
         peer = std::make_unique<AgentPeerSession>(
             std::make_unique<AgentExecutor>(std::move(broker)),
-            [this](const Message& message, std::string*) { client.push_back(message); return true; });
+            [this](const Message& message, std::string*) { client.push_back(message); return true; }, std::move(mutations_allowed));
     }
     void pump_to(Endpoint& other) {
         std::size_t calls = 0;
@@ -134,6 +134,36 @@ TEST(AgentPeerSession, ClassifiesEveryMessageWithoutDesktopRole) {
         Type::kEvent, Type::kApprovalRequest, Type::kTaskComplete, Type::kTaskError})
         EXPECT_EQ(agent_message_route(type), AgentMessageRoute::kRemoteTaskClient);
     EXPECT_EQ(agent_message_route(static_cast<Type>(255)), AgentMessageRoute::kInvalid);
+}
+
+TEST(AgentPeerSession, TransferGateAllowsSynchronizationAndResultsAroundAnAcceptedPendingRequest) {
+    std::atomic_bool transfer{false};
+    Endpoint a(true, [&] { return !transfer.load(); }), b(true);
+    a.peer->open("epoch-a"); b.peer->open("epoch-b");
+    ASSERT_TRUE(a.peer->enqueue_request(request(Type::kTaskCreate, "accepted-before-transfer")));
+    transfer = true;
+    std::string error;
+    EXPECT_FALSE(a.peer->enqueue_request(request(Type::kTaskCreate, "must-not-queue"), &error));
+    EXPECT_EQ(error, "workspace_transfer_busy");
+    ASSERT_TRUE(a.peer->enqueue_request(request(Type::kTaskSyncRequest, "accepted-before-transfer")));
+    ASSERT_TRUE(a.peer->enqueue_request(request(Type::kTaskSyncRequest, "")));
+    ASSERT_TRUE(drain(a, b, [&] {
+        return a.peer->snapshot().remote_authorized && b.peer->snapshot().remote_authorized
+            && a.peer->snapshot().request_depth == 2;
+    }));
+    EXPECT_EQ(b.counts->starts, 0U);
+    EXPECT_FALSE(a.client.empty());
+    EXPECT_TRUE(std::any_of(a.wire.begin(), a.wire.end(), [](const auto& m) { return m.type == Type::kTaskSyncRequest; }));
+    EXPECT_FALSE(std::any_of(a.wire.begin(), a.wire.end(), [](const auto& m) { return m.type == Type::kTaskCreate; }));
+    transfer = false;
+    ASSERT_TRUE(drain(a, b, [&] {
+        return b.counts->starts == 1 && std::any_of(a.client.begin(), a.client.end(), [](const auto& m) {
+            return m.type == Type::kTaskSnapshot && m.task_id == "accepted-before-transfer";
+        });
+    }));
+    EXPECT_FALSE(std::any_of(a.client.begin(), a.client.end(), [](const auto& m) { return m.error_code == "task_not_found"; }));
+    EXPECT_EQ(std::count_if(a.wire.begin(), a.wire.end(), [](const auto& m) { return m.type == Type::kTaskCreate; }), 1);
+    EXPECT_TRUE(a.peer->snapshot().remote_authorized);
 }
 
 TEST(AgentPeerSession, AuthorizationIsIndependentFromRequestDirection) {

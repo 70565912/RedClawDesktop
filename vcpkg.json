@@ -12,6 +12,10 @@
     "libqrencode",
     "cppwinrt",
     {
+      "name": "webview2",
+      "platform": "windows & x64"
+    },
+    {
       "name": "ffmpeg",
       "features": [
         "x264",

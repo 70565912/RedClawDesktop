@@ -119,7 +119,11 @@ struct RemoteAgentBrokerConfig {
     std::size_t max_outbound_messages = 512;
     std::uint64_t approval_timeout_ms = 60U * 1000U;
     std::filesystem::path metadata_path;
+    // Immutable, nonblocking callback; may be read by network and worker threads.
+    std::function<bool()> mutations_allowed;
 };
+
+[[nodiscard]] bool agent_request_mutates_workspace(redclaw::protocol::AgentMessageTypeV1 type);
 
 struct RemoteAgentBrokerMetrics {
     std::uint64_t capability_refresh_total = 0;
@@ -161,6 +165,7 @@ public:
     void add_project(AgentProjectRegistration project);
     void add_provider(std::unique_ptr<IAgentProvider> provider);
     void set_authorized(bool authorized);
+    [[nodiscard]] bool allows_workspace_mutations() const;
     void connect(std::string session_epoch);
     void disconnect();
     void tick();

@@ -77,6 +77,14 @@ function Assert-UpgradeManifest {
         if (-not ($expected.ContainsKey('Qt6' + $module + '.dll') -or $expected.ContainsKey('Qt6' + $module + 'd.dll'))) { throw ('upgrade_bundle_missing_qt_' + $module) }
     }
     if (-not ($expected.ContainsKey('platforms\qwindows.dll') -or $expected.ContainsKey('platforms\qwindowsd.dll'))) { throw 'upgrade_bundle_missing_qt_platform' }
+    if ($expected.ContainsKey('terminal-runtime.json')) {
+        foreach ($required in @('terminal-runtime\msedgewebview2.exe','terminal-runtime\msedge.dll',
+            'terminal-runtime\icudtl.dat','terminal-runtime\resources.pak',
+            'maintenance\terminal-profile.ps1','maintenance\start-runtime-maintenance.ps1',
+            'maintenance\runtime-upgrade-common.ps1','maintenance\invoke-runtime-directory-upgrade.ps1')) {
+            if (-not $expected.ContainsKey($required)) { throw ('upgrade_bundle_missing_' + $required) }
+        }
+    }
 }
 
 function Get-UpgradeIdentity {
@@ -143,11 +151,69 @@ function ConvertTo-UpgradeArgument {
 
 function Write-UpgradeReceipt {
     param([string]$Path, [string]$Phase, [int]$TargetPid, [string]$Detail = '')
-    [ordered]@{schema='redclaw.runtime-upgrade.status.v1'; worker_pid=$PID; phase=$Phase; target_pid=$TargetPid; updated_at=[DateTimeOffset]::UtcNow.ToString('o'); detail=$Detail} |
+    [ordered]@{schema='redclaw.runtime-upgrade.status.v1'; operation_id=(Split-Path (Split-Path $Path) -Leaf); worker_pid=$PID; phase=$Phase; target_pid=$TargetPid; updated_at=[DateTimeOffset]::UtcNow.ToString('o'); detail=$Detail} |
         ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
+function Get-UpgradeReceipt {
+    param([string]$Path)
+    $receipt = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if ($receipt.schema -ne 'redclaw.runtime-upgrade.status.v1') { throw 'upgrade_receipt_schema_invalid' }
+    if ($receipt.phase -in @('preparing','handoff_ready','stopping','starting')) {
+        $worker = Get-Process -Id ([int]$receipt.worker_pid) -ErrorAction SilentlyContinue
+        $updated = if ($receipt.updated_at -is [DateTime]) { [DateTimeOffset]$receipt.updated_at } else { [DateTimeOffset]::Parse($receipt.updated_at) }
+        if (-not $worker -or $worker.StartTime.ToUniversalTime() -gt $updated.UtcDateTime) {
+            # Report an incomplete operation without rewriting its original
+            # evidence or replaying it. A reused worker PID is not ownership.
+            $receipt | Add-Member -NotePropertyName interrupted_phase -NotePropertyValue $receipt.phase
+            $receipt.phase = 'interrupted'
+        }
+    }
+    return $receipt
+}
+
+function Wait-UpgradeHandoff {
+    param($Identity, [string]$StatusPath, [string]$AcknowledgmentPath, [string]$PlanHash,
+        [string]$WorkerExecutable, [string[]]$WorkerArguments)
+    # Bound each forward preflight stage, not the sum of full-bundle hashes and
+    # copies. Repeated/unknown stages cannot extend the wait indefinitely.
+    $stages = @('validating_candidate','validating_original','copying_candidate','validating_pending','probing_candidate')
+    $lastStage = -1
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
+    do {
+        if (Test-Path -LiteralPath $StatusPath) {
+            try { $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json } catch { $status = $null }
+            if ($status -and $status.phase -eq 'preparing') {
+                $stage = [Array]::IndexOf($stages, [string]$status.detail)
+                if ($stage -gt $lastStage) {
+                    $lastStage = $stage
+                    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
+                }
+            }
+            if ($status -and $status.phase -eq 'handoff_ready') {
+                Assert-UpgradeIdentity $Identity
+                $workerIdentity = Get-UpgradeIdentity ([int]$status.worker_pid)
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($status.worker_pid)"
+                if ($workerIdentity.session_id -ne $Identity.session_id -or $process.ParentProcessId -eq $PID -or
+                    $workerIdentity.path -ne $WorkerExecutable) { throw 'upgrade_worker_identity_mismatch' }
+                $actualArguments = @(ConvertFrom-UpgradeCommandLine $workerIdentity.command_line | Select-Object -Skip 1)
+                if ($actualArguments.Count -ne $WorkerArguments.Count) { throw 'upgrade_worker_arguments_mismatch' }
+                for ($index = 0; $index -lt $WorkerArguments.Count; ++$index) {
+                    if ($actualArguments[$index] -cne $WorkerArguments[$index]) { throw 'upgrade_worker_arguments_mismatch' }
+                }
+                $PlanHash | Set-Content -LiteralPath $AcknowledgmentPath -Encoding ASCII
+                return [int]$status.worker_pid
+            }
+            if ($status -and $status.phase -eq 'failed') { throw ('upgrade_worker_preflight_failed: ' + $status.detail) }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw 'upgrade_worker_handoff_timeout_target_not_stopped'
+}
+
 function Start-UpgradedGui {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions','',Justification='Internal fixed step under the validated upgrade handoff.') ]
+    [CmdletBinding()]
     param([string]$Executable, [string[]]$Argument, [string]$WorkingDirectory)
     $line = ($Argument | ForEach-Object {ConvertTo-UpgradeArgument $_}) -join ' '
     # This is the user-facing GUI whose restart was requested.
@@ -155,6 +221,8 @@ function Start-UpgradedGui {
 }
 
 function Stop-UpgradeGui {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions','',Justification='Internal fixed step under the validated upgrade handoff.') ]
+    [CmdletBinding()]
     param($Identity, [string]$ControlName, [string]$Role)
     Assert-UpgradeIdentity $Identity
     if ($ControlName) {
@@ -177,13 +245,39 @@ function Stop-UpgradeGui {
 }
 
 function Test-UpgradedGui {
-    param([Diagnostics.Process]$Process)
-    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+    param([Diagnostics.Process]$Process, [switch]$RequireHostRuntime)
+    # Measured cold Host initialization can precede runtime creation by 26s.
+    # This process-start deadline is separate from GUI/media heartbeat gates.
+    $startupSeconds = if ($RequireHostRuntime) { 60 } else { 15 }
+    $deadline = [DateTimeOffset]$Process.StartTime.ToUniversalTime().AddSeconds($startupSeconds)
     do {
         $Process.Refresh()
         if ($Process.HasExited) { return $false }
-        if ($Process.MainWindowHandle -ne [IntPtr]::Zero -and ([DateTime]::Now - $Process.StartTime).TotalSeconds -ge 5) { return $true }
+        if ($Process.MainWindowHandle -ne [IntPtr]::Zero -and ([DateTime]::Now - $Process.StartTime).TotalSeconds -ge 5) {
+            if (-not $RequireHostRuntime) { return $true }
+            $family = @(Get-UpgradeRuntimeFamily (Get-UpgradeIdentity $Process.Id))
+            if ($family.Count -eq 1 -and ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($family[0].started)).TotalSeconds -ge 2) { return $true }
+        }
         Start-Sleep -Milliseconds 200
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     return $false
+}
+
+function Wait-UpgradeBundleReleased {
+    param([string]$Directory, [object[]]$Manifest)
+    # WebView2 can finish closing after its owning GUI exits. Wait for every
+    # bundle file to be free; never kill a browser to force a directory swap.
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    do {
+        try {
+            foreach ($entry in $Manifest) {
+                $handle = [IO.File]::Open((Join-Path $Directory $entry.path),'Open','Read','None')
+                $handle.Dispose()
+            }
+            return
+        } catch {
+            if ($_.Exception.GetBaseException() -isnot [IO.IOException] -or [DateTimeOffset]::UtcNow -ge $deadline) { throw }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ($true)
 }

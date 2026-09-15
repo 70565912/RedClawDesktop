@@ -35,6 +35,13 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     EXPECT_EQ(options.ice_udp_port, 55000U);
     EXPECT_EQ(options.dht_listen_port, 0U);
 }
+TEST(RuntimeOptions, MaintenanceResumeStaysInGuiAndRequiresAContextArgument) {
+    RuntimeOptions options; std::string error;
+    EXPECT_FALSE(parse({"--gui-maintenance-resume"}, &options, &error));
+    options = RuntimeOptions{};
+    EXPECT_TRUE(parse({"--gui-maintenance-resume", "private-context.json"}, &options, &error)) << error;
+    EXPECT_EQ(options.role, RuntimeRole::kNone); EXPECT_FALSE(options.force_cli);
+}
 
 TEST(RuntimeOptions, IceUdpPortIsFixedAndRejectsAutomaticOrOverflowValues) {
     RuntimeOptions options;

@@ -73,6 +73,8 @@ struct DecodedVideoFrame {
 #if defined(_WIN32)
 	std::shared_ptr<D3D11DecodedSurface> d3d11_surface;
 #endif
+	// Owner-local decode lifecycle, never sent over the network.
+	std::uint64_t playback_generation = 0;
 };
 
 std::string_view decoded_video_frame_path_name(DecodedVideoFramePath path);

@@ -85,6 +85,7 @@ enum StreamControlMessageTypeV1 {
   StreamControlMessageTypeV1_kCaptureRegionRequest = 22;
   StreamControlMessageTypeV1_kCaptureRegionApplied = 23;
   StreamControlMessageTypeV1_kCaptureRegionRejected = 24;
+  StreamControlMessageTypeV1_kWorkspace = 25;
 }
 
 enum RemoteLogModeV1 {
@@ -282,6 +283,59 @@ message StreamControlMessageV1 {
   uint64 capture_generation = 78;
   uint64 capture_first_frame_id = 79;
   bool capture_retry_requested = 80;
+  uint32 terminal_version = 81;
+  uint32 file_transfer_version = 82;
+  WorkspaceControlV1 workspace = 83;
+  uint32 clipboard_version = 84;
+}
+
+message WorkspaceControlV1 {
+  int32 schema_version = 1;
+  uint32 action = 2;
+  uint32 direction = 3;
+  string path = 4;
+  string error_code = 5;
+  uint64 entries = 6;
+  uint64 files = 7;
+  uint64 bytes = 8;
+  uint64 completed_entries = 9;
+  uint64 completed_bytes = 10;
+  bool directory = 11;
+  uint32 conflict = 12;
+  uint64 accepted_sources = 13;
+  bool active = 14;
+  uint64 operation_revision = 15;
+  uint64 committed_bytes = 16;
+  uint64 completed_files = 17;
+  uint64 skipped_entries = 18;
+  // Owner-local runtime -> GUI only, rejected at the peer boundary.
+  string results_path = 19;
+  uint32 purpose = 20;
+  uint32 clipboard_sequence = 21;
+  bool paste_submitted = 22;
+  uint64 created_at_ms = 23;
+}
+
+// Owner-local result journal, not transmitted to the peer.
+message TransferResultRecordV1 {
+  uint32 schema_version = 1;
+  string relative_path = 2;
+  uint64 size = 3;
+  bool directory = 4;
+  bool skipped = 5;
+}
+
+// Clipboard metadata is a small file in the existing transfer batch. Actual
+// clipboard bytes and recursively selected files remain bulk file entries.
+message ClipboardPayloadManifestV1 {
+  uint32 schema_version = 1;
+  message Format {
+    uint32 kind = 1;
+    uint64 size = 2;
+    string sha256 = 3;
+  }
+  repeated Format formats = 2;
+  uint32 file_roots = 3;
 }
 
 message DhtSignalSnapshot {
@@ -323,4 +377,53 @@ message DebugBridgeEnvelopeV1 {
   bytes payload = 11;
   bool ok = 12;
   string error_code = 13;
+}
+
+// Negotiated only after Control v1 advertises terminal_version=1 on both ends.
+message TerminalMessageV1 {
+  int32 schema_version = 1;
+  uint32 type = 2;
+  string session_epoch = 3;
+  string terminal_id = 4;
+  uint64 sequence = 5;
+  uint32 columns = 6;
+  uint32 rows = 7;
+  bool input_enabled = 8;
+  bool exited = 9;
+  string error_code = 10;
+  bytes data = 11;
+  uint64 input_generation = 12;
+  uint64 input_sequence = 13;
+  bool local_input_paused = 14;
+  string client_session_id = 15;
+}
+
+// Bulk data/receipts only. Priority cancellation and session gating must travel
+// outside this channel, so they cannot queue behind file data.
+message TransferMessageV1 {
+  int32 schema_version = 1;
+  uint32 type = 2;
+  string session_epoch = 3;
+  string operation_id = 4;
+  uint64 sequence = 5;
+  uint64 entry_id = 6;
+  string relative_path = 7;
+  bool directory = 8;
+  uint64 size = 9;
+  uint64 offset = 10;
+  uint32 conflict = 11;
+  uint32 disposition = 12;
+  string sha256 = 13;
+  bytes data = 14;
+  string error_code = 15;
+}
+
+// Owner-local disk spool only. Never send absolute source paths to a peer or
+// include them in diagnostics. Its schema is independent of network envelopes.
+message TransferSourceRecordV1 {
+  uint32 schema_version = 1;
+  string absolute_source = 2;
+  string relative_path = 3;
+  uint64 size = 4;
+  bool directory = 5;
 }

@@ -1,0 +1,5 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1320; color: #dce8f6; }
+body { display: flex; flex-direction: column; font: 12px system-ui, sans-serif; }
+#notice { min-height: 20px; padding: 3px 10px; background: #152238; }
+#terminal { flex: 1; min-height: 0; padding: 4px 8px; }
+.xterm { height: 100%; }

@@ -12,7 +12,7 @@ namespace redclaw::protocol {
 // This is a wire-format version, independent of the domain envelope's schema.
 // Every frame contains one complete, independently compressed Protobuf message.
 enum class ProtobufWireKind : std::uint8_t {
-    kControl = 1, kAgent = 2, kDht = 3, kDebugBridge = 4
+    kControl = 1, kAgent = 2, kDht = 3, kDebugBridge = 4, kTerminal = 5, kTransfer = 6
 };
 inline constexpr std::size_t kMaxProtobufWireBytes = 64U * 1024U;
 

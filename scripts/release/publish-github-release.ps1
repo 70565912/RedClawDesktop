@@ -150,6 +150,26 @@ function Copy-ReleaseRuntime {
         }
     }
 
+    if (Test-Path -LiteralPath (Join-Path $releaseDirectory 'terminal-runtime.json')) {
+        foreach ($required in @('terminal-runtime/msedgewebview2.exe',
+            'maintenance/terminal-profile.ps1', 'maintenance/start-runtime-maintenance.ps1',
+            'maintenance/runtime-upgrade-common.ps1', 'maintenance/invoke-runtime-directory-upgrade.ps1')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $releaseDirectory $required) -PathType Leaf)) {
+                throw "Terminal release bundle is incomplete: $required"
+            }
+        }
+        Copy-Item -LiteralPath (Join-Path $releaseDirectory 'terminal-runtime.json') -Destination $stagingDirectory
+        foreach ($required in @('terminal-notices/xterm-LICENSE.txt', 'terminal-notices/fit-LICENSE.txt',
+            'terminal-notices/WebView2-SDK-LICENSE.txt', 'terminal-notices/WebView2-SDK-NOTICE.txt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $releaseDirectory $required) -PathType Leaf)) {
+                throw "Terminal release notice is missing: $required"
+            }
+        }
+        foreach ($directory in @('terminal-runtime', 'maintenance', 'terminal-notices')) {
+            Copy-Item -LiteralPath (Join-Path $releaseDirectory $directory) -Destination $stagingDirectory -Recurse
+        }
+    }
+
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $stagingDirectory -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.en.md') -Destination $stagingDirectory -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $stagingDirectory -Force

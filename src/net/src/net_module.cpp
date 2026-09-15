@@ -201,6 +201,8 @@ constexpr std::size_t data_channel_index(DataChannelKind kind) {
         case DataChannelKind::kAgent: return 2U;
         case DataChannelKind::kNavigation: return 3U;
         case DataChannelKind::kDebugBridge: return 4U;
+        case DataChannelKind::kTerminal: return 5U;
+        case DataChannelKind::kTransfer: return 6U;
     }
     return 4U;
 }
@@ -221,6 +223,10 @@ std::optional<DataChannelKind> data_channel_kind_from_label(std::string_view lab
     if (label == kDebugBridgeDataChannelLabel) {
         return DataChannelKind::kDebugBridge;
     }
+    if (label == kTerminalDataChannelLabel) {
+        return DataChannelKind::kTerminal;
+    }
+    if (label == kTransferDataChannelLabel) return DataChannelKind::kTransfer;
     return std::nullopt;
 }
 
@@ -231,6 +237,8 @@ std::string_view data_channel_label(DataChannelKind kind) {
         case DataChannelKind::kAgent: return kAgentDataChannelLabel;
         case DataChannelKind::kNavigation: return kNavigationDataChannelLabel;
         case DataChannelKind::kDebugBridge: return kDebugBridgeDataChannelLabel;
+        case DataChannelKind::kTerminal: return kTerminalDataChannelLabel;
+        case DataChannelKind::kTransfer: return kTransferDataChannelLabel;
     }
     return {};
 }
@@ -410,7 +418,7 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
     inline static thread_local Impl* callback_owner_ = nullptr;
     std::shared_ptr<rtc::PeerConnection> peer_connection_;
     std::uint64_t peer_generation_ = 0;
-    std::array<ChannelState, 5> data_channels_;
+    std::array<ChannelState, kDataChannelKindCount> data_channels_;
     bool initiates_offer_ = false;
     bool remote_description_ready_ = false;
     IceConnectionState state_ = IceConnectionState::kNew;
@@ -749,7 +757,7 @@ public:
                 lock.unlock(); if (cb) cb(IceConnectionState::kGathering);
             })();
             if (config.initiate_offer) {
-                std::array<bool, 5> created{};
+                std::array<bool, kDataChannelKindCount> created{};
                 bool negotiated = false;
                 for (auto kind : config.data_channels) {
                     const auto index = data_channel_index(kind);
@@ -921,8 +929,10 @@ public:
         assign_error({}, error); return true;
     }
     bool ensure_data_channel(DataChannelKind kind, std::string* error) {
-        if (kind != DataChannelKind::kAgent && kind != DataChannelKind::kNavigation && kind != DataChannelKind::kDebugBridge) {
-            assign_error("only an optional agent, navigation, or debug bridge data channel can be rebuilt independently", error); return false;
+        if (kind != DataChannelKind::kAgent && kind != DataChannelKind::kNavigation
+            && kind != DataChannelKind::kDebugBridge && kind != DataChannelKind::kTerminal
+            && kind != DataChannelKind::kTransfer) {
+            assign_error("only an optional data channel can be rebuilt independently", error); return false;
         }
         const auto peer = peer_snapshot();
         if (!peer.peer || !peer.offer) { assign_error("only an initialized offer initiator can create an optional channel", error); return false; }
@@ -950,7 +960,7 @@ public:
             return;
         }
         std::shared_ptr<rtc::PeerConnection> peer;
-        std::array<std::shared_ptr<rtc::DataChannel>, 5> channels;
+        std::array<std::shared_ptr<rtc::DataChannel>, kDataChannelKindCount> channels;
         {
             std::lock_guard lock(mutex_);
             if (peer_connection_) diagnostic_locked(TransportDiagnosticLayer::kLocalClose,
