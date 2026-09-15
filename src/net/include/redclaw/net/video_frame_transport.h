@@ -283,6 +283,33 @@ struct MediaTransportEstimate {
     std::uint64_t ignored_feedback = 0;
 };
 
+// Diagnostic only: one latest applied packet, not a packet history or a
+// cross-clock one-way latency measurement. Sampling never changes adaptation.
+struct MediaTransportTimingSample {
+    std::uint64_t sample_count = 0;
+    std::uint64_t feedback_id = 0;
+    std::uint64_t transport_sequence = 0;
+    std::uint64_t frame_id = 0;
+    std::uint64_t sent_rate_revision = 0;
+    std::uint64_t feedback_rate_revision = 0;
+    std::uint64_t feedback_host_us = 0;
+    std::uint64_t steady_send_us = 0;
+    std::uint64_t receiver_steady_us = 0;
+    std::uint64_t anchor_send_us = 0;
+    std::uint64_t anchor_arrival_us = 0;
+    double relative_transit_us = 0.0;
+    double smoothed_relative_transit_us = 0.0;
+    double minimum_smoothed_relative_transit_us = 0.0;
+    std::uint32_t queue_delay_ms = 0;
+};
+
+// Call only on the periodic diagnostic path, never for each packet. The RTT
+// value is the latest independent RTT snapshot, not this packet's RTT.
+[[nodiscard]] std::string format_media_transport_timing_sample(
+    const MediaTransportTimingSample& sample,
+    std::uint64_t log_host_us,
+    std::uint32_t rtt_queue_latest_ms);
+
 class MediaTransportEstimator final {
 public:
     explicit MediaTransportEstimator(std::size_t sent_capacity = 4096);
@@ -299,6 +326,7 @@ public:
     [[nodiscard]] MediaTransportEstimate snapshot(
         std::uint64_t host_steady_us,
         std::uint32_t smoothed_rtt_ms) const;
+    [[nodiscard]] std::optional<MediaTransportTimingSample> timing_snapshot() const;
     void reset();
 
 private:

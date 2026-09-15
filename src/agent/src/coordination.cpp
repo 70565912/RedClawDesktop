@@ -825,6 +825,7 @@ bool NormalAgentControlStateV1::initialize(std::string* error) {
     projects_.clear();
     incoming_guard_.reset();
     remote_epoch_.clear();
+    remote_authorized_.reset();
     authority_ = CoordinationAuthorityV1::kNone;
     requests_.clear();
     tasks_.clear();
@@ -1063,6 +1064,10 @@ bool NormalAgentControlStateV1::prepare_outbound(
         assign_error(validation_error, error);
         return false;
     }
+    if (remote_authorized_ == false) {
+        assign_error("remote Agent is not authorized; authorization must be handled on the remote device", error);
+        return false;
+    }
     if (sync_required_ && state_changing_message(message.type)) {
         assign_error("task synchronization must complete before state-changing work", error);
         return false;
@@ -1150,8 +1155,17 @@ bool NormalAgentControlStateV1::observe_remote(
     std::string* error,
     bool* apply_to_view) {
     if (apply_to_view) *apply_to_view = true;
-    if (!remote_epoch_.empty() && message.session_epoch != remote_epoch_) {
+    const bool epoch_changed = !remote_epoch_.empty() && message.session_epoch != remote_epoch_;
+    auto candidate_guard = incoming_guard_;
+    if (epoch_changed) candidate_guard.reset();
+    if (!candidate_guard.accept(message, error)) {
+        return false;
+    }
+    if (epoch_changed) {
         incoming_guard_.reset();
+        // Neither an old grant nor an old denial establishes authorization
+        // for this connection. Wait for its complete capability statement.
+        remote_authorized_ = false;
         pending_sync_tasks_.clear();
         for (const auto& [task_id, snapshot] : tasks_) {
             if (!terminal_state(snapshot.task_state)) {
@@ -1161,11 +1175,27 @@ bool NormalAgentControlStateV1::observe_remote(
         sync_required_ = !pending_sync_tasks_.empty();
         sync_requests_issued_ = false;
     }
-    auto candidate_guard = incoming_guard_;
-    if (!candidate_guard.accept(message, error)) {
+    remote_epoch_ = message.session_epoch;
+    if (const auto authorized = redclaw::protocol::agent_capabilities_authorization_update_v1(message)) {
+        if (remote_authorized_ != authorized) {
+            if (!*authorized || remote_authorized_ == false) request_sync();
+            sync_requests_issued_ = false;
+        }
+        remote_authorized_ = authorized;
+    }
+    // Executor rejections describe the command, not provider execution or a
+    // replay watermark. Never persist their placeholder "paused" task state.
+    if ((message.type == redclaw::protocol::AgentMessageTypeV1::kTaskError
+            || message.type == redclaw::protocol::AgentMessageTypeV1::kCapabilities)
+        && message.event_kind == "request_rejected"
+        && message.error_code == "agent_request_rejected" && message.event_sequence == 0) {
+        incoming_guard_ = std::move(candidate_guard);
+        if (apply_to_view) *apply_to_view = false;
+        assign_error(remote_authorized_ == false
+            ? "remote Agent request rejected: remote Agent is not authorized"
+            : "remote Agent request rejected; task state and synchronization watermark are unchanged", error);
         return false;
     }
-    remote_epoch_ = message.session_epoch;
     if (message.type == redclaw::protocol::AgentMessageTypeV1::kCapabilities
         && message.provider != redclaw::protocol::AgentProviderKindV1::kNone) {
         auto& provider = providers_[static_cast<int>(message.provider)];
@@ -1296,7 +1326,7 @@ NormalAgentControlStateV1::take_sync_requests(
     std::uint64_t* next_message_id,
     std::uint64_t now_ms) {
     std::vector<redclaw::protocol::AgentMessageEnvelopeV1> result;
-    if (!sync_required_ || next_message_id == nullptr
+    if (remote_authorized_ == false || !sync_required_ || next_message_id == nullptr
         || (sync_requests_issued_ && now_ms < last_sync_request_ms_ + 5000)) {
         return result;
     }

@@ -184,6 +184,7 @@ private:
     std::unordered_set<std::string> pending_sync_tasks_;
     redclaw::protocol::AgentEpochGuardV1 incoming_guard_;
     std::string remote_epoch_;
+    std::optional<bool> remote_authorized_;
     bool sync_required_ = false;
     bool sync_requests_issued_ = false;
     std::uint64_t last_sync_request_ms_ = 0;

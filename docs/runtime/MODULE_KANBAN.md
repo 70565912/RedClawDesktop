@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current priority is the Windows two-machine product path and the `v0.1.1` Developer Preview.
 
@@ -28,7 +28,7 @@ Status values: `done`, `in-progress`, `planned`.
 
 ## M05 Input
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 - `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done.
 - `M05-T02` Wider DPI/rotation/multi-display validation — in-progress.
@@ -48,6 +48,7 @@ Updated: 2026-09-14
 
 - `M08-T01` Bounded status, redacted logs, and evidence export — done.
 - `M08-T02` Public support-bundle workflow — planned.
+- `M08-T03` Host media timestamp-pair diagnostics and clock-rate characterization — in-progress; single-slot diagnostics, offline Debug build and three focused CTests passed (13 adaptation cases, seven new). Earlier severe media-queue estimates caused sender throttling/admission rejection; physical clock drift versus genuine waiting remains unproven. The peer subsequently reported candidate validation, replacement/restart and about 20.51 FPS with queue 0–2 ms; this supersedes the former missing-key blocker but does not isolate a root-cause fix. Near-static blur persists, with a recorded 1920×1080 source and 1454×818 encode target. Current user authorization covers local publication and Host-role restart; collect normal baselines now and pair recurrence samples before recovery. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md). Endpoint-owned evidence and permission handling remain on X00-T13; do not declare the incident complete or duplicate existing monitors.
 
 ## M09 Render
 
@@ -56,7 +57,7 @@ Updated: 2026-09-14
 
 ## M10 UI
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 - `M10-T01` Device-code Host/Controller GUI and playback workspace — done.
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
@@ -67,7 +68,7 @@ Updated: 2026-09-14
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 - `X00-T01` Real local dual-GUI desktop stream with three channels — done.
 - `X00-T02` Fixed ICE UDP port, early reservation, and ICE-targeted UPnP — done.
@@ -79,6 +80,9 @@ Updated: 2026-09-14
 - `X00-T08` Agent single-line message borders, expanded activity sizing, content-sized conversation window, and Cursor retry after first-turn approval expires — done; shared Debug build and full UI connection-flow suite passed. Latest Release publication and physical two-machine Cursor validation remain open.
 - `X00-T09` Cursor/Codex nested Agent output, tool-call summaries, final-result fallback, and duplicate-output filtering — done; local Provider and conversation-panel regressions passed, physical two-machine Provider validation remains open.
 - `X00-T10` Task-scoped approval identity, bounded Agent transcript replay, and failed Codex turn recovery — in-progress; six focused local Agent/IPC suites and Debug publication passed; upgraded Controller/old Host reconnected and reused approval IDs executed successfully. Read-only UAC sampling/readback returned Default desktop with no consent/LogonUI in the shared session; historical input failure remains unresolved. Host-side deployment/flood acceptance remains open.
+
+- `X00-T13` Remote Agent autonomous execution and result-only collaboration skill — done; repository skill and mandatory AGENTS entry define endpoint-local permission decisions, method selection, stage-scoped blockers and redacted result receipts without controller-side raw-environment collection or command micromanagement. This is a workflow-documentation change, not permission bypass, peer adoption, deployment or incident completion. See [skill](../../.agents/skills/remote-agent-result-contract/SKILL.md).
+- `X00-T14` Local Agent sync rejection classification and authorization recovery — in-progress; implementation and offline qualification complete (Debug NoPublish, five focused CTests, four regression cases reproduced before fixes). Request rejections preserve durable task/approval state and ACKs; denied authorization suspends retries and recovery requires fresh sync. The operator now authorizes local build/publication and Host-role restart for continued work from another computer. Peer authorization remains endpoint-owned; physical direct-Agent and picture-quality acceptance are pending. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md) and [development log](../logs/DEVLOG.md).
 
 ## Release gate
 

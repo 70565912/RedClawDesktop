@@ -310,6 +310,34 @@ TEST(AgentConversationPanel, ReconnectClearsOfflineHintWithoutHeartbeatOverwriti
   EXPECT_EQ(status->text(), task_status);
 }
 
+TEST(AgentConversationPanel, AuthorizationAndDisconnectTakePrecedenceOverSynchronization) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings);
+  make_panel_ready(&panel);
+  panel.set_current_task_id("retained-task", AgentTaskStateV1::kCompleted);
+  panel.set_instruction_text("A bounded follow-up");
+  auto* connection = panel.findChild<QLabel*>("agentConnectionState");
+  auto* status = panel.findChild<QLabel*>("agentPanelStatus");
+  auto* send = panel.findChild<QPushButton*>("agentSendAction");
+  ASSERT_NE(connection, nullptr);
+  ASSERT_NE(status, nullptr);
+  ASSERT_NE(send, nullptr);
+  panel.set_transport_state(false, true, true);
+  EXPECT_EQ(connection->text(), "Unauthorized");
+  EXPECT_TRUE(status->text().contains("remote device"));
+  EXPECT_FALSE(send->isEnabled());
+  EXPECT_EQ(panel.current_task_state(), AgentTaskStateV1::kCompleted);
+  panel.set_transport_state(false, false, true);
+  EXPECT_EQ(connection->text(), "Offline");
+  panel.set_transport_state(true, true, true);
+  EXPECT_EQ(connection->text(), "Syncing");
+  EXPECT_FALSE(send->isEnabled());
+  panel.set_transport_state(true, true, false);
+  EXPECT_EQ(connection->text(), "Connected");
+  EXPECT_TRUE(send->isEnabled());
+}
+
 TEST(AgentConversationPanel, MissingHistoryIsOneLossNoticeNotAnAgentAnswer) {
   QTemporaryDir directory;
   QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);

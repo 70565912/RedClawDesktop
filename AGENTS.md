@@ -60,6 +60,12 @@ RedClawDesktop 是面向开发者远程接入自己开发机的 Windows-first �
 3. 优先执行 `docs/runtime/PROJECT_STATE.md` 中的双机桌面画面闭环优先队列。只有当用户明确给出 `module: Mxx`，才按模块任务选择。
 4. 不要回滚用户已有改动。开始编辑前检查工作区状态，编辑范围必须和任务相关。
 
+## Remote Agent Result Contract
+
+涉及跨机器 Agent 协作，尤其涉及远端权限、进程、解压验包、部署或运行诊断时，必须先完整读取并使用 [remote-agent-result-contract](.agents/skills/remote-agent-result-contract/SKILL.md)。若技能未出现在选择器中，直接读取此仓库文件，不以未自动加载为由跳过。
+
+控制端只约定目标、已授权范围和验收结果，不获取远端权限/进程等原始信息、不指定远端命令或接管执行。远端 Agent 自行选择方法，在本机判断权限、落实必要安全检查并执行，仅返回脱敏结果；缺少授权时在本机请求合法批准，不通过委托绕过限制。一个阶段受阻不得阻塞其他已授权且无依赖的阶段。
+
 ## Work Selection
 
 - 当前默认不是“按模块扫 todo”，而是按双机桌面画面闭环优先队列推进。

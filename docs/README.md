@@ -39,6 +39,7 @@
 - [测试矩阵](testing/test-matrix.md)
 - [双机桌面流运行手册](testing/p0-dual-machine-desktop-stream-runbook.md)
 - [跨 LAN 双机联调](testing/cross-lan-dual-machine-integration-playbook.md)
+- [画面排队迟缓与静止模糊诊断交接](testing/desktop-latency-quality-investigation-20260915.md)
 - [远端 Agent 联调](testing/remote-development-agent-integration-runbook.md)
 - [Debug Bridge 联调](testing/p2p-debug-bridge-integration-runbook.md)
 - [产品性能基线](testing/product-performance-baseline-v1.md)
@@ -60,6 +61,7 @@
 ## AI coding 配置
 
 - [仓库 Agent 规则](../AGENTS.md)
+- [远端自主执行与结果回执 Skill](../.agents/skills/remote-agent-result-contract/SKILL.md)
 - [文档维护规则](../.github/instructions/docs-tree-maintainer.instructions.md)
 - [计划模板](../.github/prompts/plan-template.prompt.md)
 
