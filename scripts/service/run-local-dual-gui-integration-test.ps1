@@ -13,6 +13,16 @@ param(
 
     [string]$RuntimeExe = '',
 
+    [string]$HostRuntimeExe = '',
+
+    [string]$ControllerRuntimeExe = '',
+
+    [ValidateRange(1024, 65535)]
+    [int]$HostIceUdpPort = 55000,
+
+    [ValidateRange(1024, 65535)]
+    [int]$ControllerIceUdpPort = 55001,
+
     [string]$SessionCode = '',
 
     [string]$NetworkBindAddress = '',
@@ -833,8 +843,7 @@ $controllerControlName = "RedClawDesktop.LocalGui.Controller.$runId"
 $preexistingProcessIds = @(Get-Process -Name 'redclaw_desktop' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 $script:HostDhtListenPort = 0
 $script:ControllerDhtListenPort = 0
-$script:HostIceUdpPort = 55000
-$script:ControllerIceUdpPort = 55001
+if ($HostIceUdpPort -eq $ControllerIceUdpPort) { throw 'Host and Controller test ports must differ.' }
 $hostDhtListenPortBaseline = 0
 
 Write-Host "[local-dual-gui-test] run_id=$runId session=$(Get-RedactedSessionCode -Code $SessionCode) signal_transport=$SignalTransport host_ice_udp_port=$($script:HostIceUdpPort) controller_ice_udp_port=$($script:ControllerIceUdpPort)"
@@ -853,6 +862,8 @@ if ([string]::IsNullOrWhiteSpace($RuntimeExe)) {
 }
 $runtimePath = (Resolve-Path -LiteralPath $RuntimeExe).Path
 $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$hostRuntimePath = if ($HostRuntimeExe) { (Resolve-Path -LiteralPath $HostRuntimeExe).Path } else { $runtimePath }
+$controllerRuntimePath = if ($ControllerRuntimeExe) { (Resolve-Path -LiteralPath $ControllerRuntimeExe).Path } else { $runtimePath }
 
 $hostProc = $null
 $controllerProc = $null
@@ -882,7 +893,7 @@ try {
         -Role host -RoleDirectory $hostDirectory -SignalDirectory $hostSignalDirectory `
         -ControlName $hostControlName -CurrentRunId $runId
     Write-Host '[local-dual-gui-test] starting Host GUI'
-    $hostProc = Start-Process -FilePath $runtimePath -ArgumentList $hostArgs `
+    $hostProc = Start-Process -FilePath $hostRuntimePath -ArgumentList $hostArgs `
         -RedirectStandardOutput $hostOutLog -RedirectStandardError $hostErrLog `
         -PassThru -WindowStyle Normal
 
@@ -902,7 +913,7 @@ try {
         -Role controller -RoleDirectory $controllerDirectory -SignalDirectory $controllerSignalDirectory `
         -ControlName $controllerControlName -CurrentRunId $runId
     Write-Host '[local-dual-gui-test] starting Controller GUI'
-    $controllerProc = Start-Process -FilePath $runtimePath -ArgumentList $controllerArgs `
+    $controllerProc = Start-Process -FilePath $controllerRuntimePath -ArgumentList $controllerArgs `
         -RedirectStandardOutput $controllerOutLog -RedirectStandardError $controllerErrLog `
         -PassThru -WindowStyle Normal
 
@@ -1003,7 +1014,7 @@ try {
                     -Role host -RoleDirectory $restartDirectory `
                     -SignalDirectory $restartSignalDirectory `
                     -ControlName $hostControlName -CurrentRunId $restartRunId
-                $hostProc = Start-Process -FilePath $runtimePath -ArgumentList $hostArgs `
+                $hostProc = Start-Process -FilePath $hostRuntimePath -ArgumentList $hostArgs `
                     -RedirectStandardOutput $hostOutLog -RedirectStandardError $hostErrLog `
                     -PassThru -WindowStyle Normal
                 Write-Host ("[local-dual-gui-test] started Host restart {0}/{1} old_pid={2} new_pid={3}" -f `
@@ -1219,6 +1230,10 @@ $result = [ordered]@{
     session_code_redacted = Get-RedactedSessionCode -Code $SessionCode
     runtime_path = $runtimePath
     runtime_sha256 = $runtimeHash
+    host_runtime_path = $hostRuntimePath
+    host_runtime_sha256 = (Get-FileHash -LiteralPath $hostRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    controller_runtime_path = $controllerRuntimePath
+    controller_runtime_sha256 = (Get-FileHash -LiteralPath $controllerRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
     signal_transport = $SignalTransport
     allow_remote_input = [bool]$AllowRemoteInput
     host_dht_listen_port = $script:HostDhtListenPort
