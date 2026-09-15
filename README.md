@@ -51,7 +51,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
    Get-FileHash .\RedClawDesktop-windows-x64-v0.1.1.zip -Algorithm SHA256
    ```
 
-3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。Host 和 Controller 必须使用同一版本。
+3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。仍受支持的 Host 和 Controller 版本通过共同能力互通；连接不要求相同版本或相同二进制。
 4. 在受控电脑选择 **Host** 并等待连接；在控制电脑选择 **Controller**，输入 Host 显示的机器码并连接。
 5. 画面出现后，按界面提示显式开启远程输入。Agent 功能需要 Host 端配置允许的项目和 Provider。
 

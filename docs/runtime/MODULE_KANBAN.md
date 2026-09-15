@@ -8,8 +8,12 @@ Status values: `done`, `in-progress`, `planned`.
 
 ## M01 Capture
 
+Updated: 2026-09-15
+
 - `M01-T01` Windows Graphics Capture and Desktop Duplication backends — done.
 - `M01-T02` Multi-display product controls — planned.
+
+- `M01-T03` DDA recovery and Host cursor consistency — in-progress; implementation, serial Debug/Release builds, 102 CTests, focused session/GPU/protocol tests and isolated full-directory upgrade scenarios passed. Local DDA/WGC/GDI capture, both pre-upgrade Debug and public v0.1.0/v0.1.1 mixed directions, DHT restart and a matched-scene performance sample are recorded. First-frame capture denial now visibly opens the paused workspace with control disabled. Final Agent approval-continuity qualification, physical cursor/recovery, dual-end rollout and publication remain pending. See [capture behavior](../architecture/capture-recovery-and-cursor.md) and [independent upgrade](../testing/runtime-directory-upgrade.md).
 
 ## M02 Codec
 
@@ -83,6 +87,9 @@ Updated: 2026-09-15
 
 - `X00-T13` Remote Agent autonomous execution and result-only collaboration skill — done; repository skill and mandatory AGENTS entry define endpoint-local permission decisions, method selection, stage-scoped blockers and redacted result receipts without controller-side raw-environment collection or command micromanagement. This is a workflow-documentation change, not permission bypass, peer adoption, deployment or incident completion. See [skill](../../.agents/skills/remote-agent-result-contract/SKILL.md).
 - `X00-T14` Local Agent sync rejection classification and authorization recovery — in-progress; implementation and offline qualification complete (Debug NoPublish, five focused CTests, four regression cases reproduced before fixes). Request rejections preserve durable task/approval state and ACKs; denied authorization suspends retries and recovery requires fresh sync. The operator now authorizes local build/publication and Host-role restart for continued work from another computer. Peer authorization remains endpoint-owned; physical direct-Agent and picture-quality acceptance are pending. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md) and [development log](../logs/DEVLOG.md).
+
+- `X00-T12` Debug Controller startup on a physical adapter with multiple IPv4 addresses — done; Windows-selected gateway source address validated through the actual command launcher, Debug publication, public-DHT connection, remote real-capture rates, Controller frame deltas, and visual desktop confirmation. Broader exit-mode configuration remains on `X00-T11`.
+- `X00-T15` Pending Agent approval during Provider output — in-progress; reproduced broker state replacement and disappearing GUI approval, fixed both endpoint emission and older-peer presentation, Debug build and four focused CTests passed. Physical replay and Release/full-suite qualification remain pending; no authorization or timeout relaxation.
 
 ## Release gate
 

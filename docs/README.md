@@ -11,6 +11,7 @@
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
 - [v0.1.1 Release notes](releases/v0.1.1.md)
+- [v0.1.2 候选发行说明](releases/v0.1.2.md)
 - [v0.1.0 Release notes](releases/v0.1.0.md)
 
 发布 Windows x64 便携包使用：
@@ -29,6 +30,8 @@
 - [压缩 Protobuf 线格式](architecture/compressed-protobuf-wire-v1.md)
 - [自适应桌面流控制](architecture/adaptive-desktop-stream-control-v1.md)
 - [DirectX 采集兼容性](architecture/directx-capture-compatibility-design.md)
+- [采集恢复与 Host 光标](architecture/capture-recovery-and-cursor.md)
+- [v0.1.3 文件、剪贴板、终端与自重启实施约定](architecture/remote-workspace-v013.md)
 - [普通桌面输入](architecture/ordinary-desktop-remote-input-v1.md)
 - [远端 Agent 桥](architecture/remote-development-agent-bridge-v1.md)
 - [P2P Debug Bridge](architecture/p2p-debug-bridge-v1.md)
@@ -40,6 +43,7 @@
 - [双机桌面流运行手册](testing/p0-dual-machine-desktop-stream-runbook.md)
 - [跨 LAN 双机联调](testing/cross-lan-dual-machine-integration-playbook.md)
 - [画面排队迟缓与静止模糊诊断交接](testing/desktop-latency-quality-investigation-20260915.md)
+- [独立运行目录升级](testing/runtime-directory-upgrade.md)
 - [远端 Agent 联调](testing/remote-development-agent-integration-runbook.md)
 - [Debug Bridge 联调](testing/p2p-debug-bridge-integration-runbook.md)
 - [产品性能基线](testing/product-performance-baseline-v1.md)
