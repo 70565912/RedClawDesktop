@@ -526,6 +526,41 @@ TEST(AgentConversationPanel, TextUpdatesRetainExistingMessageWidget) {
   EXPECT_TRUE(static_cast<redclaw::ui::AgentMessageTextView*>(original)->toPlainText().contains("first second"));
 }
 
+TEST(AgentConversationPanel, LegacyProviderOutputCannotHidePendingApproval) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings);
+  make_panel_ready(&panel);
+  AgentMessageEnvelopeV1 message;
+  message.type = AgentMessageTypeV1::kApprovalRequest;
+  message.task_id = "pending-output";
+  message.request_id = "approval";
+  message.task_state = AgentTaskStateV1::kAwaitingApproval;
+  message.event_sequence = 1;
+  panel.apply_task_message(message);
+  ASSERT_TRUE(panel.approval_pending());
+  message.type = AgentMessageTypeV1::kEvent;
+  message.task_state = AgentTaskStateV1::kRunning;
+  message.event_sequence = 2;
+  message.event_kind = "provider_stderr";
+  message.text = "background model refresh failed";
+  panel.apply_task_message(message);
+  EXPECT_TRUE(panel.approval_pending());
+  EXPECT_EQ(panel.approval_request_id(), "approval");
+  EXPECT_TRUE(panel.status_text().contains("awaiting_approval"));
+  message.type = AgentMessageTypeV1::kTaskSnapshot;
+  message.event_sequence = 3;
+  message.event_kind.clear();
+  panel.apply_task_message(message);
+  EXPECT_TRUE(panel.approval_pending());
+  message.task_state = AgentTaskStateV1::kPaused;
+  message.event_sequence = 4;
+  message.event_kind = "approval_timed_out";
+  panel.apply_task_message(message);
+  EXPECT_FALSE(panel.approval_pending());
+  EXPECT_TRUE(panel.status_text().contains("paused"));
+}
+
 TEST(AgentConversationPanel, DecidedAndTerminalApprovalReplayCannotReopenBanner) {
   QTemporaryDir directory;
   QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);

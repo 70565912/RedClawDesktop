@@ -156,6 +156,42 @@ TEST(RemoteAgentBroker, StartsOneTaskAndQueuesAtMostEight) {
     EXPECT_NE(error.find("queue is full"), std::string::npos);
 }
 
+TEST(RemoteAgentBroker, ProviderOutputCannotDismissPendingApproval) {
+    using State = redclaw::protocol::AgentTaskStateV1;
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    FakeAgentProvider* provider = nullptr;
+    auto broker = make_broker(&provider);
+    std::string error;
+    ASSERT_TRUE(broker->handle_message(task_request(1, "task"), &error));
+    provider->emit({.task_id = "task", .request_id = "approval",
+        .event_kind = "command_approval", .state = State::kAwaitingApproval,
+        .approval_request = true});
+    (void)broker->take_outbound();
+    provider->emit({.task_id = "task", .event_kind = "provider_stderr",
+        .text = "background model refresh failed", .state = State::kRunning});
+    auto sync = task_request(2, "task");
+    sync.type = Type::kTaskSyncRequest;
+    ASSERT_TRUE(broker->handle_message(sync, &error));
+    const auto messages = broker->take_outbound();
+    EXPECT_TRUE(std::any_of(messages.begin(), messages.end(), [](const auto& item) {
+        return item.event_kind == "provider_stderr" && item.task_state == State::kAwaitingApproval;
+    }));
+    EXPECT_TRUE(std::any_of(messages.begin(), messages.end(), [](const auto& item) {
+        return item.type == Type::kTaskSnapshot && item.event_kind == "approval_pending"
+            && item.request_id == "approval" && item.task_state == State::kAwaitingApproval;
+    }));
+    auto decision = task_request(3, "task");
+    decision.type = Type::kApprovalDecision;
+    decision.request_id = "approval";
+    decision.approval_decision = redclaw::protocol::AgentApprovalDecisionV1::kAccept;
+    ASSERT_TRUE(broker->handle_message(decision, &error)) << error;
+    provider->emit({.task_id = "task", .event_kind = "output", .state = State::kRunning});
+    const auto resumed = broker->take_outbound();
+    EXPECT_TRUE(std::any_of(resumed.begin(), resumed.end(), [](const auto& item) {
+        return item.event_kind == "output" && item.task_state == State::kRunning;
+    }));
+}
+
 TEST(RemoteAgentBroker, DisconnectRejectsPendingApprovalButKeepsTask) {
     FakeAgentProvider* provider = nullptr;
     auto broker = make_broker(&provider);

@@ -1149,27 +1149,38 @@ void AgentConversationPanel::apply_task_message(
         && (message.type != redclaw::protocol::AgentMessageTypeV1::kTaskSnapshot || message.gap)) return;
     if (approval_request
         && task.decided_approval == QString::fromStdString(message.request_id)) return;
+    // Older peers can label background output/snapshots as running while a
+    // command still awaits approval. Keep that request reachable; an explicit
+    // decision, pause or terminal state still clears it normally.
+    const bool retain_approval = task_id == impl_->current_task_id
+        && !impl_->current_approval_request_id.isEmpty() && !approval_request
+        && (message.type == redclaw::protocol::AgentMessageTypeV1::kEvent
+            || message.type == redclaw::protocol::AgentMessageTypeV1::kTaskSnapshot)
+        && (message.task_state == redclaw::protocol::AgentTaskStateV1::kRunning
+            || message.task_state == redclaw::protocol::AgentTaskStateV1::kStarting);
+    const auto task_state = retain_approval
+        ? redclaw::protocol::AgentTaskStateV1::kAwaitingApproval : message.task_state;
     task.last_event_sequence = std::max(task.last_event_sequence, message.event_sequence);
-    if (task_is_running(message.task_state) && !task_is_running(task.state) && task.terminal_consumed_us) {
+    if (task_is_running(task_state) && !task_is_running(task.state) && task.terminal_consumed_us) {
         task.first_output_us = task.terminal_consumed_us = task.terminal_painted_us = 0;
         task.output_gap = false;
     }
-    task.state = message.task_state;
+    task.state = task_state;
     if (message.gap) task.output_gap = true;
-    if (!task_is_running(message.task_state) && !task.terminal_consumed_us)
+    if (!task_is_running(task_state) && !task.terminal_consumed_us)
         task.terminal_consumed_us = gui_monotonic_us();
-    if (!task_is_running(message.task_state)) {
+    if (!task_is_running(task_state)) {
         for (auto& item : task.items) item.mergeable = false;
         impl_->queue_conversation_rebuild();
     }
     if (task_id == impl_->current_task_id
-        && message.task_state != redclaw::protocol::AgentTaskStateV1::kAwaitingApproval) {
+        && task_state != redclaw::protocol::AgentTaskStateV1::kAwaitingApproval) {
         impl_->current_approval_request_id.clear();
         impl_->approval->hide();
     }
-    impl_->update_task_selector(task_id, message.task_state);
+    impl_->update_task_selector(task_id, task_state);
     if (impl_->current_task_id.isEmpty()) {
-        impl_->set_current_task(task_id, message.task_state, false);
+        impl_->set_current_task(task_id, task_state, false);
     }
 
     const QString kind = QString::fromStdString(message.event_kind);
@@ -1238,7 +1249,7 @@ void AgentConversationPanel::apply_task_message(
             : QString("[%1] %2").arg(kind, text));
     }
     impl_->set_status(QString("Task %1 · %2")
-        .arg(task_id, protocol_name(message.task_state)),
+        .arg(task_id, protocol_name(task_state)),
         message.type == redclaw::protocol::AgentMessageTypeV1::kTaskError);
     impl_->refresh_controls();
 }
