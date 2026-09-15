@@ -827,6 +827,15 @@ void RemoteAgentBroker::append_provider_event(AgentProviderEvent event) {
         }
         redact_windows_absolute_paths(&event.text);
     }
+    // Output continues while a provider waits for consent (for example stderr
+    // from background model discovery). Only a decision or turn termination
+    // relinquishes the pending request, not the output event's default state.
+    if (!task.pending_approval_request_id.empty() && !event.approval_request
+        && !event.terminal
+        && (event.state == redclaw::protocol::AgentTaskStateV1::kRunning
+            || event.state == redclaw::protocol::AgentTaskStateV1::kStarting)) {
+        event.state = redclaw::protocol::AgentTaskStateV1::kAwaitingApproval;
+    }
     task.state = event.state;
     if (event.approval_request) {
         ++metrics_.approval_request_total;
