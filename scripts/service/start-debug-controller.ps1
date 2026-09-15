@@ -36,6 +36,15 @@ function Get-PhysicalDefaultNetworkExit {
                 $_.IPAddress -ne '127.0.0.1' -and
                 $_.IPAddress -notlike '169.254.*'
             })
+        $bestRoute = $routes | Sort-Object RouteMetric | Select-Object -First 1
+        if ($addresses.Count -gt 1) {
+            $sourceAddresses = @(Find-NetRoute `
+                -RemoteIPAddress $bestRoute.NextHop `
+                -InterfaceIndex $adapter.ifIndex `
+                -ErrorAction Stop | Where-Object { $_.IPAddress } |
+                Select-Object -ExpandProperty IPAddress)
+            $addresses = @($addresses | Where-Object { $_.IPAddress -in $sourceAddresses })
+        }
         if ($addresses.Count -ne 1) {
             continue
         }
@@ -44,7 +53,6 @@ function Get-PhysicalDefaultNetworkExit {
             -AddressFamily IPv4 `
             -InterfaceIndex $adapter.ifIndex `
             -ErrorAction Stop
-        $bestRoute = $routes | Sort-Object RouteMetric | Select-Object -First 1
         [pscustomobject]@{
             Address = [string]$addresses[0].IPAddress
             Alias = [string]$adapter.Name
