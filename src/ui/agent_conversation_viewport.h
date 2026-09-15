@@ -24,6 +24,7 @@ public:
     void set_rows(std::vector<std::uint64_t> ids, CreateRow create, UpdateRow update,
                   CanReuseRow reuse = {}, InitialHeight initial_height = {});
     void clear_rows();
+    void follow_new_content();
     void invalidate_row(std::uint64_t id);
     void set_content_size_changed_callback(ContentSizeChanged callback);
     [[nodiscard]] int content_height_hint() const noexcept;

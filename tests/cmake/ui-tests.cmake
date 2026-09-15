@@ -1,4 +1,17 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+if(TARGET redclaw_ui_terminal)
+  add_executable(redclaw_terminal_view_integration_tests ui/terminal_view_integration_tests.cpp)
+  target_link_libraries(redclaw_terminal_view_integration_tests PRIVATE redclaw_ui_terminal redclaw_workspace GTest::gtest)
+  redclaw_apply_warnings(redclaw_terminal_view_integration_tests)
+  add_test(NAME redclaw_terminal_view_integration_tests COMMAND redclaw_terminal_view_integration_tests)
+  set_tests_properties(redclaw_terminal_view_integration_tests PROPERTIES TIMEOUT 60)
+  if(TARGET Qt6::qmake)
+    get_target_property(terminal_qmake Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(terminal_qt_bin "${terminal_qmake}" DIRECTORY)
+    add_custom_command(TARGET redclaw_terminal_view_integration_tests POST_BUILD
+      COMMAND "${terminal_qt_bin}/windeployqt.exe" --no-translations --no-compiler-runtime $<TARGET_FILE:redclaw_terminal_view_integration_tests>)
+  endif()
+endif()
 if(WIN32)
   add_test(NAME redclaw_gui_metric_contract_tests
     COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
@@ -7,7 +20,7 @@ if(WIN32)
 endif()
 if(WIN32 AND TARGET redclaw_ui_playback)
   add_executable(redclaw_ui_d3d11_integration_tests ui/d3d11_playback_integration_tests.cpp)
-  target_link_libraries(redclaw_ui_d3d11_integration_tests PRIVATE redclaw_ui_playback Qt6::Widgets GTest::gtest d3d11)
+  target_link_libraries(redclaw_ui_d3d11_integration_tests PRIVATE redclaw_ui_playback redclaw_helper Qt6::Widgets GTest::gtest d3d11)
   redclaw_apply_warnings(redclaw_ui_d3d11_integration_tests)
   add_test(NAME redclaw_ui_d3d11_integration_tests COMMAND redclaw_ui_d3d11_integration_tests)
   if(TARGET Qt6::qmake)
@@ -93,11 +106,15 @@ if(TARGET redclaw_ui_connection_flow)
     ui/agent_conversation_panel_tests.cpp
     ui/connection_flow_tests.cpp
     ui/desktop_navigation_panel_tests.cpp
+    ui/file_transfer_panel_tests.cpp
+    ui/runtime_maintenance_context_tests.cpp
+    ui/playback_frame_progress_tests.cpp
     ui/playback_geometry_transaction_tests.cpp
   )
 
   target_link_libraries(redclaw_ui_connection_flow_tests PRIVATE
     redclaw_ui_connection_flow
+    redclaw_workspace
     redclaw_input
     GTest::gtest
   )

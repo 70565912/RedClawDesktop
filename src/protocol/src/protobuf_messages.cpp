@@ -195,6 +195,27 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_source_activity_state(static_cast<wire::DesktopSourceActivityStateV1>(message.source_activity_state));
     encoded.set_media_budget_waiting(message.media_budget_waiting);
     encoded.set_capture_status_version(message.capture_status_version);
+    encoded.set_terminal_version(message.terminal_version);
+    encoded.set_file_transfer_version(message.file_transfer_version);
+    encoded.set_clipboard_version(message.clipboard_version);
+    if (message.workspace) {
+        const auto& data = *message.workspace;
+        auto* nested = encoded.mutable_workspace();
+        nested->set_schema_version(data.schema_version); nested->set_action(static_cast<std::uint32_t>(data.action));
+        nested->set_direction(static_cast<std::uint32_t>(data.direction)); nested->set_path(data.path);
+        nested->set_error_code(data.error_code); nested->set_entries(data.entries); nested->set_files(data.files);
+        nested->set_bytes(data.bytes); nested->set_completed_entries(data.completed_entries);
+        nested->set_completed_bytes(data.completed_bytes); nested->set_directory(data.directory);
+        nested->set_conflict(static_cast<std::uint32_t>(data.conflict));
+        nested->set_accepted_sources(data.accepted_sources);
+        nested->set_committed_bytes(data.committed_bytes); nested->set_completed_files(data.completed_files);
+        nested->set_skipped_entries(data.skipped_entries);
+        nested->set_results_path(data.results_path);
+        nested->set_purpose(static_cast<std::uint32_t>(data.purpose));
+        nested->set_clipboard_sequence(data.clipboard_sequence); nested->set_paste_submitted(data.paste_submitted);
+        nested->set_created_at_ms(data.created_at_ms);
+        nested->set_active(data.active); nested->set_operation_revision(data.operation_revision);
+    }
     encoded.set_capture_status(message.capture_status);
     encoded.set_capture_generation(message.capture_generation);
     encoded.set_capture_first_frame_id(message.capture_first_frame_id);
@@ -289,6 +310,31 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.source_activity_state = static_cast<DesktopSourceActivityStateV1>(encoded.source_activity_state());
     message.media_budget_waiting = encoded.media_budget_waiting();
     message.capture_status_version = encoded.capture_status_version();
+    message.terminal_version = encoded.terminal_version();
+    message.file_transfer_version = encoded.file_transfer_version();
+    message.clipboard_version = encoded.clipboard_version();
+    if (encoded.has_workspace()) {
+        const auto& nested = encoded.workspace();
+        if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kBrowseClipboardCopies)
+            || nested.purpose() > static_cast<std::uint32_t>(WorkspaceTransferPurposeV1::kClipboardOpenCopy)
+            || nested.direction() > static_cast<std::uint32_t>(TransferDirectionV1::kToController)
+            || nested.conflict() > static_cast<std::uint32_t>(TransferConflictV1::kSkip)) return false;
+        auto& data = message.workspace.emplace();
+        data.schema_version = nested.schema_version(); data.action = static_cast<WorkspaceActionV1>(nested.action());
+        data.direction = static_cast<TransferDirectionV1>(nested.direction()); data.path = nested.path();
+        data.error_code = nested.error_code(); data.entries = nested.entries(); data.files = nested.files();
+        data.bytes = nested.bytes(); data.completed_entries = nested.completed_entries();
+        data.completed_bytes = nested.completed_bytes(); data.directory = nested.directory();
+        data.conflict = static_cast<TransferConflictV1>(nested.conflict());
+        data.accepted_sources = nested.accepted_sources();
+        data.committed_bytes = nested.committed_bytes(); data.completed_files = nested.completed_files();
+        data.results_path = nested.results_path();
+        data.purpose = static_cast<WorkspaceTransferPurposeV1>(nested.purpose());
+        data.clipboard_sequence = nested.clipboard_sequence(); data.paste_submitted = nested.paste_submitted();
+        data.created_at_ms = nested.created_at_ms();
+        data.skipped_entries = nested.skipped_entries();
+        data.active = nested.active(); data.operation_revision = nested.operation_revision();
+    }
     message.capture_status = encoded.capture_status();
     message.capture_generation = encoded.capture_generation();
     message.capture_first_frame_id = encoded.capture_first_frame_id();
@@ -404,6 +450,9 @@ ParseResult<StreamControlMessageV1> parse_stream_control_message_v1(std::string_
     ParseResult<StreamControlMessageV1> result;
     wire::StreamControlMessageV1 encoded;
     if (!decompress_protobuf(serialized, ProtobufWireKind::kControl, encoded, &result.error)) return result;
+    if (encoded.has_workspace() && encoded.workspace().schema_version() != 1) {
+        result.error = "protocol_version_incompatible"; return result;
+    }
     if (encoded.type() == wire::StreamControlMessageTypeV1_kInputBatch
         && encoded.ByteSizeLong() > kMaxRemoteInputBatchBytes) {
         result.error = "remote input batch exceeds 4 KiB";

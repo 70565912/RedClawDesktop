@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'none'; img-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Remote terminal</title>
+  <link rel="stylesheet" href="xterm.css">
+  <link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+  <div id="notice" role="status">Terminal input paused</div>
+  <div id="terminal" aria-label="Remote PowerShell terminal"></div>
+  <script src="xterm.js"></script><script src="fit.js"></script><script src="terminal.js"></script>
+</body>
+</html>

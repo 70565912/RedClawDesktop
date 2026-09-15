@@ -160,6 +160,34 @@ TEST(AgentConversationPanel, MapsNewRunningAndCompletedTasksToExpectedCommands) 
   EXPECT_EQ(modes.back(), AgentSubmitMode::kStartTurn);
 }
 
+TEST(AgentConversationPanel, TransferBlocksAllSubmissionModesAndApprovalButRetainsDraftAndOutput) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings); make_panel_ready(&panel);
+  panel.set_current_task_id("transfer-task", AgentTaskStateV1::kRunning);
+  panel.set_instruction_text("Keep this draft");
+  unsigned sent = 0, approvals = 0;
+  panel.set_submit_callback([&](auto, const auto&) { ++sent; return AgentSubmitResult{.ok = true, .task_id = "transfer-task"}; });
+  panel.set_approval_callback([&](auto, auto*) { ++approvals; return true; });
+  panel.set_workspace_blocked(true);
+  QString error;
+  for (auto mode : {AgentSubmitMode::kCreateTask, AgentSubmitMode::kStartTurn, AgentSubmitMode::kSteerTurn})
+    EXPECT_FALSE(panel.trigger_submit(mode, &error));
+  AgentMessageEnvelopeV1 event;
+  event.type = AgentMessageTypeV1::kApprovalRequest; event.task_id = "transfer-task";
+  event.task_state = AgentTaskStateV1::kAwaitingApproval; event.request_id = "transfer-approval";
+  event.event_kind = "approval_request"; event.text = "Existing task needs a decision";
+  panel.apply_task_message(event);
+  ASSERT_TRUE(wait_for_panel_render([&] { return panel.approval_pending(); }));
+  EXPECT_FALSE(panel.trigger_approval(redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error));
+  EXPECT_FALSE(panel.findChild<QPushButton*>("agentApproveAction")->isEnabled());
+  EXPECT_EQ(sent, 0U); EXPECT_EQ(approvals, 0U); EXPECT_EQ(panel.instruction_text(), "Keep this draft");
+  panel.set_transport_state(false, false, false);
+  panel.set_workspace_blocked(false);
+  EXPECT_FALSE(panel.findChild<QPushButton*>("agentSendAction")->isEnabled());
+  EXPECT_EQ(panel.instruction_text(), "Keep this draft");
+}
+
 TEST(AgentConversationPanel, EnterSubmitsAndShiftEnterAddsNewline) {
   QTemporaryDir directory;
   ASSERT_TRUE(directory.isValid());
@@ -719,6 +747,73 @@ TEST(AgentConversationPanel, VirtualizedHistoryRestoresExactTextWhenScrolled) {
   scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
   ASSERT_TRUE(wait_for_panel_render([&] { return displays('L'); }));
   EXPECT_EQ(panel.property("retained_reply_utf16_units").toLongLong(), 12 * 8192);
+}
+
+TEST(AgentConversationPanel, NewOutputFollowsOuterAndInnerTailWithoutStealingSelection) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("follow-tail.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings);
+  make_panel_ready(&panel);
+  panel.resize(480, 720);
+  panel.show();
+  AgentMessageEnvelopeV1 event;
+  event.type = AgentMessageTypeV1::kEvent;
+  event.task_id = "selected";
+  event.task_state = AgentTaskStateV1::kRunning;
+  event.event_kind = "text_delta";
+  for (int i = 0; i < 2; ++i) {
+    event.event_sequence = i + 1;
+    event.text = std::string(8192, static_cast<char>('A' + i));
+    panel.apply_task_message(event);
+  }
+  event.event_sequence = 3;
+  event.text = QString("newest line\n").repeated(450).toStdString();
+  panel.apply_task_message(event);
+  auto* outer = panel.findChild<QAbstractScrollArea*>("agentConversationScroll");
+  ASSERT_NE(outer, nullptr);
+  const auto newest = [&]() -> QPlainTextEdit* {
+    for (auto* text : panel.findChildren<QPlainTextEdit*>("agentReplyPlain"))
+      if (text->isVisible() && text->toPlainText().startsWith("newest line")) return text;
+    return nullptr;
+  };
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    auto* text = newest();
+    return text && text->verticalScrollBar()->maximum() > 0
+        && text->verticalScrollBar()->value() == text->verticalScrollBar()->maximum()
+        && outer->verticalScrollBar()->value() == outer->verticalScrollBar()->maximum();
+  }));
+  newest()->verticalScrollBar()->setValue(0);
+  QApplication::processEvents();
+  EXPECT_EQ(newest()->verticalScrollBar()->value(), 0);
+  event.event_sequence = 4;
+  event.text = "fresh selected delta\n";
+  panel.apply_task_message(event);
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    auto* text = newest();
+    return text && text->toPlainText().contains("fresh selected delta")
+        && text->verticalScrollBar()->value() == text->verticalScrollBar()->maximum();
+  }));
+  outer->verticalScrollBar()->setValue(0);
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return outer->verticalScrollBar()->value() == 0 && newest() == nullptr;
+  }));
+  auto other = event;
+  other.task_id = "other";
+  other.event_sequence = 1;
+  other.text = "background output";
+  panel.apply_task_message(other);
+  QApplication::processEvents();
+  EXPECT_EQ(panel.current_task_id(), "selected");
+  EXPECT_EQ(outer->verticalScrollBar()->value(), 0);
+  event.event_sequence = 5;
+  event.text = "tail after history browsing\n";
+  panel.apply_task_message(event);
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    auto* text = newest();
+    return text && text->toPlainText().contains("tail after history browsing")
+        && text->verticalScrollBar()->value() == text->verticalScrollBar()->maximum()
+        && outer->verticalScrollBar()->value() == outer->verticalScrollBar()->maximum();
+  }));
 }
 
 TEST(AgentConversationPanel, MegabyteUnbrokenTextRetainsTerminalAndBoundedHeartbeat) {

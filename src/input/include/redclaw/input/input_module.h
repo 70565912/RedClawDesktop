@@ -262,6 +262,14 @@ public:
 	~RemoteInputSession();
 
 	void set_authorized(bool authorized);
+    // A temporary transfer reason preserves independently applied capture,
+    // consent, geometry and disconnect pauses. Entering releases all input.
+    void set_transfer_blocked(bool blocked, std::uint64_t now_ms);
+    [[nodiscard]] bool clipboard_paste_eligible() const;
+    [[nodiscard]] std::uint64_t eligibility_revision() const { return eligibility_revision_; }
+    // Trusted clipboard coordinator only: one fixed Ctrl+V during its transfer
+    // gate. This neither opens general input nor drains queued remote events.
+    [[nodiscard]] bool paste_verified_clipboard(std::uint64_t expected_revision, std::string* error = nullptr);
 	[[nodiscard]] bool request_active(std::uint64_t now_ms, std::string* error = nullptr);
 	[[nodiscard]] bool enqueue_batch(
 		std::uint64_t sequence,
@@ -295,6 +303,8 @@ private:
 	InputPolicyGate& policy_gate_;
 	InputInjectionAdapter adapter_;
 	bool authorized_ = false;
+    bool transfer_blocked_ = false;
+    std::uint64_t eligibility_revision_ = 0;
 	RemoteInputSessionState state_ = RemoteInputSessionState::kDenied;
 	RemoteInputPauseReason pause_reason_ = RemoteInputPauseReason::kNotAuthorized;
     struct QueuedEvent { InputEvent event; std::uint64_t sequence; };

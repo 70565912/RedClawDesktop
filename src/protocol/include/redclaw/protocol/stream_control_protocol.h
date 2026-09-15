@@ -5,8 +5,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <optional>
 
 #include "redclaw/protocol/protocol_module.h"
+#include "redclaw/protocol/transfer_protocol.h"
 
 namespace redclaw::protocol {
 
@@ -47,6 +49,7 @@ enum class StreamControlMessageTypeV1 {
     kCaptureRegionRequest,
     kCaptureRegionApplied,
     kCaptureRegionRejected,
+    kWorkspace,
 };
 
 enum class RemoteLogModeV1 {
@@ -169,6 +172,11 @@ struct StreamControlMessageV1 {
     bool media_budget_waiting = false;
     // Optional capture-status capability v1. Zero means an older peer.
     std::uint32_t capture_status_version = 0;
+    // Optional terminal v1 capability. A missing field never opens the channel.
+    std::uint32_t terminal_version = 0;
+    std::uint32_t file_transfer_version = 0;
+    std::uint32_t clipboard_version = 0;
+    std::optional<WorkspaceControlV1> workspace;
     // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
     std::uint32_t capture_status = 0;
     std::uint64_t capture_generation = 0;

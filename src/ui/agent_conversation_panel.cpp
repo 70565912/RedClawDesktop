@@ -224,6 +224,7 @@ struct AgentConversationPanel::Impl {
     QString last_valid_instruction;
     QStringList event_tail;
     bool authorized = false;
+    bool workspace_blocked = false;
     bool channel_open = false;
     bool sync_required = false;
     bool rebuilding = false;
@@ -502,9 +503,11 @@ struct AgentConversationPanel::Impl {
         const bool transport_ready = authorized && channel_open && !sync_required;
         const bool text_ready = !composer->toPlainText().trimmed().isEmpty()
             && composer->toPlainText().toUtf8().size() <= kMaximumInstructionBytes;
-        send->setEnabled(transport_ready && provider_ready && catalog_ready && text_ready);
+        send->setEnabled(!workspace_blocked && transport_ready && provider_ready && catalog_ready && text_ready);
         composer->setEnabled(transport_ready && provider_ready && catalog_ready);
-        new_task->setEnabled(transport_ready && provider_ready && catalog_ready);
+        new_task->setEnabled(!workspace_blocked && transport_ready && provider_ready && catalog_ready);
+        approve->setEnabled(!workspace_blocked);
+        reject->setEnabled(!workspace_blocked);
         const bool running = task_is_running(current_task_state());
         interrupt->setVisible(running);
         interrupt->setEnabled(transport_ready && running && !current_task_id.isEmpty());
@@ -724,6 +727,7 @@ struct AgentConversationPanel::Impl {
             }
         }
         if (task_id == current_task_id) {
+            scroll->follow_new_content();
             queue_conversation_rebuild();
         }
     }
@@ -765,7 +769,7 @@ struct AgentConversationPanel::Impl {
         });
     }
 
-    QWidget* create_message_widget(const ConversationItem& item, QWidget* parent) {
+    QWidget* create_message_widget(const ConversationItem& item, QWidget* parent, bool follow_tail = false) {
         GuiLatencyScope timing(GuiStage::kAgentCreate);
         auto* row = new QWidget(parent);
         row->setProperty("messageId", QVariant::fromValue<qulonglong>(item.id));
@@ -799,7 +803,7 @@ struct AgentConversationPanel::Impl {
             browser->setObjectName("agentReplyText");
             row_layout->addWidget(browser, 1);
             row_layout->activate();
-            browser->set_markdown(item.text, item.mergeable);
+            browser->set_markdown(item.text, item.mergeable, follow_tail);
             return row;
         }
 
@@ -867,7 +871,7 @@ struct AgentConversationPanel::Impl {
         // that history trimming can change before a queued scroll/resize event.
         auto items = std::make_shared<const std::vector<ConversationItem>>(found->second.items);
         scroll->set_rows(std::move(ids), [this, items](std::size_t index, QWidget* parent) {
-            return create_message_widget(items->at(index), parent);
+            return create_message_widget(items->at(index), parent, index + 1 == items->size());
         }, [items](std::size_t index, QWidget* widget) {
             const auto& item = items->at(index);
             widget->setProperty("messageId", QVariant::fromValue<qulonglong>(item.id));
@@ -877,7 +881,8 @@ struct AgentConversationPanel::Impl {
                 && widget->property("messageKind").toString() == item.kind) return false;
             if (item.role == ConversationRole::kAgent) {
                 if (auto* browser = widget->findChild<QWidget*>("agentReplyText"))
-                    static_cast<AgentMessageTextView*>(browser)->set_markdown(item.text, item.mergeable);
+                    static_cast<AgentMessageTextView*>(browser)->set_markdown(
+                        item.text, item.mergeable, index + 1 == items->size());
             } else if (item.role == ConversationRole::kActivity) {
                 if (auto* label = widget->findChild<QLabel*>("agentActivityDetails")) label->setText(item.text);
                 if (auto* toggle = widget->findChild<QToolButton*>())
@@ -909,6 +914,10 @@ struct AgentConversationPanel::Impl {
     }
 
     bool trigger_submit(AgentSubmitMode mode, QString* error) {
+        if (workspace_blocked) {
+            if (error) *error = "File transfer is in progress. Wait or cancel before sending an Agent instruction.";
+            return false;
+        }
         const QString instruction = composer->toPlainText().trimmed();
         if (instruction.isEmpty()) {
             set_status("Enter an Agent instruction first.", true);
@@ -972,6 +981,10 @@ struct AgentConversationPanel::Impl {
     bool trigger_approval(
         redclaw::protocol::AgentApprovalDecisionV1 decision,
         QString* error) {
+        if (workspace_blocked) {
+            if (error) *error = "File transfer is in progress. Wait or cancel before responding to the Agent.";
+            return false;
+        }
         if (!approval_callback || current_approval_request_id.isEmpty()) {
             if (error != nullptr) {
                 *error = "No Agent approval is pending.";
@@ -1024,6 +1037,11 @@ void AgentConversationPanel::set_task_selected_callback(TaskSelectedCallback cal
 
 void AgentConversationPanel::set_collapse_callback(CollapseCallback callback) {
     impl_->collapse_callback = std::move(callback);
+}
+
+void AgentConversationPanel::set_workspace_blocked(bool blocked) {
+    impl_->workspace_blocked = blocked;
+    impl_->refresh_controls();
 }
 
 void AgentConversationPanel::set_transport_state(

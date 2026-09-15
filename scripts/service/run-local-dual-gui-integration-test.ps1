@@ -832,6 +832,13 @@ $controllerSignalDirectory = if ($SignalTransport -eq 'file') {
 New-Item -ItemType Directory -Force -Path `
     $hostDirectory, $controllerDirectory, $hostSignalDirectory, $controllerSignalDirectory | Out-Null
 
+if ($AgentFixtureProvider -and $AllowRemoteInput) {
+    # The GUI checkbox is authoritative. Give this explicitly authorized test
+    # consent in its isolated settings store without changing the user's store.
+    Set-Content -LiteralPath (Join-Path $hostDirectory 'qa-ui-settings.ini') `
+        -Value "[host]`r`nallow_remote_control=true`r`n" -Encoding UTF8
+}
+
 $hostOutLog = Join-Path $hostDirectory 'gui.out.log'
 $hostErrLog = Join-Path $hostDirectory 'gui.err.log'
 $controllerOutLog = Join-Path $controllerDirectory 'gui.out.log'

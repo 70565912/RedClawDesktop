@@ -534,6 +534,7 @@ RemoteInputSession::~RemoteInputSession() {
 }
 
 void RemoteInputSession::set_authorized(bool authorized) {
+    ++eligibility_revision_;
     if (!authorized) {
         release_all();
         queue_.clear();
@@ -550,12 +551,14 @@ void RemoteInputSession::set_authorized(bool authorized) {
 }
 
 bool RemoteInputSession::request_active(std::uint64_t now_ms, std::string* error) {
+    if (transfer_blocked_) { if (error) *error = "workspace_transfer_busy"; return false; }
     if (!authorized_) {
         if (error != nullptr) {
             *error = "remote input is not authorized";
         }
         return false;
     }
+    ++eligibility_revision_;
     release_all();
     queue_.clear();
     state_ = RemoteInputSessionState::kActive;
@@ -572,6 +575,12 @@ bool RemoteInputSession::enqueue_batch(
     std::vector<InputEvent> events,
     std::uint64_t now_ms,
     std::string* error) {
+    if (transfer_blocked_) {
+        last_received_sequence_ = (std::max)(last_received_sequence_, sequence);
+        ++stats_.rejected_batches;
+        if (error) *error = "workspace_transfer_busy";
+        return false;
+    }
     if (state_ != RemoteInputSessionState::kActive || !authorized_) {
         ++stats_.rejected_batches;
         if (error != nullptr) {
@@ -615,6 +624,11 @@ bool RemoteInputSession::synchronize_state(
     std::uint32_t pressed_mouse_buttons,
     std::uint64_t now_ms,
     std::string* error) {
+    if (transfer_blocked_) {
+        last_received_sequence_ = (std::max)(last_received_sequence_, sequence);
+        if (error) *error = "workspace_transfer_busy";
+        return false;
+    }
     if (state_ != RemoteInputSessionState::kActive || !authorized_) {
         if (error != nullptr) {
             *error = "remote input session is not active";
@@ -686,6 +700,7 @@ bool RemoteInputSession::synchronize_state(
 }
 
 bool RemoteInputSession::drain(std::uint64_t now_ms, std::string* error) {
+    if (transfer_blocked_) return true;
     if (state_ != RemoteInputSessionState::kActive) {
         return true;
     }
@@ -767,6 +782,7 @@ bool RemoteInputSession::drain(std::uint64_t now_ms, std::string* error) {
 }
 
 bool RemoteInputSession::expire_lease(std::uint64_t now_ms) {
+    if (transfer_blocked_) return false;
     if (state_ != RemoteInputSessionState::kActive || lease_expires_at_ms_ == 0
         || now_ms < lease_expires_at_ms_) {
         return false;
@@ -779,7 +795,20 @@ void RemoteInputSession::set_injection_observer(std::function<void(const InputIn
     injection_observer_ = std::move(observer);
 }
 
+void RemoteInputSession::set_transfer_blocked(bool blocked, std::uint64_t now_ms) {
+    if (transfer_blocked_ == blocked) return;
+    if (blocked) {
+        // Do not revive a lease that already expired before the transfer.
+        (void)expire_lease(now_ms);
+        release_all(); queue_.clear();
+    } else if (authorized_ && state_ == RemoteInputSessionState::kActive) {
+        lease_expires_at_ms_ = now_ms + kLeaseDurationMs;
+    }
+    transfer_blocked_ = blocked;
+}
+
 void RemoteInputSession::pause(RemoteInputPauseReason reason) {
+    ++eligibility_revision_;
     release_all();
     queue_.clear();
     lease_expires_at_ms_ = 0;
@@ -846,11 +875,43 @@ std::vector<InputEvent> RemoteInputSession::build_release_events() const {
 }
 
 void RemoteInputSession::fail_closed(RemoteInputPauseReason reason) {
+    ++eligibility_revision_;
     release_all();
     queue_.clear();
     lease_expires_at_ms_ = 0;
     state_ = authorized_ ? RemoteInputSessionState::kPaused : RemoteInputSessionState::kDenied;
     pause_reason_ = reason;
+}
+
+bool RemoteInputSession::clipboard_paste_eligible() const {
+    return authorized_ && state_ == RemoteInputSessionState::kActive && policy_gate_.can_inject(InputTarget::kUserDesktop);
+}
+bool RemoteInputSession::paste_verified_clipboard(std::uint64_t expected_revision, std::string* error) {
+    if (!transfer_blocked_ || expected_revision != eligibility_revision_ || !clipboard_paste_eligible()) {
+        if (error) *error = "clipboard_input_revoked";
+        return false;
+    }
+    ++eligibility_revision_; // the same authorization snapshot cannot submit twice
+    release_all(); queue_.clear();
+    InputEvent control_down, v_down;
+    // Use logical virtual keys for the accelerator, independent of the Host's
+    // keyboard layout. The ordinary input adapter still checks its policy.
+    control_down.key_code = control_down.virtual_key = 0x11;
+    v_down.key_code = v_down.virtual_key = 0x56;
+    auto control_up = control_down; control_up.type = InputEventType::kKeyUp;
+    auto v_up = v_down; v_up.type = InputEventType::kKeyUp;
+    const auto result = adapter_.inject_events({control_down, v_down, v_up, control_up});
+    if (!result.injected) {
+        // SendInput may have accepted part of its batch. Release the two keys
+        // through the same policy, then retain the normal fail-closed pause.
+        (void)adapter_.inject_events({v_up, control_up});
+        fail_closed(RemoteInputPauseReason::kInjectionFailed);
+        if (error) *error = "clipboard_input_injection_failed";
+        return false;
+    }
+    stats_.injected_events += 4;
+    if (error) error->clear();
+    return true;
 }
 
 WindowsSecureDesktopInjectorBackend::WindowsSecureDesktopInjectorBackend(

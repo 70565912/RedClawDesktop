@@ -138,6 +138,17 @@ function Get-WinDeployQt {
 # Main
 # ---------------------------------------------------------------------------
 $sourceDir = Get-BuildOutputDir -Configuration $Configuration -Override $BuildOutputDirectory
+$terminalRequirement = Join-Path $sourceDir 'terminal-runtime.json'
+$terminalRequired = Test-Path -LiteralPath $terminalRequirement
+if ($terminalRequired) {
+    $builtTerminal = Get-Content -LiteralPath $terminalRequirement -Raw | ConvertFrom-Json
+    $sourceTerminal = Get-Content -LiteralPath (Join-Path $repoRoot 'third_party/terminal/manifest.json') -Raw | ConvertFrom-Json
+    if ($builtTerminal.schema_version -ne 1 -or $builtTerminal.runtime.sha256 -ne $sourceTerminal.runtime.sha256) {
+        throw 'Terminal dependency version differs from the built program; rebuild before publishing.'
+    }
+    # Download and validate before replacing any running-directory contents.
+    & (Join-Path $scriptRoot 'prepare-terminal-runtime.ps1') | Out-Null
+}
 
 $destDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
     Join-Path $repoRoot "release\$Configuration"
@@ -211,6 +222,15 @@ if ($null -eq $deployTool) {
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+if ($terminalRequired) {
+    Write-Host '[publish] Deploying verified fixed terminal runtime...'
+    & (Join-Path $scriptRoot 'prepare-terminal-runtime.ps1') -DeployDirectory (Join-Path $resolvedDest 'terminal-runtime') | Out-Null
+    $maintenanceDirectory = Join-Path $resolvedDest 'maintenance'
+    New-Item -ItemType Directory -Path $maintenanceDirectory -Force | Out-Null
+    foreach ($name in @('terminal-profile.ps1','start-runtime-maintenance.ps1','runtime-upgrade-common.ps1','invoke-runtime-directory-upgrade.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $scriptRoot $name) -Destination (Join-Path $maintenanceDirectory $name)
+    }
+}
 $files = (Get-ChildItem -Path $resolvedDest -File -Recurse).Count
 Write-Host ""
 Write-Host "[publish] Done. $files file(s) in: $resolvedDest" -ForegroundColor Green

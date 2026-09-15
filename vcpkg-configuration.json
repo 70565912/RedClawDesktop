@@ -1,3 +1,3 @@
 {
-  "overlay-ports": ["./vcpkg-overlays/ports/libdatachannel", "./vcpkg-overlays/ports/libjuice"]
+  "overlay-ports": ["./vcpkg-overlays/ports/libdatachannel", "./vcpkg-overlays/ports/libjuice", "./vcpkg-overlays/ports/webview2"]
 }

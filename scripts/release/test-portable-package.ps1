@@ -48,6 +48,19 @@ $requiredEntries = @(
     'RedClawDesktop/LICENSE',
     'RedClawDesktop/RELEASE-MANIFEST.txt'
 )
+if ($entryNames -contains 'RedClawDesktop/terminal-runtime.json') {
+    $requiredEntries += @(
+        'RedClawDesktop/terminal-runtime/msedgewebview2.exe',
+        'RedClawDesktop/maintenance/terminal-profile.ps1',
+        'RedClawDesktop/maintenance/start-runtime-maintenance.ps1',
+        'RedClawDesktop/maintenance/runtime-upgrade-common.ps1',
+        'RedClawDesktop/maintenance/invoke-runtime-directory-upgrade.ps1',
+        'RedClawDesktop/terminal-notices/xterm-LICENSE.txt',
+        'RedClawDesktop/terminal-notices/fit-LICENSE.txt',
+        'RedClawDesktop/terminal-notices/WebView2-SDK-LICENSE.txt',
+        'RedClawDesktop/terminal-notices/WebView2-SDK-NOTICE.txt'
+    )
+}
 foreach ($requiredEntry in $requiredEntries) {
     if ($entryNames -notcontains $requiredEntry) {
         throw "Required archive entry is missing: $requiredEntry"
@@ -71,6 +84,7 @@ try {
         -WorkingDirectory $packageRoot `
         -RedirectStandardOutput $standardOutputPath `
         -RedirectStandardError $standardErrorPath `
+        -WindowStyle Hidden `
         -PassThru `
         -Wait
     $helpExitCode = $process.ExitCode
@@ -93,6 +107,13 @@ try {
     }
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
+        $resolvedTemporaryRoot = (Resolve-Path -LiteralPath $temporaryRoot).Path
+        $resolvedTempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+        if ((Split-Path $resolvedTemporaryRoot -Parent) -ne $resolvedTempParent -or
+            (Split-Path $resolvedTemporaryRoot -Leaf) -notlike "RedClawDesktop-package-smoke-$PID-*" -or
+            ((Get-Item -LiteralPath $resolvedTemporaryRoot).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Package smoke cleanup path escaped its temporary directory.'
+        }
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
     }
 }

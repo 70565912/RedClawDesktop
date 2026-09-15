@@ -3,10 +3,13 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QEventLoop>
+#include <QFrame>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QToolButton>
+#include <QTimer>
 
 #include <algorithm>
 #include <vector>
@@ -155,26 +158,46 @@ TEST(DesktopNavigationPanelTests, SelectionCommitsOnlyOnMouseReleaseAndIsRemembe
   EXPECT_EQ(last_right, remembered_right);
 }
 
-TEST(DesktopNavigationPanelTests, FailedSendRollsBackAndOverlayDoesNotResizeContent) {
+TEST(DesktopNavigationPanelTests, SlidingNavigationReservesAgentSpaceAndFailedSendRollsBack) {
   QTemporaryDir directory;
   ASSERT_TRUE(directory.isValid());
   QSettings settings(directory.filePath("navigation.ini"), QSettings::IniFormat);
   auto* content = new QWidget();
   content->setMinimumHeight(300);
-  redclaw::ui::DesktopNavigationOverlayHost host(content, &settings);
+  redclaw::ui::DesktopNavigationHost host(content, &settings);
   host.resize(420, 720);
   host.show();
   QApplication::processEvents();
 
   const int content_height = content->height();
+  auto settle = [] {
+    QEventLoop loop;
+    QTimer::singleShot(220, &loop, &QEventLoop::quit);
+    loop.exec();
+  };
+  auto* pane = host.findChild<QFrame*>("desktopNavigationPane");
+  ASSERT_NE(pane, nullptr);
   EXPECT_FALSE(host.expanded());
   host.set_expanded(true);
-  QApplication::processEvents();
   EXPECT_TRUE(host.expanded());
+  // Opening starts at the old height and moves through the layout.
   EXPECT_EQ(content->height(), content_height);
-  host.set_overlay_height(340);
-  EXPECT_EQ(host.overlay_height(), 340);
+  settle();
+  EXPECT_LT(content->height(), content_height);
+  EXPECT_GE(content->height(), 300);
+  EXPECT_GT(content->mapTo(&host, QPoint()).y(), pane->geometry().bottom());
+  host.set_navigation_height(340);
+  QApplication::processEvents();
+  EXPECT_EQ(host.navigation_height(), 340);
   EXPECT_EQ(settings.value("controller/navigation_panel_height").toInt(), 340);
+  host.resize(420, 420);
+  settle();
+  EXPECT_GE(content->height(), 300);
+  EXPECT_GT(content->mapTo(&host, QPoint()).y(), pane->geometry().bottom());
+  host.set_expanded(false);
+  settle();
+  EXPECT_EQ(pane->height(), 0);
+  EXPECT_FALSE(host.expanded());
 
   auto* panel = host.navigation_panel();
   panel->set_display_catalog(displays(), 1);

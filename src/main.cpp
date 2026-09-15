@@ -44,6 +44,9 @@
 #include "redclaw/agent/agent_peer_session.h"
 #include "redclaw/agent/agent_executor.h"
 #include "redclaw/agent/local_agent_pipe.h"
+#include "redclaw/workspace/terminal_runtime_bridge.h"
+#include "redclaw/workspace/transfer_operation_gate.h"
+#include "redclaw/workspace/transfer_runtime_bridge.h"
 #include "redclaw/net/net_module.h"
 #include "redclaw/net/video_frame_transport.h"
 #include "redclaw/security/security_module.h"
@@ -2995,6 +2998,8 @@ int run_runtime_mode(
     std::uint64_t agent_channel_rebuild_success_total = 0;
     std::uint64_t agent_qa_forced_channel_close_total = 0;
     bool agent_qa_forced_channel_close_attempted = false;
+    redclaw::workspace::TransferOperationGate transfer_operation_gate;
+    const auto workspace_mutations_allowed = [&transfer_operation_gate] { return !transfer_operation_gate.blocks_mutation(); };
     std::unique_ptr<redclaw::agent::AgentExecutor> remote_agent_broker;
     {
         std::filesystem::path agent_metadata_path;
@@ -3006,6 +3011,7 @@ int run_runtime_mode(
             redclaw::agent::RemoteAgentBrokerConfig{
                 .authorized = options.allow_remote_agent,
                 .metadata_path = std::move(agent_metadata_path),
+                .mutations_allowed = workspace_mutations_allowed,
             });
         if (!options.agent_project_manifest.empty()) {
             std::vector<redclaw::agent::AgentProjectRegistration> projects;
@@ -3034,13 +3040,14 @@ int run_runtime_mode(
     redclaw::agent::AgentPeerSession agent_peer_session(std::move(remote_agent_broker),
         [&local_agent_pipe](const redclaw::protocol::AgentMessageEnvelopeV1& message, std::string* error) {
             return local_agent_pipe.send(message, error);
-        });
+        }, workspace_mutations_allowed);
     redclaw::input::InputPolicyGate remote_input_policy_gate;
     redclaw::input::WindowsSendInputInjectorBackend remote_input_backend;
     redclaw::runtime::InputQaReceipts input_qa_receipts(
         options.agent_qa_fixture_provider || options.input_diagnostics, options.log_dir);
     redclaw::input::RemoteInputSession remote_input_session(
         remote_input_policy_gate, remote_input_backend);
+    std::uint64_t applied_transfer_input_revision = 0;
     if ((options.agent_qa_fixture_provider || options.input_diagnostics) && options.role == RuntimeRole::kHost)
         remote_input_session.set_injection_observer([&input_qa_receipts](const auto& receipt) { input_qa_receipts.record(receipt); });
     if (options.input_diagnostics && options.role == RuntimeRole::kHost)
@@ -3052,6 +3059,19 @@ int run_runtime_mode(
     redclaw::input::DesktopGeometry last_advertised_input_geometry;
     std::deque<redclaw::protocol::StreamControlMessageV1> pending_remote_input_messages;
     redclaw::runtime::RuntimeLoopWake runtime_loop_wake;
+    redclaw::workspace::TerminalRuntimeBridge terminal_bridge(
+        options.role == RuntimeRole::kHost, stream_control_epoch, std::filesystem::current_path(),
+        [&ice_wrapper](std::string_view bytes) {
+            redclaw::net::DataChannelTransportStats stats;
+            if (!ice_wrapper.getDataChannelTransportStats(redclaw::net::DataChannelKind::kTerminal, &stats)
+                || stats.buffered_amount > 64U * 1024U) return false;
+            return ice_wrapper.sendDataChannelBinaryMessage(redclaw::net::DataChannelKind::kTerminal,
+                {reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()});
+        },
+        [&ice_wrapper] { return ice_wrapper.ensureDataChannel(redclaw::net::DataChannelKind::kTerminal); },
+        [] { return redclaw::capture::probe_capture_desktop(redclaw::capture::CaptureProbeDetail::kAccessOnly).access
+            == redclaw::capture::CaptureDesktopAccess::kOrdinary; });
+    terminal_bridge.connect_gui_from_environment();
     bool remote_input_queue_overflow = false;
     bool remote_input_disconnect_pending = false;
     bool controller_remote_input_supported = false;
@@ -3355,6 +3375,44 @@ int run_runtime_mode(
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendEnd, message);
         return sent;
     };
+
+    redclaw::workspace::TransferRuntimeBridge transfer_bridge(
+        options.role == RuntimeRole::kHost, stream_control_epoch, std::filesystem::temp_directory_path(),
+        transfer_operation_gate,
+        [&](const auto& message) { std::string error; return send_control_message(message, &error); },
+        [&](auto message) { stamp_control_message(&message); return local_control_output.send(message); },
+        [&ice_wrapper](std::string_view bytes) {
+            redclaw::net::DataChannelTransportStats stats;
+            if (!ice_wrapper.getDataChannelTransportStats(redclaw::net::DataChannelKind::kTransfer, &stats)
+                || stats.buffered_amount > 1024U * 1024U) return false;
+            return ice_wrapper.sendDataChannelBinaryMessage(redclaw::net::DataChannelKind::kTransfer,
+                {reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()});
+        },
+        [&ice_wrapper] { return ice_wrapper.ensureDataChannel(redclaw::net::DataChannelKind::kTransfer); },
+        {
+            [&] {
+                remote_input_session.set_transfer_blocked(transfer_operation_gate.blocks_mutation(), now_unix_ms());
+                const bool ordinary = redclaw::capture::probe_capture_desktop(redclaw::capture::CaptureProbeDetail::kAccessOnly).access
+                    == redclaw::capture::CaptureDesktopAccess::kOrdinary;
+                const auto capture = stream_capture_gate.snapshot();
+                const bool visible = capture.availability == redclaw::capture::CaptureAvailability::kRunning
+                    && (peer_capture_status_version.load() == 0 || capture.presented)
+                    && capture.input_pause_revision == applied_capture_input_pause_revision;
+                bool channel_valid = false;
+                {
+                    std::lock_guard lock(callback_mutex);
+                    channel_valid = stream_required_channels_ready && stream_control_channel_open
+                        && !remote_input_disconnect_pending && !remote_input_queue_overflow
+                        && std::none_of(pending_remote_input_messages.begin(), pending_remote_input_messages.end(), [](const auto& message) {
+                            return message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll
+                                || (message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest && !message.input_requested_active);
+                        });
+                }
+                return redclaw::workspace::ClipboardInputEligibility{
+                    ordinary && visible && channel_valid && remote_input_session.clipboard_paste_eligible(), remote_input_session.eligibility_revision()};
+            },
+            [&](std::uint64_t revision, std::string* error) { return remote_input_session.paste_verified_clipboard(revision, error); }
+        });
 
     auto make_source_activity_message = [&](
                                             const redclaw::session::DesktopSourceActivitySnapshot& snapshot) {
@@ -4024,6 +4082,14 @@ int run_runtime_mode(
     };
 
     ice_wrapper.onDataChannelOpen([&](redclaw::net::DataChannelKind kind) {
+        if (kind == redclaw::net::DataChannelKind::kTransfer) {
+            transfer_bridge.channel_open(true); runtime_loop_wake.notify(); return;
+        }
+        if (kind == redclaw::net::DataChannelKind::kTerminal) {
+            terminal_bridge.channel_open(true);
+            runtime_loop_wake.notify();
+            return;
+        }
         redclaw::net::DataChannelTransportStats transport_stats;
         std::string transport_error;
         std::uint32_t open_pacing_kbps = kDesktopStreamTransportBitrateCeilingKbps;
@@ -4115,6 +4181,9 @@ int run_runtime_mode(
         if (kind == redclaw::net::DataChannelKind::kControl) {
             auto hello = make_control_message(redclaw::protocol::StreamControlMessageTypeV1::kHello);
             hello.capture_status_version = 1;
+            hello.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
+            hello.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
+            hello.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
             hello.payload = "viewport,source-activity,displayable-ack,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input,capture-region,navigation";
             std::string send_error;
             if (!send_control_message(hello, &send_error)) {
@@ -4154,6 +4223,14 @@ int run_runtime_mode(
     });
 
     ice_wrapper.onDataChannelClosed([&](redclaw::net::DataChannelKind kind) {
+        if (kind == redclaw::net::DataChannelKind::kTransfer) {
+            transfer_bridge.channel_open(false); runtime_loop_wake.notify(); return;
+        }
+        if (kind == redclaw::net::DataChannelKind::kTerminal) {
+            terminal_bridge.channel_open(false);
+            runtime_loop_wake.notify();
+            return;
+        }
         if (kind == redclaw::net::DataChannelKind::kAgent) {
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -4538,11 +4615,16 @@ int run_runtime_mode(
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello
                 || control.type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities) {
                 peer_capture_status_version.store(control.capture_status_version >= 1 ? 1U : 0U);
+                terminal_bridge.peer_capability(control.terminal_version, control.session_epoch);
+                transfer_bridge.peer_capability(control.file_transfer_version, control.session_epoch, control.clipboard_version);
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello) {
                 auto capabilities = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kCapabilities);
                 capabilities.capture_status_version = 1;
+                capabilities.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
+                capabilities.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
+                capabilities.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
                 capabilities.payload = remote_diagnostics_allowed
                     ? "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input"
                     : "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,reconnect,remote-input";
@@ -4550,6 +4632,9 @@ int run_runtime_mode(
                 (void)send_control_message(capabilities, &send_error);
                 send_desktop_display_catalog();
                 return;
+            }
+            if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kWorkspace) {
+                (void)transfer_bridge.receive_control(control); runtime_loop_wake.notify(); return;
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kPing) {
                 auto pong = make_control_message(redclaw::protocol::StreamControlMessageTypeV1::kPong);
@@ -4906,6 +4991,15 @@ int run_runtime_mode(
 
     ice_wrapper.onDataChannelBinaryMessage(
         [&](redclaw::net::DataChannelKind kind, std::span<const std::uint8_t> message) {
+        if (kind == redclaw::net::DataChannelKind::kTransfer) {
+            (void)transfer_bridge.receive_bulk({reinterpret_cast<const char*>(message.data()), message.size()});
+            runtime_loop_wake.notify(); return;
+        }
+        if (kind == redclaw::net::DataChannelKind::kTerminal) {
+            (void)terminal_bridge.receive({reinterpret_cast<const char*>(message.data()), message.size()});
+            runtime_loop_wake.notify();
+            return;
+        }
         if (kind == redclaw::net::DataChannelKind::kControl || kind == redclaw::net::DataChannelKind::kAgent) {
             handle_compressed_message(kind, {reinterpret_cast<const char*>(message.data()), message.size()});
             return;
@@ -5677,7 +5771,8 @@ int run_runtime_mode(
                 [&](const redclaw::capture::CaptureDisplayDescriptor& display) {
                     return display.id == region_request->display_id;
                 });
-            if (requested_display == stream_capture_displays.end()) {
+            const bool transfer_busy = transfer_operation_gate.blocks_mutation();
+            if (transfer_busy || requested_display == stream_capture_displays.end()) {
                 auto rejected = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected);
                 rejected.display_id = region_request->display_id;
@@ -5686,7 +5781,7 @@ int run_runtime_mode(
                 rejected.region_right = region_request->region_right;
                 rejected.region_bottom = region_request->region_bottom;
                 rejected.capture_region_revision = region_request->capture_region_revision;
-                rejected.payload = "display_unavailable";
+                rejected.payload = transfer_busy ? "workspace_transfer_busy" : "display_unavailable";
                 std::string rejected_error;
                 (void)send_control_message(rejected, &rejected_error);
             } else {
@@ -6922,6 +7017,12 @@ int run_runtime_mode(
         input_loop_timing.next(redclaw::runtime::InputQaStage::kBeforeLocalInput);
 
         const std::uint64_t runtime_loop_now_ms = now_steady_ms();
+        {
+            bool desktop_connected = false;
+            { std::lock_guard lock(callback_mutex); desktop_connected = stream_required_channels_ready; }
+            terminal_bridge.pump(runtime_loop_now_ms, desktop_connected,
+                workspace_mutations_allowed(), transfer_operation_gate.revision());
+        }
         const std::uint64_t runtime_elapsed_seconds =
             runtime_loop_now_ms >= runtime_loop_started_ms
                 ? (runtime_loop_now_ms - runtime_loop_started_ms) / 1000ULL
@@ -7007,6 +7108,9 @@ int run_runtime_mode(
         auto local_runtime_frames =
             poll_local_runtime_control_messages(&local_control_input_buffer, input_qa_receipts);
         for (auto command : std::move(local_runtime_frames.stream_controls)) {
+            if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kWorkspace) {
+                transfer_bridge.from_gui(command); continue;
+            }
             const bool input_command =
                 command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest
                 || command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch
@@ -7118,6 +7222,13 @@ int run_runtime_mode(
                 continue;
             }
             stamp_control_message(&command);
+            if (transfer_operation_gate.blocks_mutation()
+                && command.type == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRequest) {
+                command.type = redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected;
+                command.payload = "workspace_transfer_busy";
+                (void)local_control_output.send(command);
+                continue;
+            }
             if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kViewportRequest) {
                 stream_decoder_recovery_coordinator.reset();
                 last_local_viewport_request = command;
@@ -7144,6 +7255,7 @@ int run_runtime_mode(
                 || command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputStateSync
                 || (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest
                     && command.input_requested_active);
+            if (activates_input && transfer_operation_gate.blocks_mutation()) continue;
             redclaw::net::DataChannelTransportStats control_stats;
             std::string stats_error;
             const bool control_congested = activates_input
@@ -7351,6 +7463,17 @@ int run_runtime_mode(
             bool status_changed = false;
             const std::uint64_t applied_sequence_before =
                 remote_input_session.stats().last_applied_sequence;
+            if (applied_transfer_input_revision != transfer_operation_gate.revision()) {
+                applied_transfer_input_revision = transfer_operation_gate.revision();
+                remote_input_session.set_transfer_blocked(true, now_unix_ms());
+                // Drop old ordinary input at the transfer boundary, but never
+                // discard an independently requested stop/revocation.
+                std::erase_if(remote_input_messages, [](const auto& message) {
+                    return message.type != redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll
+                        && !(message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest && !message.input_requested_active);
+                });
+            }
+            remote_input_session.set_transfer_blocked(transfer_operation_gate.blocks_mutation(), now_unix_ms());
             const auto capture_state = stream_capture_gate.snapshot();
             const bool capture_available = capture_state.availability == redclaw::capture::CaptureAvailability::kRunning
                 && (peer_capture_status_version.load() == 0 || capture_state.presented);
@@ -7484,6 +7607,13 @@ int run_runtime_mode(
             }
         }
 
+        {
+            bool desktop_connected = false;
+            { std::lock_guard lock(callback_mutex); desktop_connected = stream_required_channels_ready; }
+            // Clipboard publication/input must observe this tick's capture,
+            // geometry, lease, disconnect and explicit input-stop decisions.
+            transfer_bridge.pump(runtime_loop_now_ms, desktop_connected);
+        }
         input_loop_timing.next(redclaw::runtime::InputQaStage::kAgentPump);
         // Desktop input/control gets its send opportunity before Agent traffic.
         agent_peer_session.pump([&ice_wrapper](
@@ -7905,7 +8035,9 @@ int run_runtime_mode(
                         + std::to_string(now_unix_ms()) + "-generation-"
                         + std::to_string(++stream_control_epoch_generation);
                     stream_control_message_id.store(0);
+                    terminal_bridge.reset_transport(stream_control_epoch);
                 }
+                transfer_bridge.reset_transport(stream_control_epoch);
                 required_channel_closed_at_ms = 0;
                 connected_failure_observed_at_ms = 0;
                 candidate_diagnostics = CandidateDiagnostics {};

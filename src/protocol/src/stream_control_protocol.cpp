@@ -107,6 +107,7 @@ std::string_view to_string(StreamControlMessageTypeV1 type) {
     case StreamControlMessageTypeV1::kCaptureRegionRequest: return "capture_region_request";
     case StreamControlMessageTypeV1::kCaptureRegionApplied: return "capture_region_applied";
     case StreamControlMessageTypeV1::kCaptureRegionRejected: return "capture_region_rejected";
+    case StreamControlMessageTypeV1::kWorkspace: return "workspace";
     }
     return "unknown";
 }
@@ -184,6 +185,14 @@ std::string_view to_string(RemoteLogModeV1 mode) {
 }
 
 bool validate_stream_control_message_v1(const StreamControlMessageV1& message, std::string* error) {
+    if (message.type == StreamControlMessageTypeV1::kWorkspace) {
+        if (!message.workspace || !valid_token(message.request_id, 128) || !message.payload.empty()) {
+            assign_error("workspace control requires a request identity and typed content", error); return false;
+        }
+        if (!validate_workspace_control_v1(*message.workspace, error)) return false;
+    } else if (message.workspace) {
+        assign_error("workspace content requires a workspace control message", error); return false;
+    }
     if (message.schema_version != kSchemaVersionV1) {
         assign_error("stream control schema_version must be 1", error);
         return false;

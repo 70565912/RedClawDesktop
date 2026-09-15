@@ -5,10 +5,12 @@
 #include <QAbstractTextDocumentLayout>
 #include <QPlainTextEdit>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QStackedLayout>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTimer>
 #include "ui/gui_latency_probe.h"
 
 namespace redclaw::ui {
@@ -34,7 +36,7 @@ public:
         layout_->addWidget(plain_);
     }
 
-    void set_markdown(const QString& text, bool streaming) {
+    void set_markdown(const QString& text, bool streaming, bool follow_tail = false) {
         GuiLatencyScope timing(GuiStage::kAgentText);
         const bool use_plain = streaming || text.size() > 4096 || text.count('\n') > 64;
         if (text_ == text && use_plain_ == use_plain && initialized_) return;
@@ -67,6 +69,24 @@ public:
         use_plain_ = use_plain;
         initialized_ = true;
         update_height();
+        // Coalesce streaming chunks and wait for the new document/viewport
+        // geometry. This is requested only by changed content, so a quiet
+        // conversation remains available for manual history browsing.
+        if (follow_tail && !tail_queued_) {
+            tail_queued_ = true;
+            QTimer::singleShot(0, this, [this] {
+                tail_queued_ = false;
+                if (use_plain_) {
+                    plain_->moveCursor(QTextCursor::End);
+                    plain_->ensureCursorVisible();
+                    plain_->verticalScrollBar()->setValue(plain_->verticalScrollBar()->maximum());
+                } else if (rich_) {
+                    rich_->moveCursor(QTextCursor::End);
+                    rich_->ensureCursorVisible();
+                    rich_->verticalScrollBar()->setValue(rich_->verticalScrollBar()->maximum());
+                }
+            });
+        }
     }
 
     QString toPlainText() const {
@@ -108,6 +128,7 @@ private:
     QString text_;
     bool initialized_ = false;
     bool use_plain_ = true;
+    bool tail_queued_ = false;
 };
 
 }  // namespace redclaw::ui

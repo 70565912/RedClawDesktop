@@ -9,9 +9,11 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QSettings>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QVariantAnimation>
 
 #include <algorithm>
 #include <array>
@@ -22,8 +24,8 @@ namespace {
 
 constexpr qreal kHandleRadius = 10.0;
 constexpr qreal kVerticalHandleMargin = 12.0;
-constexpr int kMinimumOverlayHeight = 170;
-constexpr int kMaximumOverlayHeight = 520;
+constexpr int kMinimumNavigationHeight = 170;
+constexpr int kMaximumNavigationHeight = 520;
 
 struct DisplayMemory {
   QRectF region{0.0, 0.0, 1.0, 1.0};
@@ -351,8 +353,14 @@ void DesktopNavigationPanel::apply_region_rejected(
 
 void DesktopNavigationPanel::set_transport_available(bool available) {
   transport_available_ = available;
-  display_combo_->setEnabled(available && !displays_.empty());
+  display_combo_->setEnabled(available && !workspace_blocked_ && !displays_.empty());
   status_label_->setText(available ? "Ready" : "Waiting for navigation channel");
+}
+
+void DesktopNavigationPanel::set_workspace_blocked(bool blocked) {
+  workspace_blocked_ = blocked;
+  display_combo_->setEnabled(transport_available_ && !blocked && !displays_.empty());
+  selection_widget_->setEnabled(!blocked);
 }
 
 QString DesktopNavigationPanel::selected_display_id() const {
@@ -387,7 +395,7 @@ void DesktopNavigationPanel::select_display(int index, bool submit) {
 }
 
 void DesktopNavigationPanel::commit_current_selection() {
-  if (!transport_available_ || !request_callback_ || current_display() == nullptr) {
+  if (!transport_available_ || workspace_blocked_ || !request_callback_ || current_display() == nullptr) {
     return;
   }
   const QRectF region = selection_widget_->region();
@@ -439,11 +447,11 @@ const redclaw::protocol::DesktopDisplayV1* DesktopNavigationPanel::current_displ
 
 namespace {
 
-class NavigationOverlayResizeGrip final : public QWidget {
+class NavigationResizeGrip final : public QWidget {
  public:
   using ResizeCallback = std::function<void(int)>;
 
-  NavigationOverlayResizeGrip(ResizeCallback callback, QWidget* parent)
+  NavigationResizeGrip(ResizeCallback callback, QWidget* parent)
       : QWidget(parent), callback_(std::move(callback)) {
     setObjectName("desktopNavigationResizeGrip");
     setFixedHeight(8);
@@ -480,12 +488,12 @@ class NavigationOverlayResizeGrip final : public QWidget {
 
 }  // namespace
 
-DesktopNavigationOverlayHost::DesktopNavigationOverlayHost(
+DesktopNavigationHost::DesktopNavigationHost(
     QWidget* content,
     QSettings* settings,
     QWidget* parent)
     : QWidget(parent), settings_(settings) {
-  setObjectName("desktopNavigationOverlayHost");
+  setObjectName("desktopNavigationHost");
   auto* root = new QVBoxLayout(this);
   root->setContentsMargins(0, 0, 0, 0);
   root->setSpacing(0);
@@ -499,6 +507,27 @@ DesktopNavigationOverlayHost::DesktopNavigationOverlayHost(
   toggle_->setFixedHeight(36);
   root->addWidget(toggle_);
 
+  // The pane occupies layout height above Agent. Its scroll area keeps the
+  // navigation controls reachable when the window cannot fit the preferred height.
+  pane_ = new QFrame(this);
+  pane_->setObjectName("desktopNavigationPane");
+  pane_->setFixedHeight(0);
+  auto* pane_layout = new QVBoxLayout(pane_);
+  pane_layout->setContentsMargins(0, 0, 0, 0);
+  pane_layout->setSpacing(0);
+  pane_layout->setSizeConstraint(QLayout::SetNoConstraint);
+  auto* pane_scroll = new QScrollArea(pane_);
+  pane_scroll->setFrameShape(QFrame::NoFrame);
+  pane_scroll->setWidgetResizable(true);
+  pane_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  pane_scroll->setMinimumHeight(0);
+  navigation_panel_ = new DesktopNavigationPanel();
+  pane_scroll->setWidget(navigation_panel_);
+  pane_layout->addWidget(pane_scroll, 1);
+  pane_layout->addWidget(new NavigationResizeGrip(
+      [this](int height) { set_navigation_height(height); }, pane_));
+  root->addWidget(pane_);
+
   content_container_ = new QWidget(this);
   content_container_->setObjectName("desktopNavigationContentHost");
   auto* content_layout = new QVBoxLayout(content_container_);
@@ -506,70 +535,71 @@ DesktopNavigationOverlayHost::DesktopNavigationOverlayHost(
   content_layout->addWidget(content);
   root->addWidget(content_container_, 1);
 
-  overlay_ = new QFrame(content_container_);
-  overlay_->setObjectName("desktopNavigationOverlay");
-  auto* overlay_layout = new QVBoxLayout(overlay_);
-  overlay_layout->setContentsMargins(0, 0, 0, 0);
-  overlay_layout->setSpacing(0);
-  navigation_panel_ = new DesktopNavigationPanel(overlay_);
-  overlay_layout->addWidget(navigation_panel_, 1);
-  overlay_layout->addWidget(new NavigationOverlayResizeGrip(
-      [this](int height) { set_overlay_height(height); }, overlay_));
-  overlay_->hide();
+  slide_ = new QVariantAnimation(this);
+  slide_->setDuration(160);
+  slide_->setEasingCurve(QEasingCurve::InOutCubic);
+  connect(slide_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+    pane_->setFixedHeight(value.toInt());
+  });
 
   if (settings_ != nullptr) {
-    overlay_height_ = std::clamp(
+    navigation_height_ = std::clamp(
         settings_->value("controller/navigation_panel_height", 260).toInt(),
-        kMinimumOverlayHeight,
-        kMaximumOverlayHeight);
+        kMinimumNavigationHeight,
+        kMaximumNavigationHeight);
   }
   connect(toggle_, &QToolButton::toggled, this, [this](bool expanded) {
     set_expanded(expanded);
   });
 }
 
-DesktopNavigationPanel* DesktopNavigationOverlayHost::navigation_panel() const {
+DesktopNavigationPanel* DesktopNavigationHost::navigation_panel() const {
   return navigation_panel_;
 }
 
-bool DesktopNavigationOverlayHost::expanded() const {
-  return overlay_ != nullptr && overlay_->isVisible();
+bool DesktopNavigationHost::expanded() const {
+  return toggle_->isChecked();
 }
 
-int DesktopNavigationOverlayHost::overlay_height() const {
-  return overlay_height_;
+int DesktopNavigationHost::navigation_height() const {
+  return navigation_height_;
 }
 
-void DesktopNavigationOverlayHost::set_expanded(bool expanded) {
+void DesktopNavigationHost::set_expanded(bool expanded) {
   if (toggle_->isChecked() != expanded) {
     toggle_->setChecked(expanded);
     return;
   }
   toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-  overlay_->setVisible(expanded);
-  if (expanded) {
-    update_overlay_geometry();
-    overlay_->raise();
-  }
+  update_navigation_height(true);
 }
 
-void DesktopNavigationOverlayHost::set_overlay_height(int height) {
-  overlay_height_ = std::clamp(height, kMinimumOverlayHeight, kMaximumOverlayHeight);
+void DesktopNavigationHost::set_navigation_height(int height) {
+  navigation_height_ = std::clamp(height, kMinimumNavigationHeight, kMaximumNavigationHeight);
   if (settings_ != nullptr) {
-    settings_->setValue("controller/navigation_panel_height", overlay_height_);
+    settings_->setValue("controller/navigation_panel_height", navigation_height_);
   }
-  update_overlay_geometry();
+  update_navigation_height();
 }
 
-void DesktopNavigationOverlayHost::resizeEvent(QResizeEvent* event) {
+void DesktopNavigationHost::resizeEvent(QResizeEvent* event) {
   QWidget::resizeEvent(event);
-  update_overlay_geometry();
+  update_navigation_height();
 }
 
-void DesktopNavigationOverlayHost::update_overlay_geometry() {
-  if (content_container_ == nullptr || overlay_ == nullptr) return;
-  const int height = std::min(overlay_height_, content_container_->height());
-  overlay_->setGeometry(0, 0, content_container_->width(), std::max(0, height));
+void DesktopNavigationHost::update_navigation_height(bool animate) {
+  if (content_container_ == nullptr || pane_ == nullptr || slide_ == nullptr) return;
+  const int reserved = std::max(180, content_container_->minimumSizeHint().height());
+  const int available = std::max(0, height() - toggle_->height() - reserved);
+  const int target = expanded() ? std::min(navigation_height_, available) : 0;
+  slide_->stop();
+  if (animate && pane_->height() != target) {
+    slide_->setStartValue(pane_->height());
+    slide_->setEndValue(target);
+    slide_->start();
+  } else {
+    pane_->setFixedHeight(target);
+  }
 }
 
 }  // namespace redclaw::ui

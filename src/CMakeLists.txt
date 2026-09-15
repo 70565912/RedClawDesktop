@@ -11,6 +11,7 @@ add_subdirectory(service)
 add_subdirectory(helper)
 add_subdirectory(diag)
 add_subdirectory(runtime)
+add_subdirectory(workspace)
 
 set(REDCLAW_DESKTOP_SOURCES
   main.cpp
@@ -62,6 +63,9 @@ if(WIN32)
 endif()
 
 if (REDCLAW_QT_GUI_ENABLED)
+  if(WIN32)
+    add_subdirectory(ui/terminal)
+  endif()
   add_library(redclaw_ui_playback STATIC
     ui/playback/playback_canvas_factory.cpp
     ui/playback/d3d11_playback_canvas.cpp
@@ -104,6 +108,10 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/agent_conversation_viewport.cpp
     ui/agent_panel_presentation.cpp
     ui/desktop_navigation_panel.cpp
+    ui/file_transfer_panel.cpp
+    ui/file_transfer_results_dialog.cpp
+    ui/clipboard_copies_dialog.cpp
+    ui/runtime_maintenance_context.cpp
     ui/agent_settings_dialog.cpp
     ui/connection_entry_page.cpp
     ui/connection_flow_model.cpp
@@ -118,10 +126,10 @@ if (REDCLAW_QT_GUI_ENABLED)
   target_include_directories(redclaw_ui_connection_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(redclaw_ui_connection_flow
     PUBLIC Qt6::Widgets redclaw_protocol redclaw_diag
-    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input
+    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace
   )
   if(WIN32)
-    target_link_libraries(redclaw_ui_connection_flow PRIVATE dwmapi)
+    target_link_libraries(redclaw_ui_connection_flow PRIVATE dwmapi advapi32)
   endif()
   redclaw_apply_warnings(redclaw_ui_connection_flow)
 
@@ -134,6 +142,9 @@ if (REDCLAW_QT_GUI_ENABLED)
     redclaw_ui_playback
   )
   target_compile_definitions(redclaw_desktop PRIVATE REDCLAW_ENABLE_QT_GUI=1)
+  if(WIN32)
+    target_link_libraries(redclaw_desktop PRIVATE redclaw_ui_terminal)
+  endif()
 endif()
 
 if (REDCLAW_QT_OPENGL_ENABLED)
@@ -147,6 +158,7 @@ target_link_libraries(redclaw_desktop PRIVATE
   redclaw_protocol
   redclaw_agent
   redclaw_net
+  redclaw_workspace
   redclaw_security
   redclaw_session
   redclaw_capture

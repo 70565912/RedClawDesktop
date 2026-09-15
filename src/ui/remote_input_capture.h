@@ -31,6 +31,7 @@ enum class LocalInputSuspensionReason : std::uint32_t {
     kHiddenOrMinimized = 1U << 1U,
     kGeometryTransaction = 1U << 2U,
     kLocalUiFocus = 1U << 3U,
+    kWorkspaceTransfer = 1U << 4U,
 };
 
 class ControllerRemoteInputCapture final : public QObject, public QAbstractNativeEventFilter {
@@ -51,6 +52,8 @@ public:
     void set_paused_callback(PausedCallback callback);
     void set_forwarding_changed_callback(ForwardingChangedCallback callback);
     void set_blocked_click_callback(BlockedClickCallback callback);
+    void set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback);
+    [[nodiscard]] bool clipboard_paste_context_valid() const;
     void set_qa_observers(QaSendObserver send, QaAckObserver ack);
     void set_remote_frame_size(QSize size);
     void set_desktop_geometry_revision(std::uint64_t revision);
@@ -136,6 +139,8 @@ private:
     PausedCallback paused_callback_;
     ForwardingChangedCallback forwarding_changed_callback_;
     BlockedClickCallback blocked_click_callback_;
+    std::function<void(std::uint32_t)> clipboard_paste_callback_;
+    bool suppressed_paste_key_ = false;
     QaSendObserver qa_send_observer_;
     QaAckObserver qa_ack_observer_;
     QSize remote_frame_size_;

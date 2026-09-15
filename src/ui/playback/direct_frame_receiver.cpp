@@ -99,6 +99,7 @@ class DirectFramePipeServer::Impl final {
 
     decoder_resync_needed_.store(false);
     session_reset_requested_.store(false);
+    playback_generation_.store(1);
     decoded_cpu_output_observed_ = false;
     decoder_.reset();
     frame_buffer_pool_.clear();
@@ -230,7 +231,8 @@ class DirectFramePipeServer::Impl final {
     GuiLatencyScope timing(GuiStage::kFrameLock);
     std::lock_guard<std::mutex> lock(frame_mutex_);
     timing.finish();
-    if (!has_frame_content(latest_frame_) || delivered_frame_count_ == latest_frame_count_) {
+    if (!has_frame_content(latest_frame_) || delivered_frame_count_ == latest_frame_count_
+        || latest_frame_.playback_generation != playback_generation_.load()) {
       return false;
     }
     if (frame != nullptr) {
@@ -254,13 +256,19 @@ class DirectFramePipeServer::Impl final {
     return has_frame_content(latest_frame_) && delivered_frame_count_ != latest_frame_count_;
   }
 
-  void request_session_reset() {
+  quint64 request_session_reset() {
     session_reset_requested_.store(true);
+    const auto generation = playback_generation_.fetch_add(1) + 1;
     decoder_resync_needed_.store(true);
     {
       std::lock_guard<std::mutex> lock(frame_mutex_);
       latest_frame_ = DirectFrameData{};
       delivered_frame_count_ = latest_frame_count_;
+    }
+    {
+      std::lock_guard<std::mutex> lock(stats_mutex_);
+      stats_.playback_generation = generation;
+      stats_.latest_displayable_frame_id = stats_.latest_displayable_keyframe_id = 0;
     }
     HANDLE data_event = nullptr;
     {
@@ -270,6 +278,7 @@ class DirectFramePipeServer::Impl final {
     if (data_event != nullptr) {
       SetEvent(data_event);
     }
+    return generation;
   }
 
   DirectFrameTransportStats stats_snapshot() const {
@@ -317,6 +326,7 @@ class DirectFramePipeServer::Impl final {
       }
       if (session_reset_requested_.exchange(false)) {
         decoder_.reset();
+        decoder_resync_needed_.store(true);
         frame_buffer_pool_.clear();
         consecutive_decode_failures_ = 0;
         decoded_encoded_frames_ = 0;
@@ -355,6 +365,8 @@ class DirectFramePipeServer::Impl final {
     for (std::uint32_t consumed = 0;
          running_.load() && consumed < redclaw::helper::kDirectFrameSharedMemorySlotCount;
          ++consumed) {
+      const auto generation = playback_generation_.load();
+      if (session_reset_requested_.load()) return;
       const auto* shared_header = shared_header_;
       if (shared_header == nullptr) {
         return;
@@ -423,6 +435,7 @@ class DirectFramePipeServer::Impl final {
 
       const bool decoded = decode_snapshot(shared_snapshot_, &frame);
       if (decoded) {
+        frame.playback_generation = generation;
         publish_latest_frame(std::move(frame), next_sequence);
       } else {
         frame_buffer_pool_.release(std::move(frame));
@@ -652,12 +665,14 @@ class DirectFramePipeServer::Impl final {
   }
 
   void publish_latest_frame(DirectFrameData frame, quint64 sequence) {
+    const auto generation = frame.playback_generation;
     const auto output_path = frame.output_path;
     const quint64 frame_id = frame.frame_id;
     const bool keyframe = frame.keyframe;
     DirectFrameData displaced_frame;
     {
       std::lock_guard<std::mutex> lock(frame_mutex_);
+      if (frame.playback_generation != playback_generation_.load()) return;
       displaced_frame = std::move(latest_frame_);
       latest_frame_ = std::move(frame);
       ++latest_frame_count_;
@@ -666,6 +681,7 @@ class DirectFramePipeServer::Impl final {
 
     {
       std::lock_guard<std::mutex> lock(stats_mutex_);
+      if (generation != playback_generation_.load()) return;
       ++stats_.observed_sequences;
       ++stats_.published_frames;
       stats_.last_sequence = sequence;
@@ -715,6 +731,7 @@ class DirectFramePipeServer::Impl final {
   quint64 observed_sequence_ = 0;
   std::atomic_bool decoder_resync_needed_{false};
   std::atomic_bool session_reset_requested_{false};
+  std::atomic<quint64> playback_generation_{1};
   std::atomic_bool cpu_decode_fallback_requested_{false};
   bool prefer_d3d11_surface_output_ = false;
   bool decoded_cpu_output_observed_ = false;
@@ -756,7 +773,7 @@ void DirectFramePipeServer::request_keyframe(const QString& reason) { impl_->req
 bool DirectFramePipeServer::take_latest_frame(DirectFrameData* frame, quint64* count) { return impl_->take_latest_frame(frame, count); }
 void DirectFramePipeServer::recycle_frame(DirectFrameData frame) { impl_->recycle_frame(std::move(frame)); }
 bool DirectFramePipeServer::has_pending_frame() const { return impl_->has_pending_frame(); }
-void DirectFramePipeServer::request_session_reset() { impl_->request_session_reset(); }
+quint64 DirectFramePipeServer::request_session_reset() { return impl_->request_session_reset(); }
 DirectFrameTransportStats DirectFramePipeServer::stats_snapshot() const { return impl_->stats_snapshot(); }
 }  // namespace redclaw::ui
 #endif

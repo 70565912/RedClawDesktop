@@ -1,5 +1,11 @@
 # Third-Party Notices
 
+The optional Windows terminal embeds xterm.js and its fit addon (MIT licenses
+in the published `terminal-notices/` directory) and uses the Microsoft WebView2
+SDK and a fixed WebView2 Runtime. Pinned terminal asset versions and source
+hashes are recorded in `third_party/terminal/manifest.json`. The package retains
+the generated SDK notices and the runtime distribution's license files.
+
 RedClawDesktop is licensed under Apache-2.0. The Windows portable distribution also contains or links to third-party software under its own terms. The corresponding license and copyright texts are included under `third_party/licenses/` in both the source repository and release archive.
 
 | Component | Use in the Windows build | License |

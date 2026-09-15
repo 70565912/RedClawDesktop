@@ -506,6 +506,13 @@ void RemoteAgentBroker::publish_projects_locked() {
     enqueue_outbound_locked(std::move(complete));
 }
 
+bool agent_request_mutates_workspace(redclaw::protocol::AgentMessageTypeV1 type) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    return type == Type::kTaskCreate || type == Type::kTurnStart || type == Type::kTurnSteer || type == Type::kApprovalDecision;
+}
+bool RemoteAgentBroker::allows_workspace_mutations() const {
+    return !config_.mutations_allowed || config_.mutations_allowed();
+}
 bool RemoteAgentBroker::handle_message(
     const redclaw::protocol::AgentMessageEnvelopeV1& message,
     std::string* error) {
@@ -521,6 +528,10 @@ bool RemoteAgentBroker::handle_message(
     if (!config_.authorized) {
         assign_error("remote agent is not authorized", error);
         return false;
+    }
+
+    if (agent_request_mutates_workspace(message.type) && !allows_workspace_mutations()) {
+        assign_error("workspace_transfer_busy", error); return false;
     }
 
     if (message.type == redclaw::protocol::AgentMessageTypeV1::kTaskSyncRequest) {
@@ -1129,7 +1140,7 @@ std::vector<redclaw::protocol::AgentMessageEnvelopeV1> RemoteAgentBroker::take_o
     std::size_t max_messages) {
     drain_provider_events();
     std::lock_guard lock(mutex_);
-    if (start_next_pending_) {
+    if (start_next_pending_ && allows_workspace_mutations()) {
         start_next_pending_ = false;
         start_next_queued_locked();
     }

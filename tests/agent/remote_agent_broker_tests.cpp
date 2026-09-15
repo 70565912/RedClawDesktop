@@ -802,4 +802,40 @@ TEST(RemoteAgentBroker, UnknownTaskSyncReturnsCorrelatedResolutionWithoutExecuti
     EXPECT_EQ(provider->start_count, 0);
 }
 
+TEST(RemoteAgentBroker, TransferGateRejectsNewMutationsWhilePreservingOutputAndAcceptedQueue) {
+    using Type = redclaw::protocol::AgentMessageTypeV1;
+    using State = redclaw::protocol::AgentTaskStateV1;
+    bool allowed = true;
+    FakeAgentProvider* provider = nullptr;
+    auto broker = make_broker(&provider, {.authorized = true, .mutations_allowed = [&] { return allowed; }});
+    ASSERT_TRUE(broker->handle_message(task_request(1, "running")));
+    ASSERT_TRUE(broker->handle_message(task_request(2, "queued-before-transfer")));
+    allowed = false;
+    std::uint64_t id = 3;
+    for (const auto type : {Type::kTaskCreate, Type::kTurnStart, Type::kTurnSteer, Type::kApprovalDecision}) {
+        auto request = task_request(id++, type == Type::kTaskCreate ? "rejected" : "running");
+        request.type = type;
+        if (type == Type::kApprovalDecision) request.approval_decision = redclaw::protocol::AgentApprovalDecisionV1::kAccept;
+        std::string error;
+        EXPECT_FALSE(broker->handle_message(request, &error)); EXPECT_EQ(error, "workspace_transfer_busy");
+    }
+    EXPECT_EQ(provider->start_count, 1); EXPECT_EQ(provider->turn_count, 0); EXPECT_EQ(provider->steer_count, 0);
+    provider->emit({.task_id = "running", .event_kind = "output", .text = "continues during transfer", .state = State::kRunning});
+    auto sync = task_request(id++, "running"); sync.type = Type::kTaskSyncRequest;
+    ASSERT_TRUE(broker->handle_message(sync));
+    const auto output = broker->take_outbound();
+    EXPECT_TRUE(std::any_of(output.begin(), output.end(), [](const auto& message) {
+        return message.text == "continues during transfer";
+    }));
+    provider->emit({.task_id = "running", .event_kind = "completed", .state = State::kCompleted, .terminal = true});
+    (void)broker->take_outbound();
+    EXPECT_EQ(provider->start_count, 1);
+    EXPECT_EQ(broker->queued_turn_count(), 1U);
+    EXPECT_TRUE(broker->execution_snapshot().authorized);
+    allowed = true;
+    (void)broker->take_outbound();
+    EXPECT_EQ(provider->start_count, 2); EXPECT_EQ(provider->started_task, "queued-before-transfer");
+    EXPECT_EQ(broker->metrics().task_create_total, 2U);
+}
+
 }  // namespace

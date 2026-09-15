@@ -169,9 +169,10 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     }
     canvas_keyboard_target_ = true;
     canvas_->setFocus(Qt::OtherFocusReason);
-    const std::uint32_t geometry_flag = local_suspension_flags_
-        & static_cast<std::uint32_t>(LocalInputSuspensionReason::kGeometryTransaction);
-    local_suspension_flags_ = geometry_flag;
+    const std::uint32_t retained_flags = local_suspension_flags_
+        & (static_cast<std::uint32_t>(LocalInputSuspensionReason::kGeometryTransaction)
+            | static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer));
+    local_suspension_flags_ = retained_flags;
     if (window_ == nullptr || !window_->isVisible() || window_->isMinimized()) {
         local_suspension_flags_ |=
             static_cast<std::uint32_t>(LocalInputSuspensionReason::kHiddenOrMinimized);
@@ -182,6 +183,7 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     }
     active_ = true;
     pausing_ = false;
+    suppressed_paste_key_ = false;
     local_suspension_release_sent_ = false;
     clear_local_input_state();
     pending_input_acks_.clear();
@@ -374,6 +376,10 @@ QString ControllerRemoteInputCapture::local_suspension_reason() const {
          & static_cast<std::uint32_t>(LocalInputSuspensionReason::kLocalUiFocus)) != 0) {
         reasons.push_back("local_ui_focus");
     }
+    if ((local_suspension_flags_
+         & static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer)) != 0) {
+        reasons.push_back("workspace_transfer_busy");
+    }
     return reasons.join(',');
 }
 
@@ -421,6 +427,13 @@ bool ControllerRemoteInputCapture::keyboard_target_is_active() const {
 #else
     return window_->isActiveWindow();
 #endif
+}
+void ControllerRemoteInputCapture::set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback) {
+    clipboard_paste_callback_ = std::move(callback);
+}
+bool ControllerRemoteInputCapture::clipboard_paste_context_valid() const {
+    return active_ && keyboard_target_is_active()
+        && (local_suspension_flags_ & ~static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer)) == 0;
 }
 
 bool ControllerRemoteInputCapture::should_suppress_mouse_loopback(
@@ -887,15 +900,19 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
     if ((keyboard->flags & LLKHF_INJECTED) != 0) {
         return 0;
     }
+    const bool key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+    const bool key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
+    const std::uint16_t virtual_key = static_cast<std::uint16_t>(keyboard->vkCode);
+    if (virtual_key == 'V' && suppressed_paste_key_ && (key_down || key_up)) {
+        if (key_up) suppressed_paste_key_ = false;
+        return 1; // includes repeats while the transfer temporarily suspends forwarding
+    }
     if (!input_forwarding() || !keyboard_target_is_active()) {
         return 0;
     }
-    const bool key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
-    const bool key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
     if (!key_down && !key_up) {
         return 0;
     }
-    const std::uint16_t virtual_key = static_cast<std::uint16_t>(keyboard->vkCode);
     if (key_down) {
         pressed_virtual_keys_.insert(virtual_key);
     } else {
@@ -903,13 +920,25 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
     }
     const auto has_any = [&](std::initializer_list<std::uint16_t> keys) {
         return std::any_of(keys.begin(), keys.end(), [&](std::uint16_t key) {
-            return pressed_virtual_keys_.contains(key);
+            return pressed_virtual_keys_.contains(key) || (GetAsyncKeyState(key) & 0x8000) != 0;
         });
     };
     const bool emergency = key_down && virtual_key == VK_ESCAPE
         && has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
         && has_any({VK_MENU, VK_LMENU, VK_RMENU})
         && has_any({VK_SHIFT, VK_LSHIFT, VK_RSHIFT});
+    if (key_down && virtual_key == 'V' && clipboard_paste_callback_
+        && has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
+        && !has_any({VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN})) {
+        suppressed_paste_key_ = true;
+        const auto sequence = GetClipboardSequenceNumber();
+        // Empty state sync releases held keys while preserving the explicit
+        // control grant. InputReleaseAll intentionally ends control on Host.
+        clear_local_input_state(); send_state_sync();
+        if (!active_) return 1;
+        clipboard_paste_callback_(sequence);
+        return 1;
+    }
     if (emergency) {
         pause(true, "Emergency shortcut Ctrl+Alt+Shift+Esc was pressed.");
         return 1;

@@ -1,0 +1,8 @@
+{
+  "name": "webview2",
+  "version": "1.0.4191.47",
+  "description": "Microsoft WebView2 native SDK for the local terminal surface.",
+  "homepage": "https://learn.microsoft.com/microsoft-edge/webview2/",
+  "license": null,
+  "supports": "windows & x64 & !uwp"
+}

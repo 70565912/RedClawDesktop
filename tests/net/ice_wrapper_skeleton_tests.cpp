@@ -311,7 +311,12 @@ bool test_media_is_realtime_while_control_remains_reliable() {
     const auto debug_bridge =
         redclaw::net::data_channel_delivery_policy(
             redclaw::net::DataChannelKind::kDebugBridge);
-    return expect_true(!media.reliable, "obsolete media must not block the stream behind retransmissions")
+    const auto terminal =
+        redclaw::net::data_channel_delivery_policy(redclaw::net::DataChannelKind::kTerminal);
+    const auto transfer =
+        redclaw::net::data_channel_delivery_policy(redclaw::net::DataChannelKind::kTransfer);
+    return expect_true(transfer.reliable && transfer.ordered, "file transfer needs reliable ordered bulk delivery")
+        && expect_true(!media.reliable, "obsolete media must not block the stream behind retransmissions")
         && expect_true(media.ordered, "media fragments should preserve order within delivered data")
         && expect_true(media.max_retransmits == 0, "media should use zero retransmits")
         && expect_true(control.reliable, "control messages must remain reliable")
@@ -326,6 +331,7 @@ bool test_media_is_realtime_while_control_remains_reliable() {
             "navigation channel label must be versioned")
         && expect_true(debug_bridge.reliable, "debug bridge messages must be reliable")
         && expect_true(debug_bridge.ordered, "debug bridge messages must be ordered")
+        && expect_true(terminal.reliable && terminal.ordered, "terminal control bytes must not be dropped or reordered")
         && expect_true(
             redclaw::net::kDebugBridgeDataChannelLabel == "redclaw-debug-bridge-v1",
             "debug bridge channel label must be versioned");
@@ -337,7 +343,7 @@ bool test_only_optional_channels_can_be_rebuilt_independently() {
     const bool control = wrapper.ensureDataChannel(
         redclaw::net::DataChannelKind::kControl, &error);
     return expect_true(!control, "required channels must not use optional rebuild path")
-        && expect_true(error.find("optional agent, navigation, or debug bridge") != std::string::npos,
+        && expect_true(error.find("optional data channel") != std::string::npos,
                        "rebuild error should describe the optional-channel boundary");
 }
 

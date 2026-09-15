@@ -29,8 +29,9 @@ AgentMessageRoute agent_message_route(redclaw::protocol::AgentMessageTypeV1 type
     return AgentMessageRoute::kInvalid;
 }
 
-AgentPeerSession::AgentPeerSession(std::unique_ptr<AgentExecutor> executor, Deliver client)
-    : executor_(std::move(executor)), client_(std::move(client)) {}
+AgentPeerSession::AgentPeerSession(std::unique_ptr<AgentExecutor> executor, Deliver client,
+    std::function<bool()> mutations_allowed)
+    : executor_(std::move(executor)), client_(std::move(client)), mutations_allowed_(std::move(mutations_allowed)) {}
 AgentPeerSession::~AgentPeerSession() { request_stop(); }
 
 void AgentPeerSession::queue_client_sync_locked(const std::string& task_id) {
@@ -140,6 +141,8 @@ bool AgentPeerSession::enqueue_request(Message message, std::string* error) {
         return fail(error, "local API accepts Agent requests only");
     if (!redclaw::protocol::validate_agent_message_v1(message, error)) return false;
     std::lock_guard lock(mutex_);
+    if (agent_request_mutates_workspace(message.type) && mutations_allowed_ && !mutations_allowed_())
+        return fail(error, "workspace_transfer_busy");
     if (stopped_ || !state_.channel_open || requests_.size() >= kRequestCapacity) {
         if (!stopped_) queue_client_sync_locked(message.task_id);
         return fail(error, "Agent request queue unavailable or full");
@@ -195,14 +198,33 @@ void AgentPeerSession::pump(const Deliver& send) {
          && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1); ++sent) {
         Message message;
         bool request = false;
+        std::size_t request_offset = 0;
         std::uint64_t generation = 0;
         {
             std::lock_guard lock(mutex_);
             if (!state_.channel_open || (requests_.empty() && results_.empty())) break;
-            request = !requests_.empty() && (prefer_request_ || results_.empty());
+            auto next_request = requests_.begin();
+            if (mutations_allowed_ && !mutations_allowed_()) {
+                next_request = requests_.end();
+                for (auto candidate = requests_.begin(); candidate != requests_.end(); ++candidate) {
+                    if (agent_request_mutates_workspace(candidate->type)) continue;
+                    // Do not ask the peer to synchronize a task whose create
+                    // request is still held locally: that would report a false
+                    // task_not_found. ACKs and existing-task output can flow.
+                    if (candidate->type == redclaw::protocol::AgentMessageTypeV1::kTaskSyncRequest
+                        && !candidate->task_id.empty() && std::any_of(requests_.begin(), candidate, [&](const auto& earlier) {
+                            return earlier.type == redclaw::protocol::AgentMessageTypeV1::kTaskCreate
+                                && earlier.task_id == candidate->task_id;
+                        })) continue;
+                    next_request = candidate; break;
+                }
+            }
+            request = next_request != requests_.end() && (prefer_request_ || results_.empty());
+            if (!request && results_.empty()) break;
+            if (request) request_offset = static_cast<std::size_t>(std::distance(requests_.begin(), next_request));
             auto& queue = request ? requests_ : results_;
-            // Keep the front until send succeeds; no unbounded retry queue.
-            message = queue.front();
+            // Keep the selected request/result until send succeeds.
+            message = queue[request ? request_offset : 0];
             message.session_epoch = local_epoch_;
             message.message_id = ++state_.last_wire_message_id;
             message.sent_at_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -215,7 +237,7 @@ void AgentPeerSession::pump(const Deliver& send) {
         if (generation != state_.generation) { ++state_.stale_total; break; }
         if (!accepted) break;
         auto& queue = request ? requests_ : results_;
-        queue.pop_front();
+        queue.erase(queue.begin() + (request ? static_cast<std::ptrdiff_t>(request_offset) : 0));
         prefer_request_ = !request;
         if (request) ++state_.sent_requests; else ++state_.sent_results;
     }
