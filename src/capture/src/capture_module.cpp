@@ -1,6 +1,10 @@
 #include "redclaw/capture/capture_module.h"
 
 #include <chrono>
+#include "redclaw/capture/capture_cursor.h"
+#include "capture_cursor_d3d11.h"
+#include "capture_backend.h"
+#include "capture_failure_evidence.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -19,7 +23,9 @@
 #include <utility>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <objidl.h>
 #include <wincodec.h>
@@ -2083,7 +2089,7 @@ public:
             || hardware_candidate.height != profile_.height
             || (source_cropped && !gpu_scaled);
 
-        if (!hardware_frame_input_active_
+        if ((!hardware_frame_input_active_ || hardware_input_device_changed(hardware_candidate))
             && !hardware_frame_input_activation_failed_
             && !hardware_candidate_scaled
             && unwrap_d3d11_native_handle(hardware_candidate) != nullptr
@@ -2910,6 +2916,26 @@ private:
         }
     }
 
+    bool hardware_input_device_changed(const CapturedFrame& frame) const {
+#if defined(_WIN32) && REDCLAW_CAPTURE_HAS_D3D11_HWCONTEXT
+        const auto* native = unwrap_d3d11_native_handle(frame);
+        if (!hardware_frame_input_active_ || native == nullptr
+            || base_d3d11_device_context_ == nullptr) {
+            return false;
+        }
+        const auto* device_context = reinterpret_cast<const AVHWDeviceContext*>(
+            base_d3d11_device_context_->data);
+        const auto* d3d11_context = static_cast<const AVD3D11VADeviceContext*>(
+            device_context->hwctx);
+        // A recovered capture backend owns a new device, even on the same adapter.
+        // Reopen the encoder and its frame pool before submitting that texture.
+        return d3d11_context->device != native->d3d11_device.Get();
+#else
+        (void)frame;
+        return false;
+#endif
+    }
+
     bool initialize_hardware_frame_bridge(const CapturedFrame& frame, std::string* error_detail) {
 #if !defined(_WIN32) || !REDCLAW_CAPTURE_HAS_D3D11_HWCONTEXT
         (void)frame;
@@ -3197,6 +3223,14 @@ private:
         }
 
         auto* destination_texture = reinterpret_cast<ID3D11Texture2D*>(destination_frame->data[0]);
+        ComPtr<ID3D11Device> destination_device;
+        destination_texture->GetDevice(&destination_device);
+        if (destination_device.Get() != native->d3d11_device.Get()) {
+            return fail(
+                EncoderExecutionFailureCategory::kEncodeFailed,
+                "source and destination D3D11 textures belong to different devices",
+                error_detail);
+        }
         const std::uint32_t destination_subresource = destination_frame->data[1] == nullptr
             ? 0U
             : static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(destination_frame->data[1]));
@@ -3581,37 +3615,6 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
-struct CaptureFrameStageTelemetry {
-    std::uint64_t wait_us = 0;
-    std::uint64_t copy_us = 0;
-    std::uint32_t accumulated_frames = 0;
-    bool native_texture_pool_created = false;
-    bool native_texture_pool_reused = false;
-    bool native_texture_pool_exhausted = false;
-    std::uint64_t frame_pool_recreate_us = 0;
-    std::uint32_t frame_pool_recreate_count = 0;
-    bool timeout = false;
-};
-
-class ICaptureBackend {
-public:
-    virtual ~ICaptureBackend() = default;
-    virtual bool start(const CaptureSessionConfig& config, std::string* error_detail) = 0;
-    virtual bool capture_frame(
-        CapturedFrame* frame,
-        CaptureFrameStageTelemetry* stage_telemetry,
-        std::string* error_detail) = 0;
-    virtual void configure_native_frame_delivery(
-        bool capture_native_d3d11_textures,
-        bool skip_cpu_readback_when_native_texture_available) {
-        (void)capture_native_d3d11_textures;
-        (void)skip_cpu_readback_when_native_texture_available;
-    }
-    virtual void stop() = 0;
-    virtual bool is_running() const = 0;
-    virtual CaptureBackendType backend_type() const = 0;
-};
-
 class DdaCaptureBackend final : public ICaptureBackend {
 public:
     bool start(const CaptureSessionConfig& config, std::string* error_detail) override {
@@ -3634,6 +3637,7 @@ public:
             ? factory->EnumAdapters1(config.adapter_index, &selected_adapter)
             : factory_hr;
         if (FAILED(adapter_enum_hr) || selected_adapter == nullptr) {
+            record_failure(CaptureFailureStage::kEnumerateOutput, adapter_enum_hr);
             if (error_detail != nullptr) {
                 *error_detail = "failed to enumerate DXGI adapter index="
                     + std::to_string(config.adapter_index);
@@ -3655,6 +3659,7 @@ public:
             &feature_level,
             &context);
         if (FAILED(create_hr)) {
+            record_failure(CaptureFailureStage::kCreateDevice, create_hr);
             if (error_detail != nullptr) {
                 *error_detail = "D3D11CreateDevice failed hr="
                     + format_hex_u32(static_cast<std::uint32_t>(create_hr));
@@ -3671,6 +3676,7 @@ public:
         ComPtr<IDXGIOutput> output;
         const HRESULT output_hr = adapter->EnumOutputs(config.output_index, &output);
         if (FAILED(output_hr) || output == nullptr) {
+            record_failure(CaptureFailureStage::kEnumerateOutput, output_hr);
             if (error_detail != nullptr) {
                 *error_detail = "failed to enumerate DXGI output index="
                     + std::to_string(config.output_index)
@@ -3689,6 +3695,7 @@ public:
         ComPtr<IDXGIOutput1> output1;
         const HRESULT output1_hr = output.As(&output1);
         if (FAILED(output1_hr) || output1 == nullptr) {
+            record_failure(CaptureFailureStage::kEnumerateOutput, output1_hr);
             if (error_detail != nullptr) {
                 *error_detail = "failed to query IDXGIOutput1 output=\""
                     + output_summary + "\" hr="
@@ -3700,6 +3707,7 @@ public:
         ComPtr<IDXGIOutputDuplication> duplication;
         const HRESULT dup_hr = output1->DuplicateOutput(device.Get(), &duplication);
         if (FAILED(dup_hr) || duplication == nullptr) {
+            record_failure(CaptureFailureStage::kDuplicateOutput, dup_hr);
             if (error_detail != nullptr) {
                 *error_detail = "DuplicateOutput failed adapter=\"" + adapter_summary
                     + "\" output=\"" + output_summary + "\" hr="
@@ -3768,6 +3776,7 @@ public:
         }
 
         if (acquire_hr == DXGI_ERROR_WAIT_TIMEOUT) {
+            record_failure(CaptureFailureStage::kAcquireFrame, acquire_hr);
             if (stage_telemetry != nullptr) {
                 stage_telemetry->timeout = true;
             }
@@ -3777,8 +3786,11 @@ public:
             return false;
         }
         if (FAILED(acquire_hr) || desktop_resource == nullptr) {
+            record_failure(CaptureFailureStage::kAcquireFrame,
+                FAILED(acquire_hr) ? acquire_hr : E_UNEXPECTED);
             if (error_detail != nullptr) {
-                *error_detail = "AcquireNextFrame failed";
+                *error_detail = "AcquireNextFrame failed hr="
+                    + format_hex_u32(static_cast<std::uint32_t>(acquire_hr));
             }
             return false;
         }
@@ -3793,8 +3805,31 @@ public:
             }
         };
 
+        if (frame_info.LastMouseUpdateTime.QuadPart != 0) {
+            cursor_placement_.x = frame_info.PointerPosition.Position.x;
+            cursor_placement_.y = frame_info.PointerPosition.Position.y;
+            cursor_placement_.visible = frame_info.PointerPosition.Visible != FALSE;
+            cursor_placement_.rotation = desktop_rotation_;
+        }
+        if (frame_info.PointerShapeBufferSize != 0) {
+            pointer_shape_buffer_.resize(frame_info.PointerShapeBufferSize);
+            DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info{};
+            UINT needed = 0;
+            const HRESULT pointer_hr = duplication_->GetFramePointerShape(
+                static_cast<UINT>(pointer_shape_buffer_.size()), pointer_shape_buffer_.data(), &needed, &shape_info);
+            if (FAILED(pointer_hr) || !cursor_shape_.update(static_cast<CaptureCursorKind>(shape_info.Type),
+                    shape_info.Width, shape_info.Height, shape_info.Pitch, pointer_shape_buffer_)) {
+                record_failure(CaptureFailureStage::kCursor, FAILED(pointer_hr) ? pointer_hr : E_INVALIDARG);
+                duplication_->ReleaseFrame();
+                assign_error("DDA pointer shape unavailable", error_detail);
+                return false;
+            }
+        }
+
         ComPtr<ID3D11Texture2D> frame_texture;
-        if (FAILED(desktop_resource.As(&frame_texture)) || frame_texture == nullptr) {
+        const HRESULT texture_hr = desktop_resource.As(&frame_texture);
+        if (FAILED(texture_hr) || frame_texture == nullptr) {
+            record_failure(CaptureFailureStage::kAcquireFrame, FAILED(texture_hr) ? texture_hr : E_UNEXPECTED);
             duplication_->ReleaseFrame();
             store_copy_us();
             if (error_detail != nullptr) {
@@ -3843,6 +3878,15 @@ public:
             auto native_handle = acquire_native_frame_handle(native_desc, stage_telemetry);
             if (native_handle != nullptr) {
                 context_->CopyResource(native_handle->d3d11_texture.Get(), frame_texture.Get());
+                const HRESULT cursor_hr = cursor_gpu_.composite(device_.Get(), context_.Get(),
+                    native_handle->d3d11_texture.Get(), cursor_shape_, cursor_placement_);
+                if (FAILED(cursor_hr)) {
+                    record_failure(CaptureFailureStage::kCursor, cursor_hr);
+                    duplication_->ReleaseFrame();
+                    assign_error("DDA GPU cursor composition failed hr="
+                        + format_hex_u32(static_cast<std::uint32_t>(cursor_hr)), error_detail);
+                    return false;
+                }
                 frame->native_handle_type = CapturedFrameNativeHandleType::kD3D11Texture2D;
                 frame->native_handle = std::move(native_handle);
                 native_frame_ready = true;
@@ -3882,7 +3926,9 @@ public:
             staging_desc.MiscFlags = 0;
 
             ComPtr<ID3D11Texture2D> staging_texture;
-            if (FAILED(device_->CreateTexture2D(&staging_desc, nullptr, &staging_texture)) || staging_texture == nullptr) {
+            const HRESULT staging_hr = device_->CreateTexture2D(&staging_desc, nullptr, &staging_texture);
+            if (FAILED(staging_hr) || staging_texture == nullptr) {
+                record_failure(CaptureFailureStage::kReadback, FAILED(staging_hr) ? staging_hr : E_UNEXPECTED);
                 return false;
             }
 
@@ -3900,6 +3946,7 @@ public:
 
             context_->CopyResource(staging_texture_.Get(), frame_texture.Get());
             const HRESULT map_hr = context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, mapped);
+            if (FAILED(map_hr)) { record_failure(CaptureFailureStage::kReadback, map_hr); }
             return SUCCEEDED(map_hr) && mapped->pData != nullptr;
         };
 
@@ -3935,6 +3982,8 @@ public:
         }
 
         context_->Unmap(staging_texture_.Get(), 0);
+        composite_capture_cursor(cursor_shape_, cursor_placement_, frame->data,
+            frame->width, frame->height, frame->row_pitch);
         duplication_->ReleaseFrame();
         store_copy_us();
 
@@ -3954,6 +4003,10 @@ public:
 
     void stop() override {
         staging_texture_.Reset();
+        cursor_gpu_.reset();
+        cursor_shape_ = {};
+        cursor_placement_ = {};
+        pointer_shape_buffer_.clear();
         native_frame_pool_.clear();
         duplication_.Reset();
         context_.Reset();
@@ -4026,6 +4079,10 @@ private:
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutputDuplication> duplication_;
+    CaptureCursorShape cursor_shape_;
+    CaptureCursorPlacement cursor_placement_;
+    CaptureCursorD3D11 cursor_gpu_;
+    std::vector<std::uint8_t> pointer_shape_buffer_;
     ComPtr<ID3D11Texture2D> staging_texture_;
     std::vector<std::shared_ptr<CapturedFrameNativeHandle>> native_frame_pool_;
     std::uint32_t frame_acquire_timeout_ms_ = 250;
@@ -4082,6 +4139,7 @@ public:
 
         const auto& apartment = current_wgc_thread_apartment();
         if (!apartment.usable()) {
+            record_failure(CaptureFailureStage::kStartBackend, apartment.result());
             if (error_detail != nullptr) {
                 *error_detail = "RoInitialize failed for Windows Graphics Capture hr="
                     + format_hex_u32(static_cast<std::uint32_t>(apartment.result()));
@@ -4095,6 +4153,7 @@ public:
             winrt::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics>(
             capture_session_factory_error);
         if (capture_session_factory == nullptr) {
+            record_failure(CaptureFailureStage::kStartBackend, static_cast<std::uint32_t>(capture_session_factory_error.code()));
             if (error_detail != nullptr) {
                 *error_detail = "Windows Graphics Capture support query failed hr="
                     + format_hex_u32(static_cast<std::uint32_t>(capture_session_factory_error.code()));
@@ -4108,6 +4167,7 @@ public:
             winrt::get_abi(capture_session_factory));
         const HRESULT capture_supported_hr = capture_session_factory_abi->IsSupported(&capture_supported);
         if (FAILED(capture_supported_hr) || !capture_supported) {
+            record_failure(CaptureFailureStage::kStartBackend, FAILED(capture_supported_hr) ? capture_supported_hr : E_NOTIMPL);
             if (error_detail != nullptr) {
                 *error_detail = FAILED(capture_supported_hr)
                     ? "Windows Graphics Capture support query failed hr="
@@ -4117,8 +4177,8 @@ public:
             return false;
         }
 
+        CaptureFailureStage start_stage = CaptureFailureStage::kEnumerateOutput;
         try {
-
             ComPtr<ID3D11Device> device;
             ComPtr<ID3D11DeviceContext> context;
             D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
@@ -4135,6 +4195,7 @@ public:
                 config.adapter_index, &selected_adapter));
             ComPtr<IDXGIAdapter> adapter;
             winrt::check_hresult(selected_adapter.As(&adapter));
+            start_stage = CaptureFailureStage::kCreateDevice;
             winrt::check_hresult(D3D11CreateDevice(
                 adapter.Get(),
                 D3D_DRIVER_TYPE_UNKNOWN,
@@ -4149,6 +4210,7 @@ public:
             ComPtr<IDXGIDevice> dxgi_device;
             winrt::check_hresult(device.As(&dxgi_device));
 
+            start_stage = CaptureFailureStage::kEnumerateOutput;
             ComPtr<IDXGIOutput> output;
             winrt::check_hresult(adapter->EnumOutputs(config.output_index, &output));
 
@@ -4158,6 +4220,7 @@ public:
                 throw winrt::hresult_error(E_INVALIDARG, L"DXGI output is not attached to the desktop");
             }
 
+            start_stage = CaptureFailureStage::kStartBackend;
             const auto item_factory = winrt::get_activation_factory<
                 winrt::Windows::Graphics::Capture::GraphicsCaptureItem,
                 IGraphicsCaptureItemInterop>();
@@ -4187,6 +4250,13 @@ public:
                 kWgcFramePoolSize,
                 item_size);
             auto capture_session = frame_pool.CreateCaptureSession(capture_item);
+            // WGC owns cursor composition. Do not overlay another pointer.
+            if (auto cursor_session = capture_session.try_as<
+                    winrt::Windows::Graphics::Capture::IGraphicsCaptureSession2>()) {
+                start_stage = CaptureFailureStage::kCursor;
+                cursor_session.IsCursorCaptureEnabled(true);
+            }
+            start_stage = CaptureFailureStage::kStartBackend;
 
             device_ = std::move(device);
             context_ = std::move(context);
@@ -4226,6 +4296,7 @@ public:
             capture_session_.StartCapture();
         } catch (const winrt::hresult_error& exception) {
             const HRESULT start_hr = exception.code();
+            record_failure(start_stage, start_hr);
             const std::string message = wide_to_utf8(exception.message().c_str());
             stop();
             if (error_detail != nullptr) {
@@ -4293,6 +4364,7 @@ public:
 
                 if (FAILED(callback_hresult_)) {
                     const HRESULT callback_hr = callback_hresult_;
+                    record_failure(CaptureFailureStage::kAcquireFrame, callback_hr);
                     callback_hresult_ = S_OK;
                     if (error_detail != nullptr) {
                         *error_detail = "Windows Graphics Capture frame callback failed hr="
@@ -4321,6 +4393,7 @@ public:
             try {
                 content_size = captured_frame.ContentSize();
             } catch (const winrt::hresult_error& exception) {
+                record_failure(CaptureFailureStage::kAcquireFrame, static_cast<std::uint32_t>(exception.code()));
                 captured_frame.Close();
                 captured_frame = nullptr;
                 if (error_detail != nullptr) {
@@ -4468,7 +4541,8 @@ public:
             }
 
             if (!ensure_staging_texture(desc)) {
-                throw winrt::hresult_error(E_OUTOFMEMORY, L"failed to create WGC staging texture");
+                throw winrt::hresult_error(static_cast<HRESULT>(failure().hresult),
+                    L"failed to create WGC staging texture");
             }
 
             context_->CopyResource(staging_texture_.Get(), frame_texture.Get());
@@ -4489,6 +4563,7 @@ public:
             }
             context_->Unmap(staging_texture_.Get(), 0);
         } catch (const winrt::hresult_error& exception) {
+            record_failure(CaptureFailureStage::kReadback, static_cast<std::uint32_t>(exception.code()));
             close_frame();
             store_copy_us();
             if (error_detail != nullptr) {
@@ -4795,8 +4870,9 @@ private:
         staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         staging_desc.Usage = D3D11_USAGE_STAGING;
         staging_desc.MiscFlags = 0;
-        if (FAILED(device_->CreateTexture2D(&staging_desc, nullptr, &staging_texture_))
-            || staging_texture_ == nullptr) {
+        const HRESULT staging_hr = device_->CreateTexture2D(&staging_desc, nullptr, &staging_texture_);
+        if (FAILED(staging_hr) || staging_texture_ == nullptr) {
+            record_failure(CaptureFailureStage::kReadback, FAILED(staging_hr) ? staging_hr : E_UNEXPECTED);
             return false;
         }
         staging_texture_width_ = desc.Width;
@@ -4875,8 +4951,6 @@ public:
         origin_y_ = selected->desktop_origin_y;
         width_ = static_cast<int>(selected->pixel_width);
         height_ = static_cast<int>(selected->pixel_height);
-        primary_width_ = width_;
-        primary_height_ = height_;
         if (width_ <= 0 || height_ <= 0) {
             if (error_detail != nullptr) {
                 *error_detail = "GDI virtual screen dimensions are invalid";
@@ -4969,38 +5043,13 @@ public:
             copied = bit_blt_from_screen(origin_x_, origin_y_, width_, height_, SRCCOPY, &srccopy_error);
         }
 
-        DWORD primary_captureblt_error = ERROR_SUCCESS;
-        DWORD primary_srccopy_error = ERROR_SUCCESS;
-        const bool can_retry_primary =
-            primary_width_ > 0
-            && primary_height_ > 0
-            && (origin_x_ != 0
-                || origin_y_ != 0
-                || width_ > primary_width_
-                || height_ > primary_height_);
-        if (!copied && can_retry_primary) {
-            PatBlt(memory_dc_, 0, 0, width_, height_, BLACKNESS);
-            const int retry_width = std::min(width_, primary_width_);
-            const int retry_height = std::min(height_, primary_height_);
-            copied = bit_blt_from_screen(
-                0,
-                0,
-                retry_width,
-                retry_height,
-                SRCCOPY | CAPTUREBLT,
-                &primary_captureblt_error);
-            if (!copied) {
-                copied = bit_blt_from_screen(0, 0, retry_width, retry_height, SRCCOPY, &primary_srccopy_error);
-            }
-        }
-
         if (!copied) {
+            record_failure(CaptureFailureStage::kAcquireFrame,
+                static_cast<std::uint32_t>(HRESULT_FROM_WIN32(srccopy_error ? srccopy_error : ERROR_GEN_FAILURE)));
             if (error_detail != nullptr) {
                 *error_detail = "BitBlt failed for GDI capture (captureblt_error="
                     + std::to_string(captureblt_error)
                     + ", srccopy_error=" + std::to_string(srccopy_error)
-                    + ", primary_captureblt_error=" + std::to_string(primary_captureblt_error)
-                    + ", primary_srccopy_error=" + std::to_string(primary_srccopy_error)
                     + ", source_origin=" + std::to_string(origin_x_) + "," + std::to_string(origin_y_)
                     + ", source_size=" + std::to_string(width_) + "x" + std::to_string(height_) + ")";
             }
@@ -5009,6 +5058,37 @@ public:
         }
 
         BITMAPINFO bitmap_info{};
+        CURSORINFO cursor_info{sizeof(CURSORINFO)};
+        if (!GetCursorInfo(&cursor_info)) {
+            record_failure(CaptureFailureStage::kCursor, static_cast<std::uint32_t>(HRESULT_FROM_WIN32(GetLastError())));
+            assign_error("GetCursorInfo failed for GDI capture", error_detail);
+            store_copy_us(); return false;
+        }
+        if (cursor_info.flags & CURSOR_SHOWING) {
+            if (cursor_info.hCursor != last_cursor_) {
+                ICONINFO icon{};
+                if (GetIconInfo(cursor_info.hCursor, &icon)) {
+                    cursor_hotspot_x_ = static_cast<int>(icon.xHotspot);
+                    cursor_hotspot_y_ = static_cast<int>(icon.yHotspot);
+                    last_cursor_ = cursor_info.hCursor;
+                    if (icon.hbmColor) { DeleteObject(icon.hbmColor); }
+                    if (icon.hbmMask) { DeleteObject(icon.hbmMask); }
+                } else {
+                    record_failure(CaptureFailureStage::kCursor, static_cast<std::uint32_t>(HRESULT_FROM_WIN32(GetLastError())));
+                    assign_error("GetIconInfo failed for GDI capture", error_detail);
+                    store_copy_us(); return false;
+                }
+            }
+            if (last_cursor_ == cursor_info.hCursor) {
+                if (!DrawIconEx(memory_dc_, cursor_info.ptScreenPos.x - origin_x_ - cursor_hotspot_x_,
+                    cursor_info.ptScreenPos.y - origin_y_ - cursor_hotspot_y_,
+                    cursor_info.hCursor, 0, 0, 0, nullptr, DI_NORMAL)) {
+                    record_failure(CaptureFailureStage::kCursor, static_cast<std::uint32_t>(HRESULT_FROM_WIN32(GetLastError())));
+                    assign_error("DrawIconEx failed for GDI capture", error_detail);
+                    store_copy_us(); return false;
+                }
+            }
+        }
         bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bitmap_info.bmiHeader.biWidth = width_;
         bitmap_info.bmiHeader.biHeight = -height_;
@@ -5074,8 +5154,6 @@ public:
         origin_y_ = 0;
         width_ = 0;
         height_ = 0;
-        primary_width_ = 0;
-        primary_height_ = 0;
     }
 
     bool is_running() const override {
@@ -5101,6 +5179,9 @@ private:
     }
 
     HDC screen_dc_ = nullptr;
+    HCURSOR last_cursor_ = nullptr;
+    int cursor_hotspot_x_ = 0;
+    int cursor_hotspot_y_ = 0;
     HDC memory_dc_ = nullptr;
     HBITMAP bitmap_ = nullptr;
     HGDIOBJ old_bitmap_ = nullptr;
@@ -5108,8 +5189,6 @@ private:
     int origin_y_ = 0;
     int width_ = 0;
     int height_ = 0;
-    int primary_width_ = 0;
-    int primary_height_ = 0;
 };
 
 std::uint64_t hash_frame_sample(const CapturedFrame& frame) {
@@ -5206,148 +5285,125 @@ bool write_bgra_bmp(
 
 class WindowsCaptureSession::Impl {
 public:
+    CaptureSessionTestHooks test_hooks;
+    CaptureDesktopContext probe_desktop() const {
+        return test_hooks.desktop ? test_hooks.desktop() : probe_capture_desktop();
+    }
+    std::chrono::steady_clock::time_point clock_now() const {
+        return test_hooks.clock ? test_hooks.clock() : std::chrono::steady_clock::now();
+    }
     bool start(const CaptureSessionConfig& config, std::string* error_detail) {
         stop();
-
         config_ = config;
-        if (config_.preferred_backend == CaptureBackendType::kWindowsGraphicsCapture) {
-            std::string wgc_error;
-            if (switch_to_backend(std::make_unique<WgcCaptureBackend>(), "preferred-wgc", &wgc_error)) {
-                if (error_detail != nullptr) {
-                    error_detail->clear();
-                }
-                return true;
-            }
-            set_last_fallback_reason("Windows Graphics Capture start failed: " + wgc_error);
-            if (!config_.fallback_enabled) {
-                if (error_detail != nullptr) {
-                    *error_detail = "Windows Graphics Capture start failed: " + wgc_error;
-                }
-                return false;
-            }
-            ++telemetry_.fallback_attempt_count;
-            std::string gdi_error;
-            if (!switch_to_backend(std::make_unique<GdiCaptureBackend>(), "preferred-wgc-gdi-fallback", &gdi_error)) {
-                if (error_detail != nullptr) {
-                    *error_detail = "Windows Graphics Capture start failed: " + wgc_error
-                        + "; GDI BitBlt fallback failed: " + gdi_error;
-                }
-                return false;
-            }
-            if (error_detail != nullptr) {
-                error_detail->clear();
-            }
-            return true;
-        }
-
-        if (config_.preferred_backend == CaptureBackendType::kGdiBitBlt) {
-            std::string gdi_error;
-            if (!switch_to_backend(std::make_unique<GdiCaptureBackend>(), "preferred-gdi", &gdi_error)) {
-                if (error_detail != nullptr) {
-                    *error_detail = "GDI BitBlt start failed: " + gdi_error;
-                }
-                return false;
-            }
-            if (error_detail != nullptr) {
-                error_detail->clear();
-            }
-            return true;
-        }
-
-        std::string dda_error;
-        if (!switch_to_backend(std::make_unique<DdaCaptureBackend>(), "initial-start", &dda_error)) {
-            set_last_fallback_reason("Desktop Duplication start failed: " + dda_error);
-            if (!config_.fallback_enabled) {
-                if (error_detail != nullptr) {
-                    *error_detail = "Desktop Duplication start failed: " + dda_error;
-                }
-                return false;
-            }
-            ++telemetry_.fallback_attempt_count;
-
-            std::string wgc_error;
-            if (switch_to_backend(std::make_unique<WgcCaptureBackend>(), "initial-wgc-fallback", &wgc_error)) {
-                if (error_detail != nullptr) {
-                    error_detail->clear();
-                }
-                return true;
-            }
-
-            std::string gdi_error;
-            if (!switch_to_backend(std::make_unique<GdiCaptureBackend>(), "initial-gdi-fallback", &gdi_error)) {
-                if (error_detail != nullptr) {
-                    *error_detail = "Desktop Duplication start failed: " + dda_error
-                        + "; Windows Graphics Capture fallback failed: " + wgc_error
-                        + "; GDI BitBlt fallback failed: " + gdi_error;
-                }
-                return false;
-            }
-            set_last_fallback_reason(
-                "Desktop Duplication start failed: " + dda_error
-                + "; Windows Graphics Capture fallback failed: " + wgc_error);
-        }
-
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
-        return true;
+        telemetry_.generation = ++generation_counter_;
+        failure_evidence_.configure(config.local_evidence_directory);
+        desktop_context_ = probe_desktop();
+        last_desktop_probe_ = clock_now();
+        return start_chain(config_.preferred_backend, error_detail);
     }
 
+    void retry_capture() { retry_requested_.store(true); }
+
     bool capture_frame(CapturedFrame* frame, std::string* error_detail) {
-        if (backend_ == nullptr) {
-            if (error_detail != nullptr) {
-                *error_detail = "capture session not started";
+        if (frame == nullptr) {
+            assign_error("frame pointer must be non-null", error_detail);
+            return false;
+        }
+        const auto now = clock_now();
+        const bool retry = retry_requested_.exchange(false);
+        if (retry || now - last_desktop_probe_ >= std::chrono::milliseconds(500)) {
+            const auto context = probe_desktop();
+            const bool changed = context != desktop_context_;
+            desktop_context_ = context;
+            last_desktop_probe_ = now;
+            if (context.access != CaptureDesktopAccess::kOrdinary) {
+                pause({CaptureFailureStage::kDesktopAccess, CaptureFailureKind::kAccessDenied,
+                    static_cast<std::uint32_t>(E_ACCESSDENIED)});
+            } else if (telemetry_.availability == CaptureAvailability::kPaused && (changed || retry)) {
+                telemetry_.generation = ++generation_counter_;
+                recovery_.reset();
+                std::string restart_error;
+                (void)start_chain(config_.preferred_backend, &restart_error);
             }
+        }
+        if (telemetry_.availability == CaptureAvailability::kPaused) {
+            assign_error("capture paused; waiting for desktop/display change or retry", error_detail);
+            return false;
+        }
+        if (!backend_) {
+            assign_error("capture session not started", error_detail);
             return false;
         }
 
         std::string backend_error;
-        CaptureFrameStageTelemetry stage_telemetry;
+        CaptureFrameStageTelemetry stage;
         ++telemetry_.total_capture_attempt_count;
-        if (!backend_->capture_frame(frame, &stage_telemetry, &backend_error)) {
-            update_stage_telemetry(stage_telemetry);
-            if (stage_telemetry.timeout) {
+        backend_->clear_failure();
+        if (!backend_->capture_frame(frame, &stage, &backend_error)) {
+            update_stage_telemetry(stage);
+            if (stage.timeout) {
                 ++telemetry_.total_timeout_count;
-            }
-            if (backend_error == "timeout waiting for desktop frame") {
                 ++telemetry_.consecutive_timeouts;
-                telemetry_.consecutive_failures = 0;
-            } else {
-                telemetry_.consecutive_timeouts = 0;
-                ++telemetry_.consecutive_failures;
+                // A timeout does not prove a failed backend recovered.
+                assign_error("timeout waiting for desktop frame", error_detail);
+                return false;
             }
-
-            const CaptureHealthSignals signals = current_health_signals();
-            const auto decision = evaluate_capture_fallback_decision(signals, config_);
-            if (decision.should_switch_backend) {
-                std::string fallback_error;
-                try_fallback_to_wgc(decision.reason, &fallback_error);
+            telemetry_.consecutive_timeouts = 0;
+            ++telemetry_.consecutive_failures;
+            CaptureFailure failure = backend_->failure();
+            if (failure.kind == CaptureFailureKind::kNone) {
+                failure = make_capture_failure(CaptureFailureStage::kAcquireFrame, static_cast<std::uint32_t>(E_FAIL));
             }
-
-            if (error_detail != nullptr) {
-                *error_detail = backend_error;
+            desktop_context_ = probe_desktop();
+            last_desktop_probe_ = now;
+            telemetry_.last_failure = failure;
+            telemetry_.failure_desktop_context = desktop_context_;
+            failure_evidence_.record(failure, desktop_context_, active_backend_, config_);
+            if (telemetry_.availability == CaptureAvailability::kRunning) {
+                telemetry_.generation = ++generation_counter_;
             }
+            telemetry_.availability = CaptureAvailability::kRecovering;
+            const auto action = recovery_.failure(failure, desktop_context_.access,
+                active_backend_ == CaptureBackendType::kDesktopDuplication,
+                telemetry_.consecutive_failures, config_.max_consecutive_failures_before_fallback);
+            if (action == CaptureRecoveryAction::kPause) {
+                pause(failure);
+            } else if (action != CaptureRecoveryAction::kWait) {
+                const auto failed_backend = active_backend_;
+                release_backend();
+                telemetry_.generation = ++generation_counter_;
+                bool rebuilt = false;
+                if (action == CaptureRecoveryAction::kRebuildDda) {
+                    ++telemetry_.dda_rebuild_count;
+                    rebuilt = try_start(CaptureBackendType::kDesktopDuplication);
+                }
+                if (!rebuilt) {
+                    if (config_.fallback_enabled && failed_backend != CaptureBackendType::kGdiBitBlt) {
+                        ++telemetry_.fallback_attempt_count;
+                        std::string fallback_error;
+                        const auto next = failed_backend == CaptureBackendType::kDesktopDuplication
+                            ? CaptureBackendType::kWindowsGraphicsCapture : CaptureBackendType::kGdiBitBlt;
+                        (void)start_chain(next, &fallback_error);
+                    } else {
+                        pause(telemetry_.last_failure);
+                    }
+                }
+                set_last_fallback_reason(backend_error);
+            }
+            assign_error(backend_error, error_detail);
             return false;
         }
 
-        update_stage_telemetry(stage_telemetry);
+        update_stage_telemetry(stage);
         telemetry_.consecutive_timeouts = 0;
         telemetry_.consecutive_failures = 0;
+        telemetry_.availability = CaptureAvailability::kRunning;
+        frame->capture_generation = telemetry_.generation;
+        recovery_.frame_captured();
         update_success_telemetry(*frame);
-
-        const CaptureHealthSignals signals = current_health_signals();
-        const auto decision = evaluate_capture_fallback_decision(signals, config_);
-        if (decision.should_switch_backend) {
-            std::string fallback_error;
-            try_fallback_to_wgc(decision.reason, &fallback_error);
-        }
-
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
+        assign_error({}, error_detail);
         return true;
     }
-
     void configure_native_frame_delivery(
         bool capture_native_d3d11_textures,
         bool skip_cpu_readback_when_native_texture_available) {
@@ -5366,6 +5422,10 @@ public:
             backend_->stop();
             backend_.reset();
         }
+        recovery_.reset();
+        retry_requested_.store(false);
+        desktop_context_ = {};
+        last_desktop_probe_ = {};
         config_ = CaptureSessionConfig{};
         active_backend_ = CaptureBackendType::kUnknown;
         telemetry_ = CaptureBackendTelemetry{};
@@ -5412,81 +5472,79 @@ private:
         }
     }
 
-    bool switch_to_backend(
-        std::unique_ptr<ICaptureBackend> candidate,
-        const std::string&,
-        std::string* error_detail) {
-        if (candidate == nullptr) {
-            if (error_detail != nullptr) {
-                *error_detail = "invalid capture backend candidate";
-            }
+    void release_backend() {
+        if (backend_) { backend_->stop(); backend_.reset(); }
+        has_last_frame_hash_ = false;
+        last_frame_timestamp_valid_ = false;
+    }
+
+    void pause(CaptureFailure failure) {
+        release_backend();
+        if (telemetry_.availability == CaptureAvailability::kRunning) {
+            telemetry_.generation = ++generation_counter_;
+        }
+        telemetry_.availability = CaptureAvailability::kPaused;
+        telemetry_.last_failure = failure;
+        telemetry_.failure_desktop_context = desktop_context_;
+        failure_evidence_.record(failure, desktop_context_, active_backend_, config_);
+    }
+
+    bool try_start(CaptureBackendType type) {
+        // Recheck immediately before every candidate, including fallback.
+        desktop_context_ = probe_desktop();
+        if (desktop_context_.access != CaptureDesktopAccess::kOrdinary) {
+            pause({CaptureFailureStage::kDesktopAccess, CaptureFailureKind::kAccessDenied,
+                static_cast<std::uint32_t>(E_ACCESSDENIED)});
             return false;
         }
-
-        std::string start_error;
-        if (!candidate->start(config_, &start_error)) {
-            if (error_detail != nullptr) {
-                *error_detail = start_error;
+        std::unique_ptr<ICaptureBackend> candidate;
+        if (test_hooks.backend) { candidate = test_hooks.backend(type); }
+        else switch (type) {
+        case CaptureBackendType::kDesktopDuplication: candidate = std::make_unique<DdaCaptureBackend>(); break;
+        case CaptureBackendType::kWindowsGraphicsCapture: candidate = std::make_unique<WgcCaptureBackend>(); break;
+        case CaptureBackendType::kGdiBitBlt: candidate = std::make_unique<GdiCaptureBackend>(); break;
+        default: return false;
+        }
+        std::string error;
+        if (!candidate->start(config_, &error)) {
+            telemetry_.last_failure = candidate->failure();
+            if (telemetry_.last_failure.kind == CaptureFailureKind::kNone) {
+                telemetry_.last_failure = make_capture_failure(CaptureFailureStage::kStartBackend, static_cast<std::uint32_t>(E_FAIL));
             }
+            telemetry_.failure_desktop_context = desktop_context_;
+            failure_evidence_.record(telemetry_.last_failure, desktop_context_, type, config_);
+            set_last_fallback_reason(error);
             return false;
         }
-
-        if (backend_ != nullptr) {
-            backend_->stop();
-        }
-
-        const CaptureBackendType previous_backend = active_backend_;
-        backend_ = std::move(candidate);
-        active_backend_ = backend_->backend_type();
-        telemetry_.active_backend = active_backend_;
-        if (previous_backend != CaptureBackendType::kUnknown && previous_backend != active_backend_) {
+        if (active_backend_ != CaptureBackendType::kUnknown && active_backend_ != type) {
             ++telemetry_.backend_switch_count;
         }
-
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
+        backend_ = std::move(candidate);
+        active_backend_ = type;
+        telemetry_.active_backend = type;
+        telemetry_.availability = CaptureAvailability::kRecovering;
+        telemetry_.consecutive_failures = 0;
         return true;
     }
 
-    void try_fallback_to_wgc(const std::string& reason, std::string* error_detail) {
-        ++telemetry_.fallback_attempt_count;
-        std::string wgc_error;
-        if (switch_to_backend(std::make_unique<WgcCaptureBackend>(), "fallback-wgc", &wgc_error)) {
-            set_last_fallback_reason(reason);
-            if (error_detail != nullptr) {
-                error_detail->clear();
-            }
-            return;
+    bool start_chain(CaptureBackendType first, std::string* error_detail) {
+        telemetry_.availability = CaptureAvailability::kRecovering;
+        if (first == CaptureBackendType::kUnknown) { first = CaptureBackendType::kDesktopDuplication; }
+        const CaptureBackendType order[] = {CaptureBackendType::kDesktopDuplication,
+            CaptureBackendType::kWindowsGraphicsCapture, CaptureBackendType::kGdiBitBlt};
+        bool eligible = false;
+        for (const auto type : order) {
+            eligible = eligible || type == first;
+            if (!eligible) { continue; }
+            if (try_start(type)) { assign_error({}, error_detail); return true; }
+            if (!config_.fallback_enabled || telemetry_.availability == CaptureAvailability::kPaused) { break; }
+            ++telemetry_.fallback_attempt_count;
         }
-
-        std::string gdi_error;
-        if (!switch_to_backend(std::make_unique<GdiCaptureBackend>(), "fallback-gdi", &gdi_error)) {
-            set_last_fallback_reason(
-                reason + "; Windows Graphics Capture fallback failed: " + wgc_error
-                + "; GDI fallback failed: " + gdi_error);
-            if (error_detail != nullptr) {
-                *error_detail = "Windows Graphics Capture fallback failed: " + wgc_error
-                    + "; GDI fallback failed: " + gdi_error;
-            }
-            return;
-        }
-
-        set_last_fallback_reason(
-            reason + "; Windows Graphics Capture fallback failed: " + wgc_error);
-
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
+        pause(telemetry_.last_failure);
+        assign_error(telemetry_.last_fallback_reason.empty()
+            ? "capture unavailable on current desktop" : telemetry_.last_fallback_reason, error_detail);
+        return false;
     }
-
-    CaptureHealthSignals current_health_signals() const {
-        CaptureHealthSignals signals;
-        signals.consecutive_failures = telemetry_.consecutive_failures;
-        signals.backend = active_backend_;
-        return signals;
-    }
-
     void set_last_fallback_reason(std::string reason) {
         constexpr std::size_t kMaxFallbackReasonLength = 512;
         for (char& value : reason) {
@@ -5542,6 +5600,12 @@ private:
         last_frame_timestamp_valid_ = true;
     }
 
+    std::uint64_t generation_counter_ = 0;
+    CaptureFailureEvidence failure_evidence_;
+    CaptureRecoveryPolicy recovery_;
+    CaptureDesktopContext desktop_context_;
+    std::chrono::steady_clock::time_point last_desktop_probe_{};
+    std::atomic<bool> retry_requested_{false};
     std::unique_ptr<ICaptureBackend> backend_;
     CaptureSessionConfig config_;
     CaptureBackendType active_backend_ = CaptureBackendType::kUnknown;
@@ -5556,6 +5620,11 @@ private:
 WindowsCaptureSession::WindowsCaptureSession()
     : impl_(std::make_unique<Impl>()) {}
 
+void CaptureSessionTestAccess::install(WindowsCaptureSession& session, CaptureSessionTestHooks hooks) {
+    session.stop();
+    session.impl_->test_hooks = std::move(hooks);
+}
+
 WindowsCaptureSession::~WindowsCaptureSession() = default;
 
 bool WindowsCaptureSession::start(const CaptureSessionConfig& config, std::string* error_detail) {
@@ -5565,6 +5634,8 @@ bool WindowsCaptureSession::start(const CaptureSessionConfig& config, std::strin
 bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail) {
     return impl_->capture_frame(frame, error_detail);
 }
+
+void WindowsCaptureSession::retryCapture() { impl_->retry_capture(); }
 
 void WindowsCaptureSession::configureNativeFrameDelivery(
     bool capture_native_d3d11_textures,
@@ -5666,7 +5737,6 @@ public:
 
     bool capture_frame(
         CapturedFrame*,
-        CaptureFrameStageTelemetry*,
         std::string* error_detail) {
         if (error_detail != nullptr) {
             *error_detail = "Windows capture session is only supported on Windows";
@@ -5675,6 +5745,7 @@ public:
     }
 
     void stop() {}
+    void retry_capture() {}
     void configure_native_frame_delivery(bool, bool) {}
     bool is_running() const { return false; }
     CaptureBackendType active_backend() const { return CaptureBackendType::kUnknown; }
@@ -5693,6 +5764,8 @@ bool WindowsCaptureSession::start(const CaptureSessionConfig& config, std::strin
 bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail) {
     return impl_->capture_frame(frame, error_detail);
 }
+
+void WindowsCaptureSession::retryCapture() { impl_->retry_capture(); }
 
 void WindowsCaptureSession::configureNativeFrameDelivery(
     bool capture_native_d3d11_textures,

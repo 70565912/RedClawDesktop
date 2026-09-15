@@ -277,6 +277,11 @@ message StreamControlMessageV1 {
   uint32 content_rect_y = 73;
   uint32 content_rect_width = 74;
   uint32 content_rect_height = 75;
+  uint32 capture_status_version = 76;
+  uint32 capture_status = 77;
+  uint64 capture_generation = 78;
+  uint64 capture_first_frame_id = 79;
+  bool capture_retry_requested = 80;
 }
 
 message DhtSignalSnapshot {

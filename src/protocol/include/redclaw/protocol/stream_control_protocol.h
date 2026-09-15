@@ -167,6 +167,13 @@ struct StreamControlMessageV1 {
     // Orthogonal to source motion: Host is retaining the last clear frame
     // while its bounded recovery admission is waiting for media capacity.
     bool media_budget_waiting = false;
+    // Optional capture-status capability v1. Zero means an older peer.
+    std::uint32_t capture_status_version = 0;
+    // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
+    std::uint32_t capture_status = 0;
+    std::uint64_t capture_generation = 0;
+    std::uint64_t capture_first_frame_id = 0;
+    bool capture_retry_requested = false;
     std::uint64_t reference_frame_id = 0;
     std::uint64_t reference_keyframe_id = 0;
     std::uint64_t stream_geometry_revision = 0;

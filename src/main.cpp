@@ -49,6 +49,7 @@
 #include "redclaw/security/security_module.h"
 #include "redclaw/session/session_module.h"
 #include "redclaw/capture/capture_module.h"
+#include "redclaw/capture/capture_stream_gate.h"
 #include "redclaw/render/render_module.h"
 #include "redclaw/input/input_module.h"
 #include "redclaw/service/service_module.h"
@@ -3125,6 +3126,9 @@ int run_runtime_mode(
     std::uint64_t stream_pacer_geometry_revision = 0; // Encoder worker owned.
     std::optional<bool> stream_last_published_budget_wait; // Runtime loop owned.
     bool stream_capture_started = false;
+    redclaw::capture::CaptureStreamGate stream_capture_gate;
+    std::atomic<std::uint32_t> peer_capture_status_version{0};
+    std::uint64_t applied_capture_input_pause_revision = 0;
     redclaw::capture::CaptureBackendTelemetry stream_capture_telemetry_snapshot;
     redclaw::capture::EncoderExecutionDiagnostics stream_encoder_diagnostics_snapshot;
     HostStreamStageTelemetry stream_host_stage_telemetry_snapshot;
@@ -3380,6 +3384,17 @@ int run_runtime_mode(
         message.stream_geometry_revision = snapshot.stream_geometry_revision;
         message.rate_revision = snapshot.rate_revision;
         message.media_budget_waiting = stream_media_pacer.telemetry().rejected_wire_bytes != 0;
+        if (peer_capture_status_version.load() >= 1) {
+            const auto capture = stream_capture_gate.snapshot();
+            message.capture_status_version = 1;
+            message.source_activity_revision = std::max<std::uint64_t>(1, message.source_activity_revision);
+            message.stream_geometry_revision = std::max<std::uint64_t>(1, message.stream_geometry_revision);
+            message.rate_revision = std::max<std::uint64_t>(1, message.rate_revision);
+            message.capture_generation = capture.generation;
+            message.capture_first_frame_id = capture.first_frame_id;
+            message.capture_status = capture.availability == redclaw::capture::CaptureAvailability::kRunning ? 1U
+                : capture.availability == redclaw::capture::CaptureAvailability::kPaused ? 3U : 2U;
+        }
         return message;
     };
 
@@ -3390,7 +3405,7 @@ int run_runtime_mode(
             std::lock_guard<std::mutex> lock(callback_mutex);
             control_open = stream_control_channel_open;
         }
-        if (!control_open || snapshot.revision == 0
+        if (!control_open || (snapshot.revision == 0 && peer_capture_status_version.load() == 0)
             || (snapshot.state == redclaw::session::DesktopSourceActivityState::kStaticPending
                 && (snapshot.reference_frame_id == 0
                     || snapshot.reference_keyframe_id == 0))) {
@@ -4099,6 +4114,7 @@ int run_runtime_mode(
         }
         if (kind == redclaw::net::DataChannelKind::kControl) {
             auto hello = make_control_message(redclaw::protocol::StreamControlMessageTypeV1::kHello);
+            hello.capture_status_version = 1;
             hello.payload = "viewport,source-activity,displayable-ack,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input,capture-region,navigation";
             std::string send_error;
             if (!send_control_message(hello, &send_error)) {
@@ -4519,9 +4535,14 @@ int run_runtime_mode(
                 }
             }
 
+            if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello
+                || control.type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities) {
+                peer_capture_status_version.store(control.capture_status_version >= 1 ? 1U : 0U);
+            }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello) {
                 auto capabilities = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kCapabilities);
+                capabilities.capture_status_version = 1;
                 capabilities.payload = remote_diagnostics_allowed
                     ? "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input"
                     : "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,reconnect,remote-input";
@@ -4707,6 +4728,11 @@ int run_runtime_mode(
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_receiver_stats_snapshot = control;
                 }
+                if (stream_capture_gate.presented(control.latest_presented_frame_id)) {
+                    std::lock_guard<std::mutex> lock(callback_mutex);
+                    append_timeline(redclaw::render::RuntimeStatusSeverity::kInfo, "capture",
+                        "capture recovery confirmed by new frame presentation");
+                }
                 redclaw::session::DesktopSourceActivityUpdate activity_update;
                 {
                     std::lock_guard<std::mutex> source_lock(stream_source_activity_mutex);
@@ -4809,6 +4835,11 @@ int run_runtime_mode(
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest
                 && options.role == RuntimeRole::kHost) {
+                if (peer_capture_status_version.load() >= 1 && control.capture_status_version == 1
+                    && control.capture_retry_requested) {
+                    stream_capture_session.retryCapture();
+                    stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
+                }
                 const auto pacer = stream_media_pacer.telemetry();
                 // Receiver retries must not replace a normally progressing IDR
                 // or reset the admission cooldown for the same recovery.
@@ -5533,6 +5564,22 @@ int run_runtime_mode(
         kFailure,
     };
 
+    auto apply_capture_availability = [&](const redclaw::capture::CaptureBackendTelemetry& telemetry) {
+        const auto previous = stream_capture_gate.snapshot();
+        if (stream_capture_gate.update(telemetry.availability, telemetry.generation)) {
+            {
+                std::lock_guard<std::mutex> lock(stream_capture_frame_mutex);
+                stream_latest_captured_frame.reset();
+                stream_latest_captured_frame_ready_ms = 0;
+            }
+            stream_media_pacer.reset();
+            stream_encoder_session.request_keyframe();
+            stream_keyframe_refresh_request_generation.fetch_add(1);
+            runtime_loop_wake.notify();
+        }
+        return previous.availability != telemetry.availability || previous.generation != telemetry.generation;
+    };
+
     auto run_host_stream_capture_tick = [&]() -> HostStreamCaptureTickResult {
         if (!options.stream_smoke || options.role != RuntimeRole::kHost) {
             return HostStreamCaptureTickResult::kNoWork;
@@ -5687,6 +5734,9 @@ int run_runtime_mode(
 
         if (!stream_capture_started) {
             redclaw::capture::CaptureSessionConfig capture_config;
+            if (process_logger) {
+                capture_config.local_evidence_directory = (process_logger->log_path().parent_path() / "capture-evidence").string();
+            }
             if (stream_selected_display.has_value()) {
                 capture_config.adapter_index = stream_selected_display->adapter_index;
                 capture_config.output_index = stream_selected_display->output_index;
@@ -5698,6 +5748,9 @@ int run_runtime_mode(
                 stream_capture_skip_cpu_readback;
             std::string start_error;
             if (!stream_capture_session.start(capture_config, &start_error)) {
+                const auto unavailable = stream_capture_session.telemetry();
+                stream_capture_started = unavailable.availability == redclaw::capture::CaptureAvailability::kPaused;
+                runtime_loop_wake.notify();
                 std::optional<redclaw::protocol::StreamControlMessageV1> failed_region;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
@@ -5789,10 +5842,15 @@ int run_runtime_mode(
                     .count());
             const auto capture_telemetry = stream_capture_session.telemetry();
             const bool capture_timeout = capture_error == "timeout waiting for desktop frame";
+            const bool availability_changed = apply_capture_availability(capture_telemetry);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 stream_host_stage_telemetry_snapshot.total_capture_us += capture_us;
                 stream_capture_telemetry_snapshot = capture_telemetry;
+            }
+            if (capture_telemetry.availability == redclaw::capture::CaptureAvailability::kPaused
+                && !availability_changed) {
+                return HostStreamCaptureTickResult::kNoWork;
             }
             if (capture_timeout) {
                 redclaw::session::DesktopSourceActivityUpdate activity_update;
@@ -5811,6 +5869,7 @@ int run_runtime_mode(
                     now_steady_ms());
             }
             apply_source_activity_update(activity_update);
+            (void)publish_source_activity(activity_update.snapshot);
             std::optional<redclaw::protocol::StreamControlMessageV1> failed_region;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -5852,6 +5911,8 @@ int run_runtime_mode(
         }
         stream_capture_session.configureNativeFrameDelivery(
             true, stream_capture_skip_cpu_readback);
+
+        (void)apply_capture_availability(stream_capture_session.telemetry());
 
         const auto capture_us = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
@@ -6066,7 +6127,7 @@ int run_runtime_mode(
                     : stream_latest_captured_frame_ready_ms;
             }
         }
-        if (!captured_frame) {
+        if (!captured_frame || !stream_capture_gate.accepts(captured_frame->capture_generation)) {
             return;
         }
 
@@ -6643,10 +6704,14 @@ int run_runtime_mode(
             &stream_encoder_worker_stage,
             &stream_encoder_worker_stage_since_ms,
             HostStreamWorkerStage::kSubmitFrame);
-        if (stream_media_submission_paused.load()) {
+        if (stream_media_submission_paused.load()
+            || !stream_capture_gate.accepts(captured_frame->capture_generation)) {
             return;
         }
-        const auto admission = stream_media_pacer.submit_frame(std::move(paced_frame));
+        redclaw::net::MediaAdmissionResult admission;
+        if (!stream_capture_gate.submit(captured_frame->capture_generation, [&]() {
+                admission = stream_media_pacer.submit_frame(std::move(paced_frame));
+            })) { return; }
         if (!admission.ready()) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             ++stream_counters.transmit_backpressure_drops;
@@ -6657,6 +6722,7 @@ int run_runtime_mode(
         }
 
         if (encoded_frame.keyframe) {
+            const bool first_capture_keyframe = stream_capture_gate.submitted_keyframe(captured_frame->capture_generation, frame_id);
             redclaw::session::DesktopSourceActivityUpdate activity_update;
             {
                 std::lock_guard<std::mutex> source_lock(stream_source_activity_mutex);
@@ -6664,6 +6730,7 @@ int run_runtime_mode(
                     frame_id, frame_id, now_steady_ms(), encoded_rate_revision);
             }
             apply_source_activity_update(activity_update);
+            if (first_capture_keyframe) { (void)publish_source_activity(activity_update.snapshot); }
         }
 
         if (encoded_frame.keyframe
@@ -6714,8 +6781,13 @@ int run_runtime_mode(
         stream_capture_worker_running.store(true);
         stream_capture_worker = std::thread([&]() {
             while (stream_capture_worker_running.load()) {
+                const auto observed = stream_work_coordinator.snapshot().generation;
                 const auto tick_result = run_host_stream_capture_tick();
-                if (tick_result != HostStreamCaptureTickResult::kCaptureAttempted) {
+                if (stream_capture_gate.snapshot().availability == redclaw::capture::CaptureAvailability::kPaused) {
+                    // Reuse the coordinator for explicit retry/stop. The bounded
+                    // deadline only probes desktop/display state, never a backend.
+                    (void)stream_work_coordinator.wait_for_change(observed, std::chrono::milliseconds(500));
+                } else if (tick_result != HostStreamCaptureTickResult::kCaptureAttempted) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(kDesktopStreamCaptureIdleWaitMs));
                 }
             }
@@ -7023,6 +7095,12 @@ int run_runtime_mode(
             }
             if (command.type
                 == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest) {
+                if (command.capture_retry_requested && command.capture_status_version == 1
+                    && peer_capture_status_version.load() >= 1) {
+                    std::string retry_error;
+                    (void)send_control_message(command, &retry_error);
+                    continue;
+                }
                 auto reason = redclaw::session::ControllerDecoderBreakReason::kDecodeFailure;
                 if (command.payload == "shared_memory_sequence_gap") {
                     reason = redclaw::session::ControllerDecoderBreakReason::kSharedSequenceGap;
@@ -7273,6 +7351,19 @@ int run_runtime_mode(
             bool status_changed = false;
             const std::uint64_t applied_sequence_before =
                 remote_input_session.stats().last_applied_sequence;
+            const auto capture_state = stream_capture_gate.snapshot();
+            const bool capture_available = capture_state.availability == redclaw::capture::CaptureAvailability::kRunning
+                && (peer_capture_status_version.load() == 0 || capture_state.presented);
+            const bool capture_input_pause_pending = capture_state.input_pause_revision != applied_capture_input_pause_revision;
+            if (!capture_available || capture_input_pause_pending) {
+                applied_capture_input_pause_revision = capture_state.input_pause_revision;
+                if (!remote_input_messages.empty() || capture_input_pause_pending
+                    || remote_input_session.state() == redclaw::input::RemoteInputSessionState::kActive) {
+                    remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo);
+                    status_changed = true;
+                }
+                remote_input_messages.clear();
+            }
             if (disconnected) {
                 remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected);
                 remote_input_messages.clear();
@@ -7807,6 +7898,7 @@ int run_runtime_mode(
                 remote_input_disconnect_pending = true;
                 last_advertised_input_geometry = {};
                 stream_remote_control_guard.reset();
+                peer_capture_status_version.store(0);
                 {
                     std::lock_guard<std::mutex> envelope_lock(stream_control_envelope_mutex);
                     stream_control_epoch = "runtime-" + role_name + "-"
@@ -10971,6 +11063,12 @@ int run_runtime_mode(
                           << " media_channel_open=" << (media_channel_open ? "true" : "false")
                           << " control_channel_open=" << (control_channel_open ? "true" : "false")
                           << " capture_backend=" << capture_backend_to_string(capture_telemetry.active_backend)
+                          << " capture_availability=" << static_cast<int>(capture_telemetry.availability)
+                          << " capture_generation=" << capture_telemetry.generation
+                          << " capture_failure_stage=" << static_cast<int>(capture_telemetry.last_failure.stage)
+                          << " capture_failure_kind=" << static_cast<int>(capture_telemetry.last_failure.kind)
+                          << " capture_failure_hresult=" << capture_telemetry.last_failure.hresult
+                          << " capture_dda_rebuilds=" << capture_telemetry.dda_rebuild_count
                           << " capture_backend_switches=" << capture_telemetry.backend_switch_count
                           << " capture_fallback_attempts=" << capture_telemetry.fallback_attempt_count
                           << " capture_fallback_reason=" << std::quoted(capture_telemetry.last_fallback_reason)

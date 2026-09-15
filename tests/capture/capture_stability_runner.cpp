@@ -65,7 +65,7 @@ std::string build_json_report(const redclaw::capture::CaptureStabilityRunResult&
 void print_usage() {
     std::cout
         << "Usage: redclaw_capture_stability_runner "
-        << "[--duration-seconds N] [--output-index N] [--frame-timeout-ms N] "
+        << "[--duration-seconds N] [--backend dda|wgc|gdi] [--output-index N] [--frame-timeout-ms N] "
         << "[--max-consecutive-timeouts N] [--max-consecutive-failures N] [--report-file PATH]" << '\n';
 }
 
@@ -91,6 +91,14 @@ int main(int argc, char** argv) {
                 std::cerr << "Invalid --duration-seconds" << '\n';
                 return 2;
             }
+        } else if (arg == "--backend") {
+            if (i + 1 >= argc) { return 2; }
+            const std::string backend = argv[++i];
+            using redclaw::capture::CaptureBackendType;
+            if (backend == "dda") { config.capture_config.preferred_backend = CaptureBackendType::kDesktopDuplication; }
+            else if (backend == "wgc") { config.capture_config.preferred_backend = CaptureBackendType::kWindowsGraphicsCapture; }
+            else if (backend == "gdi") { config.capture_config.preferred_backend = CaptureBackendType::kGdiBitBlt; }
+            else { std::cerr << "Invalid --backend\n"; return 2; }
         } else if (arg == "--output-index") {
             if (!read_next_u32(&config.capture_config.output_index)) {
                 std::cerr << "Invalid --output-index" << '\n';

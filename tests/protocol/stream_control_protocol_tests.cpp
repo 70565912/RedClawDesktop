@@ -75,6 +75,45 @@ TEST(StreamControlProtocolTests, LocalRuntimeFrameIsSingleLineAndRoundTrips) {
     EXPECT_EQ(parsed.value.payload, message.payload);
 }
 
+TEST(StreamControlProtocolTests, OptionalCaptureCapabilityAndRetryRoundTrip) {
+    auto message = make_message(redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest);
+    message.capture_status_version = 1;
+    message.capture_retry_requested = true;
+    auto parsed = redclaw::protocol::parse_stream_control_message_v1(
+        redclaw::protocol::serialize_stream_control_message_v1(message));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.capture_status_version, 1U);
+    EXPECT_TRUE(parsed.value.capture_retry_requested);
+    message = make_message(redclaw::protocol::StreamControlMessageTypeV1::kCapabilities);
+    parsed = redclaw::protocol::parse_stream_control_message_v1(
+        redclaw::protocol::serialize_stream_control_message_v1(message));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.capture_status_version, 0U);
+    EXPECT_FALSE(parsed.value.capture_retry_requested);
+}
+
+TEST(StreamControlProtocolTests, CaptureStatusIsAdditiveToSourceActivity) {
+    auto message = make_message(redclaw::protocol::StreamControlMessageTypeV1::kSourceActivityState);
+    message.source_activity_revision = 1;
+    message.stream_geometry_revision = 1;
+    message.rate_revision = 1;
+    message.capture_status_version = 1;
+    message.capture_status = 3;
+    message.capture_generation = 9;
+    auto parsed = redclaw::protocol::parse_stream_control_message_v1(
+        redclaw::protocol::serialize_stream_control_message_v1(message));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.capture_status, 3U);
+    EXPECT_EQ(parsed.value.capture_generation, 9U);
+    // Optional future capability versions are preserved for the consumer to
+    // ignore; they do not reject the existing Control v1 envelope.
+    message.capture_status_version = 2;
+    message.capture_status = 99;
+    parsed = redclaw::protocol::parse_stream_control_message_v1(
+        redclaw::protocol::serialize_stream_control_message_v1(message));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+}
+
 TEST(StreamControlProtocolTests, LocalTimingRejectsMalformedOrOldEnvelope) {
     for (const auto line : {"RCD-LOCAL-CONTROL-V1 eA==", "RCD-LOCAL-CONTROL-V2 0 eA==",
         "RCD-LOCAL-CONTROL-V2 -1 eA==", "RCD-LOCAL-CONTROL-V2 123x eA==",

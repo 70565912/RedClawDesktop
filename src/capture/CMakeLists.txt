@@ -1,5 +1,9 @@
 add_library(redclaw_capture STATIC
   src/capture_module.cpp
+  src/capture_recovery.cpp
+  src/capture_failure_evidence.cpp
+  src/capture_cursor.cpp
+  src/capture_cursor_d3d11.cpp
 )
 
 find_package(FFMPEG QUIET)
@@ -13,10 +17,12 @@ if(WIN32)
   target_link_libraries(redclaw_capture
     PRIVATE
       d3d11
+      d3dcompiler
       dxgi
       ole32
       windowscodecs
       windowsapp
+      wtsapi32
   )
 endif()
 
