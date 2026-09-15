@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current priority is the Windows two-machine product path and the `v0.1.1` Developer Preview.
 
@@ -72,7 +72,7 @@ Updated: 2026-09-15
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 
 - `X00-T01` Real local dual-GUI desktop stream with three channels — done.
 - `X00-T02` Fixed ICE UDP port, early reservation, and ICE-targeted UPnP — done.
@@ -89,7 +89,8 @@ Updated: 2026-09-15
 - `X00-T14` Local Agent sync rejection classification and authorization recovery — in-progress; implementation and offline qualification complete (Debug NoPublish, five focused CTests, four regression cases reproduced before fixes). Request rejections preserve durable task/approval state and ACKs; denied authorization suspends retries and recovery requires fresh sync. The operator now authorizes local build/publication and Host-role restart for continued work from another computer. Peer authorization remains endpoint-owned; physical direct-Agent and picture-quality acceptance are pending. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md) and [development log](../logs/DEVLOG.md).
 
 - `X00-T12` Debug Controller startup on a physical adapter with multiple IPv4 addresses — done; Windows-selected gateway source address validated through the actual command launcher, Debug publication, public-DHT connection, remote real-capture rates, Controller frame deltas, and visual desktop confirmation. Broader exit-mode configuration remains on `X00-T11`.
-- `X00-T15` Pending Agent approval during Provider output — in-progress; reproduced broker state replacement and disappearing GUI approval, fixed both endpoint emission and older-peer presentation, Debug build and four focused CTests passed. Physical replay and Release/full-suite qualification remain pending; no authorization or timeout relaxation.
+- `X00-T15` Pending Agent approval during Provider output — in-progress; reproduced broker state replacement and disappearing GUI approval, fixed both endpoint emission and older-peer presentation, serial Debug/Release builds and four focused CTests passed. The final full sweep recorded one UI heartbeat failure (focused rerun passed) and a DDA access-denied skip. The independent local upgrade completed; peer reconnection and physical approval replay remain pending. No authorization or timeout relaxation.
+- `X00-T16` Remote workspace v0.1.3 — in-progress; optional versioned file/clipboard/terminal channels, bounded transfer workers and shared mutation gates are implemented. Actual local online DHT/RTC windows passed upload/download hashes, empty directories, cancellation, progress/input gates, terminal Unicode output and received-copy list/open/cleanup. Navigation expands within layout above Agent; selected conversations follow new messages. Independent full-directory Host/Controller upgrades and terminal-issued Host restart completed; cold-start/rollback/parent-exit and repeated-ID history checks passed. Session-scoped frame accounting and terminal reconnect/output-ACK recovery have focused and native regressions. Final explicitly rebuilt full CTest: 112 passed, one DDA permission skip, zero failures; an earlier ICE expiry assertion failure remains recorded and passed both the isolated and final full reruns. Final serial Debug/Release builds, all five opt-in native terminal cases, actual Controller runtime reconnect with its Shell variable retained, and four mixed-version real-video combinations with v0.1.0/v0.1.1 passed. Local ZIP hashing, extracted command startup, missing-terminal rejection and extracted Release GUI real-video gates passed; the first cold-start attempt was blocked by local Agent readiness. Actual application Ctrl+V, matched concurrent-load performance, physical peer upgrade and package/release acceptance remain open. This work is separate from the frozen v0.1.2 candidate; see the [approved contract](../architecture/remote-workspace-v013.md) and [development log](../logs/DEVLOG.md).
 
 ## Release gate
 
