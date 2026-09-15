@@ -1,6 +1,9 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$FormalRuntimePath,
+    [string]$FormalRuntimePath = '',
+
+    [string]$UpgradePlanPath = '',
+
+    [string]$UpgradePlanSha256 = '',
 
     [string]$CandidateRuntimePath = '',
 
@@ -21,6 +24,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not [string]::IsNullOrWhiteSpace($UpgradePlanPath)) {
+    & (Join-Path $PSScriptRoot 'invoke-runtime-directory-upgrade.ps1') -PlanPath $UpgradePlanPath -PlanSha256 $UpgradePlanSha256
+    return
+}
+if ([string]::IsNullOrWhiteSpace($FormalRuntimePath)) { throw 'FormalRuntimePath or UpgradePlanPath is required.' }
 $script:LifecycleSchema = 'redclaw.agent-lifecycle.v1'
 $script:JournalSchema = 'redclaw.coordination.journal.v1'
 $script:Approvals = @{}

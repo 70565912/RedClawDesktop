@@ -122,6 +122,9 @@ function Copy-ReleaseRuntime {
 
     New-Item -ItemType Directory -Force -Path $stagingDirectory | Out-Null
     Copy-Item -LiteralPath $desktop -Destination $stagingDirectory -Force
+    $codecTool = Join-Path $releaseDirectory 'redclaw_protocol_codec.exe'
+    if (-not (Test-Path -LiteralPath $codecTool -PathType Leaf)) { throw 'Release protocol codec tool is missing.' }
+    Copy-Item -LiteralPath $codecTool -Destination $stagingDirectory -Force
 
     foreach ($dll in @(Get-ChildItem -LiteralPath $releaseDirectory -File -Filter '*.dll')) {
         Copy-Item -LiteralPath $dll.FullName -Destination $stagingDirectory -Force
@@ -173,6 +176,7 @@ function Assert-StagingContent {
     if ($files -notcontains 'redclaw_desktop.exe') {
         throw 'Staging validation failed: redclaw_desktop.exe is missing.'
     }
+    if ($files -notcontains 'redclaw_protocol_codec.exe') { throw 'Staging validation failed: protocol codec is missing.' }
     if (-not ($files | Where-Object { $_ -eq 'platforms/qwindows.dll' })) {
         throw 'Staging validation failed: platforms/qwindows.dll is missing.'
     }
@@ -221,7 +225,11 @@ function Write-InnerManifest {
 
 function New-PortableArchive {
     New-Item -ItemType Directory -Force -Path $distDirectory | Out-Null
+    $resolvedDist = (Resolve-Path -LiteralPath $distDirectory).Path
+    $resolvedStaging = [IO.Path]::GetFullPath($stagingRoot)
+    if ((Split-Path $resolvedStaging) -ne $resolvedDist -or (Split-Path $resolvedStaging -Leaf) -ne "staging-$tagName") { throw 'Release staging path escaped the dist directory.' }
     if (Test-Path -LiteralPath $stagingRoot) {
+        if ((Get-Item -LiteralPath $stagingRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Release staging cannot be a reparse point.' }
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
     if (Test-Path -LiteralPath $zipPath) {
