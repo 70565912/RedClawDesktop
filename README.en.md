@@ -51,7 +51,7 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
    Get-FileHash .\RedClawDesktop-windows-x64-v0.1.1.zip -Algorithm SHA256
    ```
 
-3. Extract it into a new directory and run `redclaw_desktop.exe`. Host and Controller must use the same version.
+3. Extract it into a new directory and run `redclaw_desktop.exe`. Supported Host and Controller versions negotiate their common capabilities; connecting does not require identical versions or binaries.
 4. Select **Host** on the controlled PC and wait. Select **Controller** on the controlling PC, enter the Host device code, and connect.
 5. Once video is visible, enable remote input explicitly. Agent features also require a configured provider and registered projects on the Host.
 

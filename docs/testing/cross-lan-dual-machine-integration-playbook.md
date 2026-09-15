@@ -22,6 +22,8 @@ Get-FileHash .\release\Debug\redclaw_desktop.exe -Algorithm SHA256
 - 基线优先使用具有默认路由的物理 Ethernet/Wi-Fi。使用 VPN、TUN/TAP 或代理出口时应单独记录，不与物理出口基线混算。
 - 若直连受 CGNAT 或对称 NAT 阻断，配置双方可访问的 TURN 服务再重测。
 
+当前 GUI 提供 `Auto (system route)` 和具体网卡地址。Auto 由 Windows 路由决定，可能跟随 TUN/VPN 虚拟网卡；普通 HTTP/HTTPS 系统代理不承载当前 public-DHT 或 ICE UDP。Host 与 Controller 分别配置 System default、特定网卡和系统代理的后续修正见[网络出口选择与异地联线概率分析](../architecture/network-exit-selection-analysis.md)。在该修正完成前，正式异地直连基线使用显式物理网卡，代理/TUN 作为独立实验，TURN 作为难穿透网络的 relay 验证。
+
 ## 3. 构建与发布
 
 在每台电脑串行执行：
@@ -117,7 +119,7 @@ Host 已等待后，在 Controller 电脑运行：
 Controller 将 `-Role` 改为 `controller`。保存并核对：
 
 - 提交 SHA、EXE 或发布 ZIP SHA256；
-- 角色、运行 ID、ICE UDP 端口和映射结果；
+- 角色、运行 ID、有效网络出口、ICE UDP 端口和映射结果；
 - DHT、ICE 与三通道状态；
 - Host 捕获/编码/发送计数；
 - Controller 接收/重组/解码/呈现计数；

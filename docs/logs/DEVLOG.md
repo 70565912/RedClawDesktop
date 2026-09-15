@@ -2,6 +2,13 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
+## 2026-09-15 — M01-T03 qualification and Agent approval continuity
+
+- Rebuilt Debug and Release serially against the latest main baseline; all 102 CTests passed in 908 seconds. Both directions against the original public v0.1.0 Release binary displayed native-size real video with zero synthetic, decode and presentation failures. The first old-Host attempt failed before DHT publication; a fresh attempt passed, so that failure is retained as signaling evidence rather than hidden as a compatibility pass.
+- An isolated non-input desktop reproduced capture denial before the first frame: Host paused without trying alternate backends, but the Controller recovery window stayed hidden. Present the paused workspace on negotiated capture status without marking a frame ready. The same fixture then displayed the pause message and retry action with control disabled. It never switches or locks the user's input desktop.
+- Physical preparation through the existing Agent channel exposed pending approvals disappearing after background Provider output reported a running state. Preserve the pending request in the broker and keep its UI reachable with older peers; only an explicit decision, pause or turn termination releases it. Broker/UI regressions failed before the correction; the rebuilt Debug program and all four focused broker/UI/capture/protocol CTests then passed. Approval scope and the timeout policy are unchanged; final Release/full-suite and physical qualification follow.
+- Remote preparation remains incomplete: approval timeouts paused the peer task. No peer deployment, role switch or restart has occurred in this checkpoint. The approved remote-workspace extension is recorded separately for v0.1.3, after v0.1.2 qualification and release.
+
 ## 2026-09-15 — X00-T14 Agent synchronization rejection handling
 
 - Follow-up authorization now covers committing/pushing the scoped changes, rebuilding and restarting this machine as Host. Added the [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md) with established sender-throttling evidence, the unproven queue-estimator trigger, a separate static-quality investigation, immediate healthy baselines and recurrence-before-recovery evidence. Corrected the current task board's superseded missing-key blocker from the later peer result. Deployment/standby and physical incident acceptance remain separate gates.
@@ -23,6 +30,26 @@ This public log records release-level changes. Machine-specific paths, addresses
 - Seven new deterministic C++ tests cover fixed delay/offset, positive/negative clock-rate skew, actual delay steps, sample retention/reset/rejected feedback and single-line snapshot bounds. With no growing network delay, a +30 ppm receiver clock produces a 287 ms queue estimate after 160 virtual minutes and triggers severe congestion pressure; zero and -30 ppm produce zero queue. This characterizes the unchanged estimator, not measured endpoint skew or an incident fix.
 - The serial offline Debug desktop build and all three focused CTests (stream adaptation, video frame transport, transport recovery) passed. The adaptation executable passed all 13 cases. The desktop build retains existing `getenv` deprecation warnings. No Release/full-suite or physical deployment validation is claimed.
 - Later peer results reported successful candidate validation/restart and restored throughput, while the operator still reported static blur. The former missing-key blocker is superseded; queue-estimator root cause and physical quality acceptance remain open. See the current diagnostic handoff.
+
+## 2026-09-14 — M01-T03 capture recovery implementation (in progress)
+
+- Interface work: capture now exposes typed failure stage/category/HRESULT, local desktop context, availability and generation, plus an explicit retry request. Control v1 negotiates optional capture-status v1 fields on existing capability/source-activity messages; cursor pixels remain in the existing video stream.
+- Recovery must invalidate retained frames, request a fresh keyframe and pause/release Host input independently of peer capabilities. A supported receiver's presentation acknowledgment is the recovery completion boundary. Local Controller cursor appearance remains the system default.
+- Serial Debug/Release builds and all 102 release-checkpoint CTests passed. Twenty focused recovery/cursor checks passed; native encoder device recreation is an explicit local-driver skip because QSV device derivation failed. Real DDA/WGC/GDI probes had zero capture failures. New/new and both pre-upgrade Debug mixed directions passed real-video checks; a mixed DHT Host restart recovered. Both directions with the original published v0.1.1 Release ZIP passed after ZIP/EXE hash verification.
+- Added full-directory upgrade validation with owner-only plans, exact process identity, graceful stop, rollback, and a current-user independent worker; isolated corruption, identity, occupied-file, startup failure and Agent job-exit cases passed. The actual local GUI/runtime family passed plan-only preflight without being stopped. A matched native-size motion-scene comparison measured old/new total CPU 17.71%/17.53% and working set 480.9/490.0 MiB; no speedup claim is made. Baseline/worktree/runtime backups remain local. Physical rollout, v0.1.0 compatibility and publication are still in progress.
+
+## 2026-09-14 — DDA access-denied diagnosis
+
+- Reconstructed a local Host transition from successful Desktop Duplication capture to repeated frame-acquisition failures, followed by a capture-session restart that returned `E_ACCESSDENIED` and selected WGC. The surviving acquisition log omits the HRESULT, so the initiating desktop/driver event remains unproven.
+- Rebuilt the independent DDA PoC and capture runner. The PoC and three-second probes on both display outputs succeeded in the current ordinary user desktop, with no backend fallback or capture failures. Current desktop/token checks do not establish the historical failure context; persistent hardware incapability or a universal administrator requirement is not supported by these results.
+- Kept the active Controller connected and left product code unchanged. Track preservation of acquisition HRESULT and capture-thread desktop context, followed by appropriate DDA recovery validation, on `M01-T03`.
+
+## 2026-09-14 — Controller startup with multiple physical IPv4 addresses
+
+- Reproduced the Debug Controller launcher's false "No active physical Ethernet/Wi-Fi IPv4 default route" failure when one physical adapter has multiple eligible IPv4 addresses. The launcher now uses Windows route selection to identify the source address for that adapter's default gateway, retaining the existing physical-adapter and ambiguity checks.
+- Built and published Debug through the standard build entry point, verified matching build/published executable hashes, and launched the actual Controller command entry against the waiting remote Host. Public-DHT pairing completed and the Controller displayed the remote desktop with D3D11 H.264 decoding.
+- A roughly 69-second Controller sample added 451 received/reassembled frames, 421 GUI decodes, and 417 presentations with zero GUI decode/presentation failures. The remote Host snapshot independently showed nonzero capture, encode, and transmit rates with zero synthetic-frame rate. Saved a visual screenshot and exported the evidence manifest locally.
+- PowerShell parser validation and diff whitespace checks passed. PSScriptAnalyzer was unavailable locally; no full CTest, new Provider login, TURN, or long-duration acceptance is claimed by this operational checkpoint.
 
 ## 2026-09-14 — Agent conversation panel content-sized window
 
