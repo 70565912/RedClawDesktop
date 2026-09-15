@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <cstdint>
+#include "redclaw/capture/capture_recovery.h"
 #include <memory>
 #include <string>
 #include <string_view>
@@ -321,6 +322,8 @@ bool start_encoder_execution_from_bridge(
 	std::string* error_detail = nullptr);
 
 struct CaptureSessionConfig {
+	// Local evidence only, not a runtime-profile or wire setting.
+	std::string local_evidence_directory;
 	std::uint32_t adapter_index = 0;
 	std::uint32_t output_index = 0;
 	std::string display_id;
@@ -360,6 +363,11 @@ CaptureGeometryUpdateDecision evaluate_capture_geometry_update(
 	std::uint64_t current_revision);
 
 struct CaptureBackendTelemetry {
+	CaptureAvailability availability = CaptureAvailability::kStopped;
+	CaptureFailure last_failure;
+	CaptureDesktopContext failure_desktop_context;
+	std::uint64_t generation = 0;
+	std::uint32_t dda_rebuild_count = 0;
 	CaptureBackendType active_backend = CaptureBackendType::kUnknown;
 	std::uint32_t backend_switch_count = 0;
 	std::uint32_t fallback_attempt_count = 0;
@@ -418,6 +426,7 @@ bool run_capture_stability_probe(
 	std::string* error_detail = nullptr);
 
 struct CapturedFrame {
+	std::uint64_t capture_generation = 0;
 	std::uint32_t width = 0;
 	std::uint32_t height = 0;
 	std::uint32_t row_pitch = 0;
@@ -441,6 +450,7 @@ public:
 
 	bool start(const CaptureSessionConfig& config, std::string* error_detail = nullptr);
 	bool captureFrame(CapturedFrame* frame, std::string* error_detail = nullptr);
+	void retryCapture();
 	void configureNativeFrameDelivery(
 		bool capture_native_d3d11_textures,
 		bool skip_cpu_readback_when_native_texture_available);
@@ -450,6 +460,7 @@ public:
 	CaptureBackendTelemetry telemetry() const;
 
 private:
+	friend struct CaptureSessionTestAccess;
 	class Impl;
 	std::unique_ptr<Impl> impl_;
 };

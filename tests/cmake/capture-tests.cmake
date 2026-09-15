@@ -1,4 +1,10 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_capture_recovery_cursor_tests capture/capture_recovery_cursor_tests.cpp)
+target_link_libraries(redclaw_capture_recovery_cursor_tests PRIVATE redclaw_capture GTest::gtest_main)
+target_include_directories(redclaw_capture_recovery_cursor_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/capture/src ${PROJECT_SOURCE_DIR}/src/ui ${PROJECT_SOURCE_DIR}/src/protocol/include)
+redclaw_apply_warnings(redclaw_capture_recovery_cursor_tests)
+add_test(NAME redclaw_capture_recovery_cursor_tests COMMAND redclaw_capture_recovery_cursor_tests)
+
 add_executable(redclaw_capture_dda_min_capture_poc_tests
   capture/dda_min_capture_poc_tests.cpp
 )

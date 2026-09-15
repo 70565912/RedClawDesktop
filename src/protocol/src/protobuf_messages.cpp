@@ -194,6 +194,11 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_source_activity_revision(message.source_activity_revision);
     encoded.set_source_activity_state(static_cast<wire::DesktopSourceActivityStateV1>(message.source_activity_state));
     encoded.set_media_budget_waiting(message.media_budget_waiting);
+    encoded.set_capture_status_version(message.capture_status_version);
+    encoded.set_capture_status(message.capture_status);
+    encoded.set_capture_generation(message.capture_generation);
+    encoded.set_capture_first_frame_id(message.capture_first_frame_id);
+    encoded.set_capture_retry_requested(message.capture_retry_requested);
     encoded.set_reference_frame_id(message.reference_frame_id);
     encoded.set_reference_keyframe_id(message.reference_keyframe_id);
     encoded.set_stream_geometry_revision(message.stream_geometry_revision);
@@ -283,6 +288,11 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     if (!wire::DesktopSourceActivityStateV1_IsValid(static_cast<int>(encoded.source_activity_state()))) return false;
     message.source_activity_state = static_cast<DesktopSourceActivityStateV1>(encoded.source_activity_state());
     message.media_budget_waiting = encoded.media_budget_waiting();
+    message.capture_status_version = encoded.capture_status_version();
+    message.capture_status = encoded.capture_status();
+    message.capture_generation = encoded.capture_generation();
+    message.capture_first_frame_id = encoded.capture_first_frame_id();
+    message.capture_retry_requested = encoded.capture_retry_requested();
     message.reference_frame_id = encoded.reference_frame_id();
     message.reference_keyframe_id = encoded.reference_keyframe_id();
     message.stream_geometry_revision = encoded.stream_geometry_revision();

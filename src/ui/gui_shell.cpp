@@ -1,4 +1,5 @@
 #include "gui_shell.h"
+#include "playback/capture_playback_state.h"
 
 #if defined(REDCLAW_ENABLE_QT_GUI)
 #include "ui/gui_latency_probe.h"
@@ -2821,6 +2822,10 @@ bool launch_gui_shell(
   remote_control_status->setObjectName("statusCardTitle");
   remote_control_status->setWordWrap(true);
   remote_control_row->addWidget(remote_control_button);
+  auto* retry_capture_button = new QPushButton(QString::fromUtf8("重试画面"), playback_surface);
+  retry_capture_button->setObjectName("retryCaptureButton");
+  retry_capture_button->setVisible(false);
+  remote_control_row->addWidget(retry_capture_button);
   remote_control_row->addWidget(remote_control_status, 1);
   playback_surface_layout->addLayout(remote_control_row);
   playback_surface_layout->addWidget(playback_window_status);
@@ -2892,6 +2897,7 @@ bool launch_gui_shell(
   std::uint64_t source_activity_revision = 0;
   std::uint64_t source_reference_keyframe_id = 0;
   bool media_budget_waiting = false;
+  redclaw::ui::CapturePlaybackState capture_playback_state;
   std::uint64_t latest_displayable_frame_id = 0;
   std::uint64_t latest_displayable_keyframe_id = 0;
   std::uint64_t latest_presented_frame_id = 0;
@@ -2977,6 +2983,7 @@ bool launch_gui_shell(
         && remote_input_supported
         && remote_input_authorized
         && remote_input_frame_ready
+        && !capture_playback_state.waiting()
         && !remote_input_request_pending);
     if (!remote_input_supported) {
       remote_control_status->setText("View only — the peer has not advertised remote input support.");
@@ -3028,11 +3035,27 @@ bool launch_gui_shell(
       (void)send_input_control_request(false);
       return;
     }
+    if (!capture_playback_state.request_control()) { return; }
     remote_input_request_pending = true;
     if (!send_input_control_request(true)) {
       return;
     }
     refresh_remote_control_ui();
+  });
+  QObject::connect(retry_capture_button, &QPushButton::clicked, [&]() {
+    if (!capture_playback_state.retry_available() || !controller.is_running()) { return; }
+    redclaw::protocol::StreamControlMessageV1 request;
+    request.type = redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest;
+    request.session_epoch = "local";
+    request.message_id = ++gui_control_message_id;
+    request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    request.capture_status_version = 1;
+    request.capture_retry_requested = true;
+    request.payload = "user_capture_retry";
+    QString error;
+    if (!controller.send_control_message(request, &error)) {
+      append_log(session_log, QString("Capture retry failed: %1").arg(error));
+    }
   });
   auto* playback_geometry_controller = new PlaybackWindowGeometryController(
       playback_window, playback_canvas_widget);
@@ -4067,6 +4090,8 @@ bool launch_gui_shell(
     source_activity_revision = 0;
     source_reference_keyframe_id = 0;
     media_budget_waiting = false;
+    capture_playback_state = {};
+    retry_capture_button->setVisible(false);
     latest_displayable_frame_id = 0;
     latest_displayable_keyframe_id = 0;
     latest_presented_frame_id = 0;
@@ -4375,6 +4400,8 @@ bool launch_gui_shell(
       receiver_rendered_frames = direct_frame_presented_frames;
       latest_presented_frame_id = (std::max)(
           latest_presented_frame_id, direct_frame.frame_id);
+      capture_playback_state.presented(direct_frame.frame_id);
+      retry_capture_button->setVisible(capture_playback_state.retry_available());
       direct_frame_last_present_error.clear();
       const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
       if (direct_frame.timestamp_ms > 0 && now_ms >= static_cast<qint64>(direct_frame.timestamp_ms)) {
@@ -4409,7 +4436,7 @@ bool launch_gui_shell(
       // changes (resolution, backend).  Updating every frame causes Qt to
       // re-layout playback_window_status, which can deliver a resizeEvent to
       // playback_canvas_widget → resize_swap_chain() → DXGI flicker.
-      const QString new_status =
+      const QString new_status = capture_playback_state.waiting() ? QString::fromUtf8("画面已暂停，等待 Host 恢复采集。") :
           QString("Remote desktop live (%1x%2, backend: %3).")
               .arg(QString::number(direct_frame.width),
                    QString::number(direct_frame.height),
@@ -4422,7 +4449,7 @@ bool launch_gui_shell(
           set_runtime_banner("Live desktop connected.", "good");
         }
       }
-      if (!remote_input_frame_ready) {
+      if (!remote_input_frame_ready && !capture_playback_state.waiting()) {
         remote_input_frame_ready = true;
         playback_control_hint->hide_hint();
         refresh_remote_control_ui();
@@ -4924,10 +4951,26 @@ bool launch_gui_shell(
                                     std::uint64_t emitted_monotonic_us) {
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kSourceActivityState) {
+            const bool was_waiting = capture_playback_state.waiting();
+            capture_playback_state.observe(control);
+            retry_capture_button->setVisible(capture_playback_state.retry_available());
+            if (capture_playback_state.waiting()) {
+              remote_input_capture->pause(true, "Host capture unavailable.");
+              remote_input_frame_ready = false;
+              remote_input_request_pending = false;
+              set_playback_status_text(QString::fromUtf8("画面已暂停。恢复后请重新点击 Start Control 开启控制。"));
+              // Capture may pause before the first frame opens the remote window.
+              // Present the recovery controls without marking a frame as ready.
+              present_playback_window();
+            } else if (was_waiting) {
+              remote_input_frame_ready = true;
+              set_playback_status_text(QString::fromUtf8("画面已恢复。请点击 Start Control 开启控制。"));
+            }
+            refresh_remote_control_ui();
             source_activity_revision = control.source_activity_revision;
             source_reference_keyframe_id = control.reference_keyframe_id;
             media_budget_waiting = control.media_budget_waiting;
-            if (media_budget_waiting) {
+            if (media_budget_waiting && !capture_playback_state.waiting()) {
               set_playback_status_text("Bandwidth insufficient for a clear frame. Retrying; the last clear frame is retained.");
             }
             last_reported_displayable_frame_id = 0;
@@ -5022,7 +5065,11 @@ bool launch_gui_shell(
                 input_state_name.data(), static_cast<qsizetype>(input_state_name.size()));
             const QString input_reason_text = QString::fromLatin1(
                 input_reason_name.data(), static_cast<qsizetype>(input_reason_name.size()));
-            if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive) {
+            if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive
+                && !capture_playback_state.control_allowed()) {
+              remote_input_capture->pause(false, "Capture recovery requires a new user control request.");
+              (void)send_input_control_request(false);
+            } else if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive) {
               QString activation_error;
               if (!remote_input_capture->activate(&activation_error)) {
                 append_log(
@@ -5166,7 +5213,9 @@ bool launch_gui_shell(
               show_frozen_connection_hint();
             }
             if (connected) {
-              if (media_budget_waiting) {
+              if (capture_playback_state.waiting()) {
+                set_playback_status_text(QString::fromUtf8("画面已暂停，等待 Host 恢复采集。"));
+              } else if (media_budget_waiting) {
                 set_playback_status_text("Bandwidth insufficient for a clear frame. Retrying; the last clear frame is retained.");
               } else if (!remote_input_frame_ready) {
                 set_playback_status_text("Connection ready. Waiting for the first desktop frame.");
