@@ -104,6 +104,9 @@ TEST(AgentConversationPanel, WindowHeightFollowsConversationContent) {
   host.show();
   panel->set_current_task_id("task-resize", AgentTaskStateV1::kRunning);
   QApplication::processEvents();
+  // Let the initial coalesced resize settle before comparing content growth.
+  // In offscreen fixtures the initial 760px exceeds the available screen.
+  ASSERT_TRUE(wait_for_panel_render([&] { return host.height() < 760; }));
   const int before = host.height();
 
   AgentMessageEnvelopeV1 reply;

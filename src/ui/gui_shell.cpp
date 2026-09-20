@@ -93,7 +93,6 @@
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QSpinBox>
-#include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QStringList>
@@ -148,6 +147,7 @@
 #include "ui/connection_flow_model.h"
 #include "ui/connection_progress_page.h"
 #include "ui/desktop_navigation_panel.h"
+#include "ui/desktop_task_workspace.h"
 #include "ui/debug_control_protocol.h"
 #include "ui/playback_control_hint_overlay.h"
 #include "ui/playback_window_lifecycle.h"
@@ -2106,14 +2106,6 @@ bool launch_gui_shell(
       border: 1px solid #334155;
       border-radius: 18px;
     }
-    QSplitter#playbackAgentSplitter::handle {
-      background-color: #17243a;
-      border-left: 1px solid #263a57;
-      border-right: 1px solid #07101d;
-    }
-    QSplitter#playbackAgentSplitter::handle:hover {
-      background-color: #31598a;
-    }
     QWidget#agentConversationPanel {
       background-color: #0b1423;
       border: 1px solid #263a57;
@@ -2207,32 +2199,6 @@ bool launch_gui_shell(
       background-color: #132238;
       border-color: #334155;
       padding: 7px 11px;
-    }
-    QToolButton#agentPanelRail {
-      background-color: #0b1423;
-      border: 1px solid #263a57;
-      border-radius: 10px;
-      padding: 4px;
-    }
-    QToolButton#desktopNavigationToggle {
-      color: #cbd5e1;
-      background-color: #0a1424;
-      border: 1px solid #263a57;
-      border-radius: 8px;
-      padding: 5px 8px;
-      text-align: left;
-      font: 600 9pt "Segoe UI";
-    }
-    QFrame#desktopNavigationPane {
-      background-color: #08111f;
-      border: 1px solid #31598a;
-      border-radius: 10px;
-    }
-    QWidget#desktopNavigationResizeGrip {
-      background-color: #31598a;
-      border-radius: 3px;
-      margin-left: 44px;
-      margin-right: 44px;
     }
   )");
 
@@ -2863,131 +2829,44 @@ bool launch_gui_shell(
   playback_window->setWindowTitle("RedClaw");
   playback_window->setMinimumSize(360, 240);
   new PlaybackWindowLifecycle(playback_window, &window);
-  auto* playback_window_layout = new QHBoxLayout(playback_window);
-  playback_window_layout->setContentsMargins(16, 16, 16, 16);
+  auto* playback_window_layout = new QVBoxLayout(playback_window);
+  playback_window_layout->setContentsMargins(0, 0, 0, 0);
   playback_window_layout->setSpacing(0);
-  auto* playback_splitter = new QSplitter(Qt::Horizontal, playback_window);
-  playback_splitter->setObjectName("playbackAgentSplitter");
-  playback_splitter->setChildrenCollapsible(false);
-  playback_splitter->setHandleWidth(6);
-  auto* playback_surface = new QWidget(playback_splitter);
-  playback_surface->setObjectName("playbackSurface");
-  playback_surface->setMinimumWidth(640);
-  auto* playback_surface_layout = new QVBoxLayout(playback_surface);
-  playback_surface_layout->setContentsMargins(0, 0, 12, 0);
-  playback_surface_layout->setSpacing(10);
-  auto* playback_window_status = new QLabel(
-      "The live desktop opens here after the connection is ready.",
-      playback_surface);
-  playback_window_status->setObjectName("playbackWindowStatus");
-  playback_window_status->setWordWrap(true);
-  // Select the best available render backend at runtime.
-  const auto renderer_result = create_best_playback_renderer(playback_surface);
-  auto* playback_canvas_widget = renderer_result.widget;   // QWidget* for layout
-  auto* playback_window_canvas = renderer_result.canvas;   // PlaybackCanvas* for frame delivery
+  const auto renderer_result = create_best_playback_renderer(playback_window);
+  auto* playback_canvas_widget = renderer_result.widget;
+  auto* playback_window_canvas = renderer_result.canvas;
   playback_canvas_widget->setObjectName("playbackWindowCanvas");
+  playback_window_layout->addWidget(playback_canvas_widget, 1);
+  auto* task_workspace = new DesktopTaskWorkspace(playback_window, ui_settings);
+  auto* playback_window_status = task_workspace->connection_status();
+  playback_window_status->setText("The live desktop opens here after the connection is ready.");
+  auto* remote_control_button = task_workspace->control_button();
+  remote_control_button->setToolTip(
+      "Ctrl+Alt+Shift+Esc immediately exits capture. Ctrl+Alt+Del is not supported.");
+  auto* remote_control_status = task_workspace->control_status();
+  remote_control_status->setText("View only — waiting for Host authorization.");
+  auto* retry_capture_button = task_workspace->retry_button();
+  auto* playback_control_hint = new PlaybackControlHintOverlay(playback_canvas_widget);
+  auto* agent_panel = new AgentConversationPanel(ui_settings);
+  task_workspace->add_task(DesktopTask::kAgent, "Agent", agent_panel, QSize(420, 600));
 #ifdef _WIN32
-  auto* desktop_terminal_splitter = new QSplitter(Qt::Vertical, playback_surface);
-  desktop_terminal_splitter->setObjectName("desktopTerminalSplitter");
-  desktop_terminal_splitter->setChildrenCollapsible(false);
-  desktop_terminal_splitter->addWidget(playback_canvas_widget);
-  auto* terminal_panel = new TerminalPanel(controller.workspace_pipe(), ui_settings, desktop_terminal_splitter);
+  auto* terminal_panel = new TerminalPanel(controller.workspace_pipe());
+  task_workspace->add_task(DesktopTask::kTerminal, QString::fromUtf8("终端"), terminal_panel, QSize(760, 320));
   controller.set_workspace_shutdown([weak = QPointer<TerminalPanel>(terminal_panel)](std::function<void()> finished) {
     if (weak) weak->end_desktop(std::move(finished)); else finished();
   });
-  desktop_terminal_splitter->addWidget(terminal_panel);
-  desktop_terminal_splitter->setStretchFactor(0, 1);
-  desktop_terminal_splitter->setStretchFactor(1, 0);
-  desktop_terminal_splitter->setSizes({600, 240});
-  playback_surface_layout->addWidget(desktop_terminal_splitter, 1);
-#else
-  playback_surface_layout->addWidget(playback_canvas_widget, 1);
 #endif
-  auto* playback_control_hint = new PlaybackControlHintOverlay(playback_canvas_widget);
-  auto* remote_control_row = new QHBoxLayout();
-  auto* remote_control_button = new QPushButton("Start Control", playback_surface);
-  remote_control_button->setObjectName("remoteControlButton");
-  remote_control_button->setEnabled(false);
-  remote_control_button->setToolTip(
-      "Ctrl+Alt+Shift+Esc immediately exits capture. Ctrl+Alt+Del is not supported.");
-  auto* remote_control_status = new QLabel("View only — waiting for Host authorization.", playback_surface);
-  remote_control_status->setObjectName("statusCardTitle");
-  remote_control_status->setWordWrap(true);
-  remote_control_row->addWidget(remote_control_button);
-  auto* retry_capture_button = new QPushButton(QString::fromUtf8("重试画面"), playback_surface);
-  retry_capture_button->setObjectName("retryCaptureButton");
-  retry_capture_button->setVisible(false);
-  remote_control_row->addWidget(retry_capture_button);
-  remote_control_row->addWidget(remote_control_status, 1);
-  playback_surface_layout->addLayout(remote_control_row);
+  auto* desktop_navigation_panel = new DesktopNavigationPanel();
+  task_workspace->add_task(DesktopTask::kNavigation, QString::fromUtf8("桌面导航"), desktop_navigation_panel, QSize(360, 320));
   auto* file_transfer_panel = new FileTransferPanel(
-      [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); }, playback_surface);
-  playback_surface_layout->addWidget(file_transfer_panel);
-  playback_surface_layout->addWidget(playback_window_status);
-  auto* agent_sidebar = new QWidget(playback_splitter);
-  agent_sidebar->setObjectName("agentSidebar");
-  agent_sidebar->setMinimumWidth(320);
-  agent_sidebar->setMaximumWidth(560);
-  auto* agent_sidebar_layout = new QVBoxLayout(agent_sidebar);
-  agent_sidebar_layout->setContentsMargins(0, 0, 0, 0);
-  auto* agent_panel = new AgentConversationPanel(ui_settings);
-  auto* navigation_host = new DesktopNavigationHost(
-      agent_panel, ui_settings, agent_sidebar);
-  auto* desktop_navigation_panel = navigation_host->navigation_panel();
-  agent_sidebar_layout->addWidget(navigation_host);
+      [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); });
+  task_workspace->add_task(DesktopTask::kFiles, QString::fromUtf8("文件/剪贴板"), file_transfer_panel, QSize(640, 420));
   auto* agent_panel_presentation = new AgentPanelPresentation(agent_panel, &window);
   session_layout->addWidget(agent_panel_presentation->open_button());
-  auto* agent_panel_rail = new QToolButton(playback_window);
-  agent_panel_rail->setObjectName("agentPanelRail");
-  agent_panel_rail->setIcon(playback_window->style()->standardIcon(QStyle::SP_ArrowLeft));
-  agent_panel_rail->setToolTip("Show Agent panel");
-  agent_panel_rail->setFixedWidth(32);
-  agent_panel_rail->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-  playback_splitter->addWidget(playback_surface);
-  playback_splitter->addWidget(agent_sidebar);
-  playback_splitter->setStretchFactor(0, 1);
-  playback_splitter->setStretchFactor(1, 0);
-  playback_window_layout->addWidget(playback_splitter, 1);
-  playback_window_layout->addWidget(agent_panel_rail);
-  int preferred_agent_panel_width = ui_settings->value(
-      "controller/agent_panel_width", 420).toInt();
-  preferred_agent_panel_width = std::clamp(preferred_agent_panel_width, 320, 560);
-  bool agent_panel_expanded = ui_settings->value(
-      "controller/agent_panel_expanded", true).toBool();
-  auto apply_agent_panel_visibility = [&]() {
-    agent_sidebar->setVisible(agent_panel_expanded);
-    agent_panel_rail->setVisible(!agent_panel_expanded);
-    if (agent_panel_expanded) {
-      const int total_width = (std::max)(960, playback_splitter->width());
-      const int panel_width = (std::min)(
-          preferred_agent_panel_width,
-          (std::max)(320, static_cast<int>(total_width * 0.45)));
-      playback_splitter->setSizes({
-          (std::max)(640, total_width - panel_width), panel_width});
-    }
-    ui_settings->setValue("controller/agent_panel_expanded", agent_panel_expanded);
-  };
-  agent_panel->set_collapse_callback([&]() {
-    if (role_combo->currentText() == "host") {
-      agent_panel_presentation->hide_window();
-      return;
-    }
-    agent_panel_expanded = false;
-    apply_agent_panel_visibility();
+  agent_panel->set_collapse_callback([agent_panel_presentation, task_workspace, role_combo]() {
+    if (role_combo->currentText() == "host") agent_panel_presentation->hide_window();
+    else task_workspace->set_task_visible(DesktopTask::kAgent, false);
   });
-  QObject::connect(agent_panel_rail, &QToolButton::clicked, playback_window, [&]() {
-    agent_panel_expanded = true;
-    apply_agent_panel_visibility();
-  });
-  QObject::connect(playback_splitter, &QSplitter::splitterMoved, playback_window,
-      [&](int, int) {
-        if (!agent_panel_expanded || !agent_sidebar->isVisible()) {
-          return;
-        }
-        preferred_agent_panel_width = std::clamp(agent_sidebar->width(), 320, 560);
-        ui_settings->setValue("controller/agent_panel_width", preferred_agent_panel_width);
-      });
-  apply_agent_panel_visibility();
   std::uint64_t gui_control_message_id = 0;
   std::uint64_t source_activity_revision = 0;
   std::uint64_t source_reference_keyframe_id = 0;
@@ -3039,6 +2918,9 @@ bool launch_gui_shell(
   };
   auto* remote_input_capture = new ControllerRemoteInputCapture(
       playback_canvas_widget, playback_window);
+  task_workspace->set_local_interaction_callback([weak = QPointer<ControllerRemoteInputCapture>(remote_input_capture)] {
+    if (weak) weak->set_local_suspension(LocalInputSuspensionReason::kLocalUiFocus, true);
+  });
 #if defined(_WIN32) && !defined(NDEBUG)
   std::unique_ptr<QaInputProbe> qa_input_probe;
   std::unique_ptr<InputDiagnosticTarget> input_diagnostic_target;
@@ -3431,9 +3313,11 @@ bool launch_gui_shell(
         return send_agent_command(std::move(message), send_error);
       });
   agent_panel_presentation->set_desktop_host(role_combo->currentText() == "host");
+  task_workspace->set_enabled(role_combo->currentText() != "host");
   QObject::connect(role_combo, &QComboBox::currentTextChanged, &window,
-      [agent_panel_presentation](const QString& role) {
+      [agent_panel_presentation, task_workspace](const QString& role) {
         agent_panel_presentation->set_desktop_host(role == "host");
+        task_workspace->set_enabled(role != "host");
       });
 
   auto send_remote_log_request = [&](
@@ -4293,12 +4177,10 @@ bool launch_gui_shell(
     const QRect available = target_screen != nullptr
         ? target_screen->availableGeometry()
         : window.geometry();
-    const int desired_width = agent_panel_expanded
-        ? available.width() * 3 / 4
-        : available.width() / 2;
+    const int desired_width = available.width() * 3 / 4;
     const int target_width = (std::min)(
         available.width(),
-        (std::max)(agent_panel_expanded ? 1040 : 680, desired_width));
+        (std::max)(680, desired_width));
     const int target_height = (std::min)(
         available.height(),
         (std::max)(480, available.height() * 2 / 3));

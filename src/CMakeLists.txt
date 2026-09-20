@@ -108,6 +108,7 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/agent_conversation_viewport.cpp
     ui/agent_panel_presentation.cpp
     ui/desktop_navigation_panel.cpp
+    ui/desktop_task_workspace.cpp
     ui/file_transfer_panel.cpp
     ui/file_transfer_results_dialog.cpp
     ui/clipboard_copies_dialog.cpp

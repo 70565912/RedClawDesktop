@@ -63,6 +63,7 @@ public:
     void set_approval_callback(ApprovalCallback callback);
     void set_task_selected_callback(TaskSelectedCallback callback);
     void set_collapse_callback(CollapseCallback callback);
+    void set_window_auto_resize(bool enabled);
     void set_workspace_blocked(bool blocked);
 
     void set_transport_state(

@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 class QWidget;
+class QDialog;
 namespace redclaw::ui {
-void show_file_transfer_results(const QString& journal, QWidget* parent);
+QDialog* create_file_transfer_results_page(const QString& journal, QWidget* parent);
 }

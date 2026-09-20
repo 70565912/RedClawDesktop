@@ -15,7 +15,8 @@ namespace redclaw::ui {
 namespace {
 class ResultsDialog final : public QDialog {
 public:
-    ResultsDialog(const QString& journal, QWidget* parent) : QDialog(parent), watcher_(this) {
+    ResultsDialog(const QString& journal, QWidget* parent) : QDialog(parent, Qt::Widget), watcher_(this) {
+        setWindowFlags(Qt::Widget);
 #ifdef _WIN32
         journal_ = journal.toStdWString();
 #else
@@ -75,7 +76,7 @@ private:
     QPushButton *previous_ = nullptr, *next_ = nullptr;
 };
 }
-void show_file_transfer_results(const QString& journal, QWidget* parent) {
-    ResultsDialog dialog(journal, parent); dialog.exec();
+QDialog* create_file_transfer_results_page(const QString& journal, QWidget* parent) {
+    return new ResultsDialog(journal, parent);
 }
 }

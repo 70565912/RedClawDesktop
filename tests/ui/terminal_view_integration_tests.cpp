@@ -2,6 +2,7 @@
 #include "ui/terminal/terminal_view.h"
 #include "ui/terminal/workspace_pipe_server.h"
 #include "ui/terminal/terminal_panel.h"
+#include "ui/desktop_task_workspace.h"
 #include "redclaw/workspace/local_workspace_pipe.h"
 #include "redclaw/workspace/terminal_session.h"
 #include "redclaw/workspace/terminal_runtime_bridge.h"
@@ -15,8 +16,6 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QVBoxLayout>
-#include <QToolButton>
-#include <QSplitter>
 #include <QLabel>
 #ifdef _WIN32
 #include <Windows.h>
@@ -50,11 +49,10 @@ TEST(TerminalBridgeIntegration, RealKeyboardThroughPanelPipeAndWirePreservesShel
     window.setWindowFlag(Qt::WindowStaysOnTopHint);
     window.resize(1100, 700);
     auto* layout = new QVBoxLayout(&window);
-    auto* panel = new redclaw::ui::TerminalPanel(server, nullptr, &window, runtime, profile.path());
+    auto* panel = new redclaw::ui::TerminalPanel(server, &window, runtime, profile.path());
     layout->addWidget(panel);
     auto* view = static_cast<redclaw::ui::TerminalView*>(panel->findChild<QWidget*>("remoteTerminalView"));
-    auto* toggle = panel->findChild<QToolButton*>("terminalExpandButton");
-    ASSERT_TRUE(view && toggle);
+    ASSERT_TRUE(view);
     const auto pipe_name = server.listen();
     ASSERT_FALSE(pipe_name.isEmpty());
     server.set_expected_runtime_pid(static_cast<quint32>(QCoreApplication::applicationPid()));
@@ -97,7 +95,6 @@ TEST(TerminalBridgeIntegration, RealKeyboardThroughPanelPipeAndWirePreservesShel
         return spin_until([&] { pump(); return condition(); }, timeout);
     };
     window.show(); window.activateWindow();
-    toggle->click();
     ASSERT_TRUE(wait_for([&] { return view->ready() && !terminal_id.empty() && acknowledgments > 0; }));
     const std::string original_terminal = terminal_id;
     std::string keyboard_error;
@@ -226,30 +223,38 @@ TEST(TerminalBridgeIntegration, RealKeyboardThroughPanelPipeAndWirePreservesShel
 #endif
 }
 
-TEST(TerminalPanelLayout, CollapsedPaneGivesSpaceBackToDesktop) {
+TEST(TerminalPanelLayout, LazyFloatingContentSurvivesHideWithoutEndingDesktop) {
     redclaw::ui::WorkspacePipeServer pipe;
-    QWidget window;
-    window.resize(800, 600);
-    auto* layout = new QVBoxLayout(&window);
-    auto* splitter = new QSplitter(Qt::Vertical, &window);
-    splitter->setChildrenCollapsible(false);
-    auto* desktop = new QWidget(splitter);
-    desktop->setMinimumSize(320, 180);
-    desktop->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    splitter->addWidget(desktop);
-    auto* panel = new redclaw::ui::TerminalPanel(pipe, nullptr, splitter);
-    splitter->addWidget(panel);
-    splitter->setStretchFactor(0, 1); splitter->setStretchFactor(1, 0);
-    splitter->setSizes({600, 240});
-    layout->addWidget(splitter);
-    window.show();
-    ASSERT_TRUE(spin_until([&] { return splitter->height() > 500; }));
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QWidget owner;
+    owner.resize(900, 700);
+    auto* layout = new QVBoxLayout(&owner); layout->setContentsMargins(0, 0, 0, 0);
+    auto* canvas = new QWidget(&owner); layout->addWidget(canvas);
+    redclaw::ui::DesktopTaskWorkspace workspace(&owner, nullptr);
+    auto* panel = new redclaw::ui::TerminalPanel(pipe, nullptr,
+        directory.filePath("missing-runtime"), directory.filePath("profile"));
+    workspace.add_task(redclaw::ui::DesktopTask::kTerminal, "Terminal", panel, QSize(760, 320));
+    auto* view = panel->findChild<QWidget*>("remoteTerminalView");
+    ASSERT_TRUE(view);
+    owner.show(); QApplication::processEvents();
+    const auto size = canvas->size();
+    EXPECT_FALSE(panel->isVisible());
+    const auto labels = panel->findChildren<QLabel*>();
+    EXPECT_TRUE(std::none_of(labels.begin(), labels.end(), [](auto* label) {
+        return label->text().contains(QString::fromUtf8("终端无法启动"));
+    }));
+    workspace.set_task_visible(redclaw::ui::DesktopTask::kTerminal, true);
     QApplication::processEvents();
-    ASSERT_EQ(splitter->count(), 2);
-    EXPECT_LE(panel->height(), 40);
-    EXPECT_GE(desktop->height(), splitter->height() - 50)
-        << "desktop=" << desktop->geometry().height() << " panel=" << panel->geometry().height()
-        << " splitter=" << splitter->height();
+    EXPECT_TRUE(panel->isVisible());
+    workspace.task_window(redclaw::ui::DesktopTask::kTerminal)->close();
+    EXPECT_FALSE(panel->isVisible());
+    workspace.set_task_visible(redclaw::ui::DesktopTask::kTerminal, true);
+    EXPECT_EQ(panel->findChild<QWidget*>("remoteTerminalView"), view);
+    EXPECT_EQ(canvas->size(), size);
+    bool ended = false;
+    panel->end_desktop([&] { ended = true; });
+    EXPECT_TRUE(spin_until([&] { return ended; }, 2500));
 }
 
 TEST(TerminalBridgeIntegration, FastChannelReopenStillPublishesAnInputBarrier) {

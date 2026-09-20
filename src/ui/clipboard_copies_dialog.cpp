@@ -12,7 +12,8 @@ namespace redclaw::ui {
 using Action = protocol::WorkspaceActionV1;
 using Purpose = protocol::WorkspaceTransferPurposeV1;
 ClipboardCopiesDialog::ClipboardCopiesDialog(FileTransferPanel::Send send, QWidget* parent)
-    : QDialog(parent), send_(std::move(send)) {
+    : QDialog(parent, Qt::Widget), send_(std::move(send)) {
+    setWindowFlags(Qt::Widget);
     setObjectName("clipboardCopiesDialog"); setWindowTitle(QString::fromUtf8("对端剪贴板文件副本")); resize(620, 400);
     auto* layout = new QVBoxLayout(this);
     auto* description = new QLabel(QString::fromUtf8("这里保留剪贴板传送已复制的文件，包括粘贴取消后留下的完整文件。清理会删除选中批次的副本；中止后尚未清理的文件继续保留。"), this);
@@ -32,6 +33,8 @@ ClipboardCopiesDialog::ClipboardCopiesDialog(FileTransferPanel::Send send, QWidg
     connect(cleanup_, &QPushButton::clicked, this, [this] { select(Purpose::kClipboardCleanup); });
 }
 void ClipboardCopiesDialog::start() {
+    listing_ok_ = false; selected_id_.clear(); entries_->clear();
+    open_->setEnabled(false); cleanup_->setEnabled(false);
     request_ = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     protocol::StreamControlMessageV1 request;
     request.type = protocol::StreamControlMessageTypeV1::kWorkspace; request.session_epoch = "gui-workspace";
