@@ -2,6 +2,7 @@ add_library(redclaw_net STATIC
   src/net_module.cpp
   src/stun_server_probe.cpp
   src/ice_candidate_diagnostics.cpp
+  src/ice_udp_mapping.cpp
   src/video_frame_transport.cpp
   src/navigation_thumbnail_transport.cpp
   src/sent_video_frame_metadata.cpp

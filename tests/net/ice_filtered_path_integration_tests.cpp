@@ -42,6 +42,7 @@ public:
         } catch (...) { cleanup(); throw; }
     }
     ~FilteredMappings() { worker_.request_stop(); if (worker_.joinable()) worker_.join(); cleanup(); }
+    unsigned short external_port(std::size_t owner) const { return ports_[owner]; }
     std::string translate(std::size_t owner, const std::string& candidate) {
         std::istringstream input(candidate);
         std::vector<std::string> fields;
@@ -183,6 +184,74 @@ struct Scenario {
 };
 void PrintTo(const Scenario& scenario, std::ostream* out) { *out << scenario.name; }
 class FilteredIce : public ::testing::TestWithParam<Scenario> {};
+TEST(FilteredIce, RouterAssignedPortIsPublishedAndConnectsToUnchangedPeer) {
+    FilteredMappings mappings(false);
+    // Reserve an available base port; the proxy's externally advertised port is different.
+    const SOCKET probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ASSERT_NE(probe, INVALID_SOCKET);
+    sockaddr_in address{}; address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int length = sizeof(address);
+    const bool bound = bind(probe, reinterpret_cast<sockaddr*>(&address), length) == 0
+        && getsockname(probe, reinterpret_cast<sockaddr*>(&address), &length) == 0;
+    closesocket(probe);
+    ASSERT_TRUE(bound);
+    const auto internal_port = ntohs(address.sin_port);
+    ASSERT_NE(internal_port, mappings.external_port(0));
+
+    std::mutex mutex; std::condition_variable cv;
+    std::string offer, answer, mapped_candidate, peer_candidate, host_mid, peer_mid, received;
+    unsigned opened = 0;
+    IceConnectivityWrapper host, controller;
+    host.onLocalDescription([&](const auto& sdp, bool is_offer) {
+        if (is_offer) { std::lock_guard lock(mutex); offer = description_without_candidates(sdp, false); cv.notify_all(); }
+    });
+    controller.onLocalDescription([&](const auto& sdp, bool is_offer) {
+        if (!is_offer) { std::lock_guard lock(mutex); answer = description_without_candidates(sdp, false); cv.notify_all(); }
+    });
+    host.onLocalCandidate([&](const auto& candidate, const auto& mid) {
+        (void)mappings.translate(0, candidate); // fixture learns the native socket, not the advertised mapping.
+        if (candidate.find(" typ srflx ") != std::string::npos) {
+            std::lock_guard lock(mutex); mapped_candidate = candidate; host_mid = mid; cv.notify_all();
+        }
+    });
+    controller.onLocalCandidate([&](const auto& candidate, const auto& mid) {
+        auto translated = mappings.translate(1, candidate);
+        if (!translated.empty()) { std::lock_guard lock(mutex); peer_candidate = std::move(translated); peer_mid = mid; cv.notify_all(); }
+    });
+    auto on_open = [&](DataChannelKind kind) {
+        if (kind == DataChannelKind::kControl) { std::lock_guard lock(mutex); ++opened; cv.notify_all(); }
+    };
+    host.onDataChannelOpen(on_open); controller.onDataChannelOpen(on_open);
+    controller.onDataChannelMessage([&](DataChannelKind kind, const std::string& message) {
+        if (kind == DataChannelKind::kControl) { std::lock_guard lock(mutex); received = message; cv.notify_all(); }
+    });
+    IceGatheringConfig config; config.bind_address = "127.0.0.1";
+    config.data_channels = {DataChannelKind::kControl}; config.initiate_offer = false;
+    ASSERT_TRUE(controller.startGathering(config)); // existing peer has no new mapping configuration.
+    config.initiate_offer = true;
+    config.port_range_begin = config.port_range_end = internal_port;
+    config.udp_port_mapping = IceUdpPortMapping{"127.0.0.1", internal_port, "127.0.0.1", mappings.external_port(0)};
+    ASSERT_TRUE(host.startGathering(config));
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return !offer.empty() && !mapped_candidate.empty(); }));
+        EXPECT_NE(mapped_candidate.find("127.0.0.1 " + std::to_string(mappings.external_port(0)) + " typ srflx"), std::string::npos);
+        EXPECT_NE(mapped_candidate.find("rport " + std::to_string(internal_port)), std::string::npos);
+    }
+    ASSERT_TRUE(controller.applyRemoteDescription(offer, true));
+    ASSERT_TRUE(controller.applyRemoteCandidate(mapped_candidate, host_mid)); // no direct host route reaches the peer.
+    { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return !answer.empty() && !peer_candidate.empty(); })); }
+    ASSERT_TRUE(host.applyRemoteDescription(answer, false));
+    ASSERT_TRUE(host.applyRemoteCandidate(peer_candidate, peer_mid));
+    { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 18s, [&] { return opened == 2; })); }
+    ASSERT_TRUE(host.sendDataChannelMessage(DataChannelKind::kControl, "mapped-port-roundtrip"));
+    { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return received == "mapped-port-roundtrip"; })); }
+    ASSERT_TRUE(host.shutdown()); ASSERT_TRUE(controller.shutdown());
+    EXPECT_GT(mappings.forwarded.load(), 0U);
+    EXPECT_EQ(mappings.errors.load(), 0U);
+    EXPECT_GT(host.diagnostics().ice_check_totals[static_cast<std::size_t>(IceCheckKind::kResponseRx)], 0U);
+}
+
 TEST_P(FilteredIce, ProductionChecksDistinguishFilteringFromCredentialRejection) {
     const auto scenario = GetParam();
     FilteredMappings mappings(scenario.mapping_mismatch, scenario.malformed_stun);

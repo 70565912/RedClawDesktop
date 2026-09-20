@@ -140,6 +140,7 @@ UpnpPortMappingResult attempt_upnp_udp_port_mapping(
 
     if (mapping_error == UPNPCOMMAND_SUCCESS) {
         result.mapped = true;
+        result.internal_ip = lan_address;
         result.status = "mapped";
         result.external_port = parse_reserved_port(reserved_port);
         if (result.external_port == 0) {

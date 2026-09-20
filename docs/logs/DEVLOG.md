@@ -2,6 +2,13 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
+## 2026-09-20 — UPnP external endpoint publication (X00-T19)
+
+- The operator reports successful peer ICE probing of the router-assigned external port, while the exchanged candidate used the configured internal port. The local mapping receipt confirms these ports differ; this identifies the missing mapping-to-candidate path, not a new protocol-version requirement.
+- Local interface change: carry the successful UPnP internal/external UDP endpoint through `IceGatheringConfig`. The net wrapper publishes an additional standard server-reflexive candidate for the matching host socket, in both trickle candidates and candidate-bearing SDP. Native host/STUN/TURN candidates and authentication are unchanged; no wire schema, capability, or peer-version change is required. Per-generation callbacks capture the mapping, and only a validated matching IPv4 UDP base qualifies.
+- One Debug main build passed through `build.ps1 -NoPublish`. Four focused candidate/SDP cases and one native mapped-port ICE/control-message case passed, with zero skips. The initial parser case failed because its test-only native runtime had not initialized Winsock; after adding that fixture initialization, only the failed case was rebuilt/rechecked. The native case then passed on its first run, through an external-port-changing local forwarder with the peer using no new mapping configuration. This is native local interoperability evidence, not a completed old-release matrix or physical peer receipt.
+- Authorized delivery is commit/push plus a separate staged local Host deployment/restart, retaining the old complete runtime. Running artifact identity and live connection outcomes are recorded under the local reports directory. No full suite, GitHub Release, peer upgrade, router-rule deletion or unrelated network changes were performed by the code/validation phase.
+
 ## 2026-09-20 — Controller floating task workspace (M10-T03)
 
 - Replaced the fixed Agent sidebar, animated navigation container, terminal splitter and bottom control/file strips with an edge-to-edge remote canvas. A separate local workspace component owns four frameless native task windows, a draggable translucent wrapping button bar, relative geometry persistence, client-bound clamping and hide/restore behavior. Button toggles and window close share one hide-only state; minimization never overwrites the user's saved visibility.

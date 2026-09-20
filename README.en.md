@@ -67,7 +67,7 @@ The portable archive does not install a Windows service. Windows SmartScreen may
 
 - The default ICE UDP port is **55000** and can be changed in the GUI network settings.
 - Two different machines can both use 55000. Two instances on one machine need different ports; the project test scripts use Host 55000 and Controller 55001.
-- When UPnP is enabled, RedClawDesktop maps the actual ICE UDP port. A UPnP failure is visible in diagnostics and does not disable STUN, TURN, or ordinary hole punching.
+- When UPnP is enabled, RedClawDesktop maps the actual ICE UDP socket. If the router assigns a different external port, its actual external address and port are advertised as an additional standard ICE candidate; the local listening port is unchanged. A UPnP failure is visible in diagnostics and does not disable STUN, TURN, or ordinary hole punching.
 - For a manual router rule, select **UDP** and use the configured ICE port for both the internal and external port.
 - The DHT listening port is used only for rendezvous and does not need a manual mapping.
 

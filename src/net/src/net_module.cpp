@@ -736,17 +736,25 @@ public:
                 auto cb = s.gathering_state_callback_; const auto current = s.gathering_state_;
                 lock.unlock(); if (cb) cb(current);
             }));
-            peer->onLocalCandidate(guarded(generation, {}, 0, [](Impl& s, auto& lock, rtc::Candidate candidate) {
+            peer->onLocalCandidate(guarded(generation, {}, 0, [mapping = config.udp_port_mapping](Impl& s, auto& lock, rtc::Candidate candidate) {
                 const auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count());
                 s.candidate_observations_locked(s.candidate_diagnostics_.observe(true, candidate.candidate(), candidate.mid(), now));
+                const auto mapped = mapping ? mapped_udp_candidate(candidate.candidate(), *mapping) : std::nullopt;
+                if (mapped) s.candidate_observations_locked(s.candidate_diagnostics_.observe(true, *mapped, candidate.mid(), now));
                 auto cb = s.candidate_callback_;
-                lock.unlock(); if (cb) cb(candidate.candidate(), candidate.mid());
+                lock.unlock();
+                if (cb) {
+                    // Advertise the router-confirmed route first; retain the native candidate.
+                    if (mapped) cb(*mapped, candidate.mid());
+                    cb(candidate.candidate(), candidate.mid());
+                }
             }));
-            peer->onLocalDescription(guarded(generation, {}, 0, [](Impl& s, auto& lock, rtc::Description description) {
-                s.candidate_observations_locked(s.candidate_diagnostics_.set_description(true, std::string(description)));
+            peer->onLocalDescription(guarded(generation, {}, 0, [mapping = config.udp_port_mapping](Impl& s, auto& lock, rtc::Description description) {
+                const auto sdp = mapping ? with_mapped_udp_candidates(std::string(description), *mapping) : std::string(description);
+                s.candidate_observations_locked(s.candidate_diagnostics_.set_description(true, sdp));
                 auto cb = s.description_callback_;
-                lock.unlock(); if (cb) cb(std::string(description), description.type() == rtc::Description::Type::Offer);
+                lock.unlock(); if (cb) cb(sdp, description.type() == rtc::Description::Type::Offer);
             }));
             peer->onDataChannel(guarded(generation, {}, 0, [generation](Impl& s, auto& lock, std::shared_ptr<rtc::DataChannel> channel) {
                 lock.unlock(); s.bind_data_channel(std::move(channel), generation);
