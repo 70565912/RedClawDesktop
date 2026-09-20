@@ -4299,7 +4299,7 @@ int run_runtime_mode(
                     ? "desktop media data channel closed"
                     : "desktop control data channel closed");
         }
-        stream_media_pacer.reset();
+        stream_media_pacer.reset(true);
         stream_transport_estimator.reset();
         stream_congestion_controller.reset();
         stream_decoder_recovery_coordinator.reset();
@@ -8133,7 +8133,7 @@ int run_runtime_mode(
                     stream_decoder_height = 0;
                     stream_video_reassembly.reset();
                 }
-                stream_media_pacer.reset();
+                stream_media_pacer.reset(true);
                 stream_transport_estimator.reset();
                 stream_congestion_controller.reset();
                 stream_decoder_recovery_coordinator.reset();

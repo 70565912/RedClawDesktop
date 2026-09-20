@@ -335,6 +335,62 @@ TEST(RecoveryBudget, GeometryResetCancelsOldCompletionAndPreservesTransportSeque
     EXPECT_EQ(latest_sequence, 2U);
 }
 
+TEST(TransportRecovery, CaptureResetKeepsBothFeedbackEndpointsAdvancing) {
+    std::mutex mutex;
+    std::condition_variable cv;
+    SentMediaTransportPacket sent;
+    unsigned completed = 0;
+    MediaTransportEstimator estimator;
+    MediaTransportFeedbackRecorder receiver;
+    DesktopMediaSendPacer pacer;
+    ASSERT_TRUE(pacer.start([](auto) { return MediaPacerSendResult{.accepted = true}; },
+        [] { return MediaPacerTransportState{.open = true}; },
+        [&](const auto& packet) { std::lock_guard lock(mutex); sent = packet; },
+        [&](const auto& event) {
+            if (event.type == MediaPacerFrameEventType::kSent) {
+                { std::lock_guard lock(mutex); ++completed; }
+                cv.notify_all();
+            }
+        }, [&] { cv.notify_all(); }));
+    pacer.update_budget(20000, 10, 0);
+    for (unsigned index = 1; index <= 5; ++index) {
+        if (index == 5) {
+            // Only a real connection epoch resets all three sequence owners.
+            pacer.reset(true);
+            estimator.reset();
+            receiver.reset();
+            pacer.update_budget(20000, 10, 0);
+        } else if (index > 1) {
+            pacer.reset(); // Capture availability/region reset in the same connection.
+        }
+        ASSERT_TRUE(pacer.submit(frame(index, true)));
+        SentMediaTransportPacket packet;
+        {
+            std::unique_lock lock(mutex);
+            ASSERT_TRUE(cv.wait_for(lock, 2s, [&] {
+                return completed == index && pacer.telemetry().active_depth == 0;
+            }));
+            packet = sent;
+        }
+        const auto expected_sequence = index == 5 ? 1U : index;
+        ASSERT_EQ(packet.transport_sequence, expected_sequence);
+        ASSERT_TRUE(estimator.record_sent(packet));
+        const auto arrival_us = packet.steady_send_us + 5000000;
+        ASSERT_TRUE(receiver.record(packet.transport_sequence, arrival_us, packet.rate_revision));
+        const auto feedback = receiver.take_feedback(arrival_us + 100000);
+        ASSERT_TRUE(feedback.has_value());
+        ASSERT_TRUE(estimator.apply_feedback(*feedback, packet.steady_send_us + 150000, 1));
+        const auto estimate = estimator.snapshot(packet.steady_send_us + 150000, 10);
+        EXPECT_EQ(estimate.acknowledged_packets, expected_sequence);
+        EXPECT_EQ(estimate.in_flight_bytes, 0U);
+        EXPECT_EQ(estimate.ignored_feedback, 0U);
+        EXPECT_TRUE(estimate.feedback_fresh);
+        pacer.observe_ack_progress(estimate.acknowledged_packets);
+        pacer.update_budget(20000, 10, estimate.in_flight_bytes);
+    }
+    pacer.stop();
+}
+
 TEST(RecoveryBudget, FailedPartialFrameMetadataKeepsFirstSendTime) {
     SentVideoFrameMetadataRing ring(256);
     ASSERT_TRUE(ring.record({1, 100, 1, 1, 400, true}));
