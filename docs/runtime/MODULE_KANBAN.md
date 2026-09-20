@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the combined `v0.1.3` Developer Preview; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -77,7 +77,7 @@ Updated: 2026-09-20
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 Physical follow-up for `X00-T16` (2026-09-20): rebuilt/published Debug from `88a3803`; all 11 focused suites passed after three sandbox-sensitive normal-user reruns, with one opt-in paint case skipped. Public-DHT/ICE real H.264/D3D11 playback and one approved Cursor task passed. A target visibly consumed a GUI click and QA-protocol digit. Physical-keyboard capture, application paste and human-assisted workspace round trips are optional developer evaluations, not automatic follow-ups or release conditions. Source-derived capability versions still are not observed negotiation evidence. No peer restart/deployment occurred, and no full remote file/clipboard/terminal matrix is required.
 
@@ -102,7 +102,7 @@ Physical follow-up for `X00-T16` (2026-09-20): rebuilt/published Debug from `88a
 - `X00-T17` Automated-only test sequence and release policy — done; seven areas reuse 31 CTest targets with deduplication, guarded test-only builds, bounded serial runs and JSON/JUnit/case receipts. Twelve manual/native cases are excluded at CTest registration; three desktop probe targets remain developer-invoked only. The final affected 24-suite build/run passed with zero failures/skips. Self-regression checks selection, manual exclusions and result/exit classification. No app publication, role change or peer action. See [test matrix](../testing/test-matrix.md).
 - `X00-T18` Optional future native-fixture automation — planned, non-blocking; a developer may later make additional clipboard/input scenarios unattended and then register them as automatic cases. Current physical-key/application/foreground evaluations are the developer's choice, not mandatory work, automatic skips or release conditions.
 - `X00-T19` Publish actual UPnP external UDP endpoint to ICE — done; successful mappings produce an additional standard srflx candidate for the matching host socket in trickle/SDP, preserving native routes and existing wire compatibility. Debug main build and five focused candidate/SDP/native-channel cases passed (one Winsock fixture initialization correction and single-case recheck). No full matrix or release-version qualification was repeated. Authorized local Host delivery and live connection evidence remain in local run reports, distinct from peer-reported port-probe success.
-- `X00-T20` Long-session media slowdown — in-progress; bounded clock-rate compensation passed 15 timing/adaptation cases and media-transport CTest. Additional fixes preserve in-epoch capture sequence and verify NVENC forced IDR; three focused recovery cases, one developer-selected local NVENC H.264 standalone-IDR case and one Debug NoPublish main build passed. Implementation `f75ac19` is pushed and deployed; full installed/rollback bundles verify and the peer reconnected. Same-instance 40-second evidence: 21.32 transmitted FPS, ACK +1148, no added stream failures or pacer deadline drops. Prior evidence was reused, not a full matrix rerun. Next useful evidence is naturally occurring capture recovery and long-session behavior; do not trigger disruptive fixtures or repeated deployment automatically. Individual 3–4-second stalls and complete incident resolution remain unverified. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md).
+- `X00-T20` Long-session media slowdown — in-progress; feedback-driven sender candidate implemented and locally verified on 2026-09-21. Delivery/probe attribution, adaptive pacing/window/FIFO, fractional cadence and pre-encode memory reservations replace fixed sender working points; quality settings and wire schemas are unchanged. Nine new automatic cases and affected regressions passed after narrow failure fixes; Debug NoPublish candidate build and a final incremental relink passed. No push, deployment, restart or new peer validation. The existing 45-second Host baseline identifies keyframe token waits; actual field improvement remains unverified. Next: separately authorize candidate deployment and compare matched-scene bounded measurements under the remote result contract. See [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md).
 
 ## Release gate
 

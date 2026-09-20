@@ -2588,6 +2588,23 @@ private:
             return ReceivePacketResult::kFailed;
         }
 
+        if (packet->payload_limit_bytes != 0
+            && static_cast<std::size_t>(packet_->size) > packet->payload_limit_bytes) {
+            (void)consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
+            av_packet_unref(packet_);
+            ++diagnostics_.dropped_frame_count;
+            keyframe_requested_.store(true); // The rejected reference was never sent.
+            fail(EncoderExecutionFailureCategory::kOutputResourceLimit,
+                "encoded payload exceeds reserved sender memory (resource limited)", error_detail);
+            return ReceivePacketResult::kFailed;
+        }
+        if (packet->payload_limit_bytes != 0
+            && static_cast<std::size_t>(packet_->size) > packet->payload.capacity()) {
+            // Free before growth: vector's geometric reallocation could exceed
+            // the reserved single-frame bound, even with a legal output size.
+            std::vector<std::uint8_t>().swap(packet->payload);
+            packet->payload.reserve(static_cast<std::size_t>(packet_->size));
+        }
         packet->codec = profile_.codec;
         packet->keyframe = packet_contains_keyframe(profile_.codec, packet_);
         packet->timestamp_ms = consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);

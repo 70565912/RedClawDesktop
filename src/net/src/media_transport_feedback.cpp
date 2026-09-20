@@ -203,6 +203,49 @@ struct MediaTransportEstimator::Impl {
     std::uint32_t loss_per_mille = 0;
     std::uint32_t queue_delay_ms = 0;
     MediaTransportTimingSample timing_sample;
+    MediaSampleWindow feedback_intervals;
+    MediaSampleWindow feedback_round_trips;
+    MediaTransportEstimate delivery;
+    struct DeliveryTrain {
+        std::uint64_t generation = 0;
+        std::uint64_t sequence = 0;
+        std::uint64_t first_send_us = 0;
+        std::uint64_t first_arrival_us = 0;
+        std::uint64_t last_send_us = 0;
+        std::uint64_t last_arrival_us = 0;
+        std::size_t bytes = 0;
+        bool intact = true;
+        void start(const SentMediaTransportPacket& packet, std::uint64_t arrival_us) {
+            *this = {packet.probe_generation, packet.transport_sequence,
+                packet.steady_send_us, arrival_us, packet.steady_send_us, arrival_us, 0, true};
+        }
+        void add(const SentMediaTransportPacket& packet, std::uint64_t arrival_us) {
+            if (sequence == 0 || packet.transport_sequence != sequence + 1
+                || packet.steady_send_us < last_send_us || arrival_us < last_arrival_us) {
+                intact = false;
+                return;
+            }
+            bytes += packet.wire_bytes;
+            sequence = packet.transport_sequence;
+            last_send_us = packet.steady_send_us;
+            last_arrival_us = arrival_us;
+        }
+        std::uint32_t rate() const {
+            const auto duration = std::max(last_send_us - first_send_us,
+                last_arrival_us - first_arrival_us);
+            return !intact || duration == 0 ? 0 : static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                bytes * 8000ULL / duration, std::numeric_limits<std::uint32_t>::max()));
+        }
+    } probe_train;
+    std::optional<SentMediaTransportPacket> previous_delivery;
+    std::uint64_t previous_arrival_us = 0;
+
+    void abandon_probe_packet(const SentMediaTransportPacket& packet) {
+        if (packet.probe_generation == 0 || packet.probe_generation < probe_train.generation) return;
+        if (probe_train.generation != packet.probe_generation) probe_train.start(packet, 0);
+        probe_train.intact = false;
+        delivery.probe_rate_valid = false;
+    }
 
     void expire_in_flight(std::uint64_t host_steady_us, std::uint32_t smoothed_rtt_ms) {
         const std::uint64_t timeout_us = resolve_transport_in_flight_expiry_us(smoothed_rtt_ms);
@@ -210,6 +253,7 @@ struct MediaTransportEstimator::Impl {
                && host_steady_us >= sent.front().steady_send_us
                && host_steady_us - sent.front().steady_send_us >= timeout_us) {
             const auto expired = sent.front();
+            abandon_probe_packet(expired);
             sent.pop_front();
             in_flight_bytes = in_flight_bytes >= expired.wire_bytes
                 ? in_flight_bytes - expired.wire_bytes
@@ -281,6 +325,7 @@ bool MediaTransportEstimator::record_sent(const SentMediaTransportPacket& packet
         return false;
     }
     if (impl_->sent.size() == impl_->sent_capacity) {
+        impl_->abandon_probe_packet(impl_->sent.front());
         const auto evicted_bytes = impl_->sent.front().wire_bytes;
         impl_->in_flight_bytes -= evicted_bytes;
         impl_->sent.pop_front();
@@ -330,6 +375,11 @@ bool MediaTransportEstimator::apply_feedback(
     const bool revision_matches =
         feedback.observed_rate_revision == current_rate_revision;
 
+    std::uint64_t delivered_span_us = 0;
+    std::size_t delivered_span_bytes = 0;
+    std::size_t batch_bytes = 0;
+    bool app_limited = true;
+
     for (const auto& arrival : feedback.arrivals) {
         bool blocked_by_newer_revision = false;
         while (!impl_->sent.empty()
@@ -346,6 +396,7 @@ bool MediaTransportEstimator::apply_feedback(
                 impl_->outcome_window.push_back({arrival.receiver_steady_us, received});
             }
             if (!received) {
+                impl_->abandon_probe_packet(sent);
                 ++impl_->lost_packets;
                 continue;
             }
@@ -354,6 +405,40 @@ bool MediaTransportEstimator::apply_feedback(
                 continue;
             }
             impl_->acknowledged_window.push_back({arrival.receiver_steady_us, sent.wire_bytes});
+            batch_bytes += sent.wire_bytes;
+            // Pair intervals use clocks only within their owning endpoint.
+            // Taking the slower span rejects ACK compression. Idle inter-frame
+            // gaps are not link-capacity samples; intra-frame trains still are.
+            if (impl_->previous_delivery && !sent.application_limited
+                && sent.transport_sequence == impl_->previous_delivery->transport_sequence + 1
+                && sent.steady_send_us >= impl_->previous_delivery->steady_send_us
+                && arrival.receiver_steady_us >= impl_->previous_arrival_us) {
+                const auto span = std::max(
+                    sent.steady_send_us - impl_->previous_delivery->steady_send_us,
+                    arrival.receiver_steady_us - impl_->previous_arrival_us);
+                if (span != 0) {
+                    delivered_span_us += span;
+                    delivered_span_bytes += sent.wire_bytes;
+                    app_limited = false;
+                }
+            }
+            impl_->previous_delivery = sent;
+            impl_->previous_arrival_us = arrival.receiver_steady_us;
+            impl_->delivery.latest_acknowledged_sequence = sent.transport_sequence;
+            if (host_steady_us >= sent.steady_send_us) {
+                impl_->feedback_round_trips.add(static_cast<double>(host_steady_us - sent.steady_send_us));
+            }
+            if (sent.probe_generation != 0) {
+                if (impl_->probe_train.generation != sent.probe_generation) {
+                    impl_->probe_train.start(sent, arrival.receiver_steady_us);
+                } else {
+                    impl_->probe_train.add(sent, arrival.receiver_steady_us);
+                }
+                impl_->delivery.probe_generation = sent.probe_generation;
+                impl_->delivery.probe_delivery_bitrate_kbps = impl_->probe_train.rate();
+                impl_->delivery.probe_acknowledged_bytes = impl_->probe_train.bytes;
+                impl_->delivery.probe_rate_valid = impl_->probe_train.rate() != 0;
+            }
             double relative_transit_us = 0.0;
             if (!impl_->anchor_ready) {
                 impl_->anchor_ready = true;
@@ -431,6 +516,21 @@ bool MediaTransportEstimator::apply_feedback(
         return false;
     }
     impl_->last_feedback_rate_revision = current_rate_revision;
+    if (batch_bytes != 0 && impl_->last_feedback_host_us != 0
+        && host_steady_us > impl_->last_feedback_host_us) {
+        impl_->feedback_intervals.add(static_cast<double>(host_steady_us - impl_->last_feedback_host_us));
+    }
+    impl_->delivery.delivery_rate_valid = delivered_span_us != 0;
+    impl_->delivery.application_limited = app_limited;
+    impl_->delivery.delivery_bitrate_kbps = delivered_span_us == 0 ? 0
+        : static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            delivered_span_bytes * 8000ULL / delivered_span_us,
+            std::numeric_limits<std::uint32_t>::max()));
+    impl_->delivery.acknowledged_batch_bytes = batch_bytes;
+    impl_->delivery.feedback_interval_us = static_cast<std::uint64_t>(impl_->feedback_intervals.quantile(0.5));
+    impl_->delivery.feedback_jitter_us = static_cast<std::uint64_t>(std::max(0.0,
+        impl_->feedback_intervals.quantile(0.95) - impl_->feedback_intervals.quantile(0.5)));
+    impl_->delivery.feedback_round_trip_us = static_cast<std::uint64_t>(impl_->feedback_round_trips.quantile(0.95));
     impl_->last_feedback_host_us = host_steady_us;
     impl_->last_current_feedback_id = feedback.feedback_id;
     return true;
@@ -441,7 +541,7 @@ MediaTransportEstimate MediaTransportEstimator::snapshot(
     std::uint32_t smoothed_rtt_ms) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->expire_in_flight(host_steady_us, smoothed_rtt_ms);
-    MediaTransportEstimate result;
+    MediaTransportEstimate result = impl_->delivery;
     result.feedback_sample_id = impl_->last_current_feedback_id;
     result.rate_revision = impl_->last_feedback_rate_revision;
     result.acknowledged_bitrate_kbps = impl_->acknowledged_bitrate_kbps;
@@ -455,9 +555,12 @@ MediaTransportEstimate MediaTransportEstimator::snapshot(
     result.ignored_feedback = impl_->ignored_feedback;
     if (impl_->last_feedback_host_us != 0 && host_steady_us >= impl_->last_feedback_host_us) {
         result.feedback_age_ms = (host_steady_us - impl_->last_feedback_host_us) / 1000ULL;
+        const std::uint64_t observed_round_us = std::max<std::uint64_t>({
+            result.feedback_round_trip_us, result.feedback_interval_us + result.feedback_jitter_us,
+            static_cast<std::uint64_t>(smoothed_rtt_ms) * 1000ULL,
+            impl_->sent_frame_interval_ms * 1000ULL, 1000ULL});
         const std::uint64_t fresh_limit_ms = std::min<std::uint64_t>(5000,
-            std::max({1000ULL, impl_->sent_frame_interval_ms * 3ULL,
-                static_cast<std::uint64_t>(smoothed_rtt_ms) * 4ULL}));
+            (observed_round_us * 3 + 999) / 1000);
         result.feedback_fresh = result.feedback_age_ms <= fresh_limit_ms;
     }
     return result;
@@ -532,6 +635,12 @@ void MediaTransportEstimator::reset() {
     impl_->loss_per_mille = 0;
     impl_->queue_delay_ms = 0;
     impl_->timing_sample = {};
+    impl_->delivery = {};
+    impl_->feedback_intervals.reset();
+    impl_->feedback_round_trips.reset();
+    impl_->probe_train = {};
+    impl_->previous_delivery.reset();
+    impl_->previous_arrival_us = 0;
 }
 
 }  // namespace redclaw::net

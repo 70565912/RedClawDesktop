@@ -2,6 +2,7 @@ add_library(redclaw_diag STATIC
   src/diag_module.cpp
   src/runtime_status_parser.cpp
   src/operation_timing.cpp
+  src/host_frame_trace_file.cpp
 )
 
 target_link_libraries(redclaw_diag
