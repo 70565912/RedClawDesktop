@@ -9,18 +9,19 @@ class QPushButton;
 class QWidget;
 
 namespace redclaw::ui {
+class AgentConversationPanel;
 
-// One conversation model/widget, hosted either in the playback sidebar or
+// One conversation model/widget, hosted either in the floating workspace or
 // a modeless window. Closing the window never interrupts its task.
 class AgentPanelPresentation final : public QObject {
 public:
-    AgentPanelPresentation(QWidget* panel, QWidget* owner);
+    AgentPanelPresentation(AgentConversationPanel* panel, QWidget* owner);
     void set_desktop_host(bool host);
     void hide_window();
     [[nodiscard]] QPushButton* open_button() const;
 private:
-    QPointer<QWidget> panel_;
-    QPointer<QLayout> sidebar_layout_;
+    QPointer<AgentConversationPanel> panel_;
+    QPointer<QLayout> controller_layout_;
     QDialog* window_;
     QPushButton* open_;
 };

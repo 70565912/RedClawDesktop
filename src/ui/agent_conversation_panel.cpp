@@ -230,6 +230,7 @@ struct AgentConversationPanel::Impl {
     bool rebuilding = false;
     bool rebuild_queued = false;
     bool window_resize_queued = false;
+    bool window_auto_resize = true;
     std::uint64_t next_item_id = 1;
     QString rendered_task;
 
@@ -745,13 +746,14 @@ struct AgentConversationPanel::Impl {
 
     void queue_window_resize() {
         owner->updateGeometry();
-        if (window_resize_queued) return;
+        if (!window_auto_resize || window_resize_queued) return;
         window_resize_queued = true;
         // Streaming output can update the row model many times per second.
         // Coalesce those changes so a top-level resize does not compete with
         // text layout or cause repeated viewport commits.
         QTimer::singleShot(80, owner, [this] {
             window_resize_queued = false;
+            if (!window_auto_resize) return;
             QWidget* top = owner->window();
             if (top == nullptr || top == owner) return;
             const QScreen* screen = top->screen();
@@ -1033,6 +1035,10 @@ void AgentConversationPanel::set_approval_callback(ApprovalCallback callback) {
 
 void AgentConversationPanel::set_task_selected_callback(TaskSelectedCallback callback) {
     impl_->task_selected_callback = std::move(callback);
+}
+
+void AgentConversationPanel::set_window_auto_resize(bool enabled) {
+    impl_->window_auto_resize = enabled;
 }
 
 void AgentConversationPanel::set_collapse_callback(CollapseCallback callback) {

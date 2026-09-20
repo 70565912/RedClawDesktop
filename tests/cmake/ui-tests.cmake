@@ -1,7 +1,7 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
 if(TARGET redclaw_ui_terminal)
   add_executable(redclaw_terminal_view_integration_tests ui/terminal_view_integration_tests.cpp)
-  target_link_libraries(redclaw_terminal_view_integration_tests PRIVATE redclaw_ui_terminal redclaw_workspace GTest::gtest)
+  target_link_libraries(redclaw_terminal_view_integration_tests PRIVATE redclaw_ui_terminal redclaw_ui_connection_flow redclaw_workspace GTest::gtest)
   redclaw_apply_warnings(redclaw_terminal_view_integration_tests)
   add_test(NAME redclaw_terminal_view_integration_tests COMMAND redclaw_terminal_view_integration_tests
     --gtest_filter=-TerminalBridgeIntegration.RealKeyboardThroughPanelPipeAndWirePreservesShellOnReconnect:TerminalViewIntegration.BundledSurfaceParsesRealShellAndSurvivesCollapse)
@@ -107,6 +107,7 @@ if(TARGET redclaw_ui_connection_flow)
     ui/agent_conversation_panel_tests.cpp
     ui/connection_flow_tests.cpp
     ui/desktop_navigation_panel_tests.cpp
+    ui/desktop_task_workspace_tests.cpp
     ui/file_transfer_panel_tests.cpp
     ui/runtime_maintenance_context_tests.cpp
     ui/playback_frame_progress_tests.cpp

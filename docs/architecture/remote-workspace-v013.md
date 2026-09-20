@@ -1,16 +1,16 @@
 # Remote workspace v0.1.3
 
-Status: implemented contract for the combined v0.1.3 mainline release. See X00-T16 in [MODULE_KANBAN](../runtime/MODULE_KANBAN.md) for qualification and publication status.
+Status: implemented workspace contract from v0.1.3, with the local floating-window presentation revision tracked as M10-T03. The floating presentation is an unpublished working-tree change; it does not change the published v0.1.3 package. See [MODULE_KANBAN](../runtime/MODULE_KANBAN.md) for qualification and publication status.
 
 On 2026-09-20 the operator selected one v0.1.3 Developer Preview from current main, including both the unreleased v0.1.2 capture/recovery work and this workspace. The earlier requirement to publish v0.1.2 first is superseded. Task status belongs in [MODULE_KANBAN](../runtime/MODULE_KANBAN.md).
 
 ## Product contract
 
 - A valid desktop connection authorizes this connection's file, clipboard and terminal operations. Do not add a second approval, permission checkbox or per-command confirmation. A future connection password is outside this change. Execute under the Host's ordinary current-user permissions without automatic elevation.
-- Keep the Controller's system cursor unchanged. Keep the right Agent sidebar separate from the desktop and terminal.
+- Keep the Controller's system cursor unchanged. Let the remote canvas fill the workspace; Agent, terminal, navigation and files/clipboard use independent, owned floating task windows.
 - File transfer supports both directions, multiple files and recursive folders, including empty folders. The remote browser exposes current-user-accessible directories, not only Agent projects.
 - Intercept Ctrl+V only when the remote desktop canvas owns keyboard forwarding. Send the current local clipboard snapshot on demand: Unicode text, HTML/RTF, images and actual file/folder lists. Do not continuously synchronize clipboards. Copy semantics never delete the source.
-- The terminal is a complete interactive session beneath the desktop, with expandable/collapsible height. It shares the remote desktop session lifecycle; collapsing does not stop its processes and there is no separate terminal-close control.
+- The terminal is a complete interactive session in its floating window. It shares the remote desktop session lifecycle; hiding the task window does not end the Shell. Only the existing desktop-session shutdown sends terminal End.
 
 ## Transfer transaction and operation gate
 
@@ -30,7 +30,21 @@ On 2026-09-20 the operator selected one v0.1.3 Developer Preview from current ma
 - Terminal text paste uses terminal input and never changes the Host system clipboard. It obeys the transfer gate.
 - A transient reconnect within the same desktop session preserves the terminal process and suspends input. Ending the desktop session, closing the remote window or Host exit ends the terminal tree. A new session does not replay old commands.
 - Bound terminal output, backpressure and scrollback; never discard live terminal-control bytes in the middle of a stream to hide backlog. Make scrollback eviction visible.
-- Replace the navigation overlay with a height-animated layout item above Agent. Preserve usable Agent composer space at small window sizes. Remember navigation height and terminal visibility locally.
+- Navigation is independent of Agent. Remove the old animated navigation container and terminal/sidebar splitters rather than keeping parallel layout paths.
+
+## Floating presentation revision (M10-T03)
+
+- `DesktopTaskWorkspace` owns presentation, not remote sessions: registration, visibility, relative geometry, stacking and local settings. `gui_shell` attaches the existing content instances and callbacks. No online protocol, capability or permission interface changes.
+- Each task uses a frameless owned `Qt::Tool` window constrained to the playback owner's client rectangle. These native windows can cover the existing D3D11 canvas and WebView2 surface without changing media rendering. No global topmost flag or separate taskbar entry.
+- Default outer sizes in logical pixels: Agent 420×600, terminal 760×320, navigation 360×320, files/clipboard 640×420. First opening centers the task in the current client area and clamps its dimensions. Title bars drag; edges resize; clicking a task raises it, leaving the button bar accessible.
+- The button bar initially sits at top center and can be dragged anywhere inside the client area. Four checkable task buttons mirror each window's hide/close action. Start/Pause Control, compact connection/control state and conditional capture retry retain existing behavior. The bar wraps at narrow widths; full status is available in tooltips. It neither auto-hides nor has a close button.
+- The bar paints an approximately 80%-opaque background without applying opacity to its labels/buttons. It combines `WA_TranslucentBackground` and `FramelessWindowHint` as required for [Windows translucent Qt widgets](https://doc.qt.io/qt-6/qwidget.html#creating-translucent-windows). Task content remains opaque.
+- Store requested visibility, relative task rectangles and button-bar position under `controller/floating_workspace/v1`. First use ignores old sidebar/navigation/terminal expansion preferences and hides all tasks. Owner moves, resizes, minimization/restoration and screen/DPI changes constrain actual geometry. Temporary owner hiding/minimization does not overwrite the user's requested visibility or preferred layout.
+- Hide/close never destroys the task's content or cancels work. Agent retains conversation and draft, disables message-driven outer-window resizing in Controller mode, and retains existing Host independent-window behavior. Terminal initializes on first opening, pauses hidden input and preserves its existing Shell/output/backpressure lifecycle.
+- Files, remote browse, paginated results and clipboard-copy management are nonmodal pages inside the file task. Native local file selection and necessary confirmations remain native. Hiding preserves selections/progress; only explicit transfer Cancel cancels the operation.
+- Tool and child-control interaction is local: suspend remote forwarding and release held input through the existing empty-state synchronization. Automatic focus restoration after hiding a tool cannot resume forwarding; an explicit canvas click is required and cannot clear transfer, consent or other independent gates. Tool close/drag/release must not fall through to the peer.
+- Focused unattended tests cover visibility/button synchronization, retained task state, first-open sizing, relative persistence, bounds, owner minimization/restoration, narrow toolbar layout, local input isolation and unchanged canvas/viewport commits. Update deleted-layout tests instead of preserving obsolete assertions. Reuse unaffected functional evidence; no complete matrix or cross-LAN rerun. Visual, physical-keyboard and special-hardware evaluation remains optional developer work, outside automatic/release requirements.
+- Build this revision with `build.ps1 -Configuration Debug -NoPublish`; it must not replace a running runtime, restart either endpoint or imply GitHub publication.
 - For new messages and streaming deltas in the selected Agent conversation, scroll both the outer conversation and the newest message's inner text view to the final laid-out tail. Without new content, preserve manual history browsing. Other tasks do not steal selection.
 
 ## Host self-restart and update

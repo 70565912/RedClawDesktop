@@ -13,12 +13,8 @@
 #include <vector>
 
 class QComboBox;
-class QFrame;
 class QLabel;
 class QResizeEvent;
-class QSettings;
-class QToolButton;
-class QVariantAnimation;
 
 namespace redclaw::ui {
 
@@ -79,32 +75,5 @@ class DesktopNavigationPanel final : public QWidget {
   RegionRequestCallback request_callback_;
 };
 
-class DesktopNavigationHost final : public QWidget {
- public:
-  explicit DesktopNavigationHost(
-      QWidget* content,
-      QSettings* settings,
-      QWidget* parent = nullptr);
-
-  [[nodiscard]] DesktopNavigationPanel* navigation_panel() const;
-  [[nodiscard]] bool expanded() const;
-  [[nodiscard]] int navigation_height() const;
-  void set_expanded(bool expanded);
-  void set_navigation_height(int height);
-
- protected:
-  void resizeEvent(QResizeEvent* event) override;
-
- private:
-  void update_navigation_height(bool animate = false);
-
-  QSettings* settings_ = nullptr;
-  QToolButton* toggle_ = nullptr;
-  QWidget* content_container_ = nullptr;
-  QFrame* pane_ = nullptr;
-  QVariantAnimation* slide_ = nullptr;
-  DesktopNavigationPanel* navigation_panel_ = nullptr;
-  int navigation_height_ = 260;
-};
 
 }  // namespace redclaw::ui

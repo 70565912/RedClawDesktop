@@ -17,6 +17,7 @@
 #include <QListWidget>
 #include <QPointer>
 #include <QProgressBar>
+#include <QStackedWidget>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QUuid>
@@ -45,7 +46,8 @@ QString amount(std::uint64_t bytes) {
 class RemoteBrowser final : public QDialog {
 public:
     RemoteBrowser(FileTransferPanel::Send send, bool folders_only, QWidget* parent)
-        : QDialog(parent), send_(std::move(send)), folders_only_(folders_only) {
+        : QDialog(parent, Qt::Widget), send_(std::move(send)), folders_only_(folders_only) {
+        setWindowFlags(Qt::Widget);
         setWindowTitle(QString::fromUtf8("选择对端文件或目录")); resize(720, 480);
         auto* layout = new QVBoxLayout(this); auto* row = new QHBoxLayout;
         path_ = new QLineEdit(this); path_->setPlaceholderText(QString::fromUtf8("对端目录路径"));
@@ -86,8 +88,8 @@ public:
             if (selected_.isEmpty()) { status_->setText(QString::fromUtf8("请选择文件或目录。")); return; }
             accept();
         });
-        browse({});
     }
+    void start() { browse({}); }
     void receive(const Control& message) {
         if (!message.workspace || message.request_id != request_) return;
         const auto& details = *message.workspace;
@@ -131,7 +133,10 @@ struct FileTransferPanel::Impl {
     QString results_path;
     QLabel* status = nullptr;
     QProgressBar* progress = nullptr;
-    QPointer<QDialog> selection_dialog;
+    QStackedWidget* pages = nullptr;
+    QWidget* selection_page = nullptr;
+    QPointer<QDialog> results_page;
+    QString loaded_results_path;
     QPointer<RemoteBrowser> browser;
     QPointer<ClipboardCopiesDialog> copies_dialog;
     bool available = false, runtime_busy = false, requested = false, notified_busy = false;
@@ -155,71 +160,100 @@ struct FileTransferPanel::Impl {
         copies->setEnabled(copies_available && !blocked);
         cancel->setVisible(blocked); progress->setVisible(blocked);
         results->setVisible(!results_path.isEmpty());
-        if (selection_dialog) selection_dialog->setEnabled(!blocked);
-        if (copies_dialog) copies_dialog->setEnabled(!blocked);
+        if (selection_page) selection_page->setEnabled(available && !blocked);
+        if (browser) browser->setEnabled(available && !blocked);
+        if (copies_dialog) copies_dialog->setEnabled(copies_available && !blocked);
         if (blocked != notified_busy) { notified_busy = blocked; if (busy_changed) busy_changed(blocked); }
     }
-    QStringList remote_select(bool folders) {
-        RemoteBrowser dialog(send, folders, owner->window()); browser = &dialog;
-        const auto accepted = dialog.exec() == QDialog::Accepted;
-        browser.clear(); return accepted ? dialog.selected() : QStringList{};
+    void remote_select(bool folders, std::function<void(const QStringList&)> selected) {
+        if (browser || busy() || !available) return;
+        auto* page = new RemoteBrowser(send, folders, pages); browser = page;
+        pages->addWidget(page); pages->setCurrentWidget(page);
+        QObject::connect(page, &QDialog::finished, owner, [this, page, selected = std::move(selected)](int result) {
+            if (result == QDialog::Accepted && !busy() && available) selected(page->selected());
+            pages->setCurrentWidget(selection_page);
+            pages->removeWidget(page); browser.clear(); page->deleteLater();
+        });
+        page->start();
+    }
+    void show_selection() {
+        if (browser) browser->reject();
+        pages->setCurrentWidget(selection_page);
+    }
+    void show_results() {
+        if (results_path.isEmpty()) return;
+        if (!results_page || loaded_results_path != results_path) {
+            if (results_page) { pages->removeWidget(results_page); results_page->deleteLater(); }
+            results_page = create_file_transfer_results_page(results_path, pages);
+            loaded_results_path = results_path; pages->addWidget(results_page);
+            QObject::connect(results_page, &QDialog::rejected, owner, [this] { show_selection(); });
+        }
+        if (browser) browser->reject();
+        pages->setCurrentWidget(results_page); results_page->show();
     }
     void show_copies() {
         if (busy() || !copies_available) return;
-        ClipboardCopiesDialog dialog(send, owner->window()); copies_dialog = &dialog; dialog.start();
-        const bool accepted = dialog.exec() == QDialog::Accepted; copies_dialog.clear();
-        if (!accepted || busy() || !copies_available) return;
-        purpose = dialog.selected_action(); direction = Direction::kToHost;
-        operation = identity(); requested = true; results_path.clear(); sources.clear(); result_visible = true;
-        cancel->setEnabled(true); progress->setRange(0, 0); status->setText(QString::fromUtf8("正在处理对端剪贴板副本…")); refresh();
-        auto request = control(Action::kPrepare, operation); request.workspace->purpose = purpose;
-        request.workspace->path = dialog.selected_id();
-        QString error;
-        if (!send(request, &error)) { requested = false; operation.clear(); status->setText(error); refresh(); }
+        if (browser) browser->reject();
+        if (!copies_dialog) {
+            copies_dialog = new ClipboardCopiesDialog(send, pages); pages->addWidget(copies_dialog);
+            QObject::connect(copies_dialog, &QDialog::rejected, owner, [this] { show_selection(); });
+            QObject::connect(copies_dialog, &QDialog::accepted, owner, [this] {
+                show_selection();
+                if (busy() || !copies_available) return;
+                purpose = copies_dialog->selected_action(); direction = Direction::kToHost;
+                operation = identity(); requested = true; results_path.clear(); sources.clear(); result_visible = true;
+                cancel->setEnabled(true); progress->setRange(0, 0); status->setText(QString::fromUtf8("正在处理对端剪贴板副本…")); refresh();
+                auto request = control(Action::kPrepare, operation); request.workspace->purpose = purpose;
+                request.workspace->path = copies_dialog->selected_id();
+                QString error;
+                if (!send(request, &error)) { requested = false; operation.clear(); status->setText(error); refresh(); }
+            });
+        }
+        pages->setCurrentWidget(copies_dialog); copies_dialog->show(); copies_dialog->start();
     }
-    void open_dialog() {
-        QDialog dialog(owner->window()); selection_dialog = &dialog;
-        dialog.setObjectName("fileTransferSelectionDialog");
-        dialog.setWindowTitle(QString::fromUtf8("文件传送")); dialog.resize(720, 470);
-        auto* layout = new QVBoxLayout(&dialog);
-        auto* mode = new QComboBox(&dialog); mode->addItems({QString::fromUtf8("本机 → 对端"), QString::fromUtf8("对端 → 本机")});
+    void create_selection_page() {
+        auto* page = new QWidget(pages); selection_page = page;
+        page->setObjectName("fileTransferSelectionPage");
+        auto* layout = new QVBoxLayout(page);
+        auto* mode = new QComboBox(page); mode->addItems({QString::fromUtf8("本机 → 对端"), QString::fromUtf8("对端 → 本机")});
         layout->addWidget(mode);
-        auto* selected = new QListWidget(&dialog); selected->setObjectName("fileTransferSources");
+        auto* selected = new QListWidget(page); selected->setObjectName("fileTransferSources");
         selected->setSelectionMode(QAbstractItemView::ExtendedSelection); layout->addWidget(selected, 1);
         auto* row = new QHBoxLayout;
-        auto* add_files = new QPushButton(QString::fromUtf8("添加文件"), &dialog);
-        auto* add_folder = new QPushButton(QString::fromUtf8("添加目录"), &dialog);
-        auto* remove = new QPushButton(QString::fromUtf8("移除选中"), &dialog);
-        row->addWidget(add_files); row->addWidget(add_folder); row->addWidget(remove); row->addStretch(); layout->addLayout(row);
-        auto* destination = new QLineEdit(&dialog); destination->setPlaceholderText(QString::fromUtf8("接收目录"));
+        auto* add_files = new QPushButton(QString::fromUtf8("添加文件"), page);
+        auto* add_folder = new QPushButton(QString::fromUtf8("添加目录"), page);
+        auto* remove = new QPushButton(QString::fromUtf8("移除选中"), page);
+        row->addWidget(add_files); row->addWidget(add_folder); row->addWidget(remove); layout->addLayout(row);
+        auto* destination = new QLineEdit(page); destination->setPlaceholderText(QString::fromUtf8("接收目录"));
         destination->setObjectName("fileTransferDestination");
-        auto* choose = new QPushButton(QString::fromUtf8("选择接收目录"), &dialog);
+        auto* choose = new QPushButton(QString::fromUtf8("选择接收目录"), page);
         auto* destination_row = new QHBoxLayout; destination_row->addWidget(destination, 1); destination_row->addWidget(choose); layout->addLayout(destination_row);
-        auto* policy = new QComboBox(&dialog); policy->addItems({QString::fromUtf8("重名时保留两个文件"), QString::fromUtf8("覆盖重名文件"), QString::fromUtf8("跳过重名文件")}); layout->addWidget(policy);
-        auto* message = new QLabel(QString::fromUtf8("传送期间暂停远程键鼠、终端输入和 Agent 提交；画面与已有任务输出继续更新。"), &dialog);
-        message->setWordWrap(true); layout->addWidget(message);
-        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        auto* policy = new QComboBox(page); policy->addItems({QString::fromUtf8("重名时保留两个文件"), QString::fromUtf8("覆盖重名文件"), QString::fromUtf8("跳过重名文件")}); layout->addWidget(policy);
+        auto* message = new QLabel(QString::fromUtf8("传送期间暂停远程键鼠、终端输入和 Agent 提交；画面与已有任务输出继续更新。"), page);
+        message->setWordWrap(true); message->setTextFormat(Qt::PlainText); layout->addWidget(message);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, page);
         buttons->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("开始传送")); layout->addWidget(buttons);
         const auto append = [selected](const QStringList& paths) {
             for (const auto& path : paths) if (selected->findItems(path, Qt::MatchExactly).isEmpty()) selected->addItem(path);
         };
-        QObject::connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [=](int) {
+        QObject::connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), page, [=](int) {
             selected->clear(); destination->clear(); add_folder->setVisible(mode->currentIndex() == 0);
             add_files->setText(mode->currentIndex() == 0 ? QString::fromUtf8("添加文件") : QString::fromUtf8("选择对端文件和目录"));
         });
-        QObject::connect(add_files, &QPushButton::clicked, &dialog, [&, append] {
-            append(mode->currentIndex() == 0 ? QFileDialog::getOpenFileNames(&dialog, QString::fromUtf8("选择本机文件")) : remote_select(false));
+        QObject::connect(add_files, &QPushButton::clicked, page, [this, page, mode, append] {
+            if (mode->currentIndex() == 0) append(QFileDialog::getOpenFileNames(page, QString::fromUtf8("选择本机文件")));
+            else remote_select(false, append);
         });
-        QObject::connect(add_folder, &QPushButton::clicked, &dialog, [&, append] {
-            const auto folder = QFileDialog::getExistingDirectory(&dialog, QString::fromUtf8("选择本机目录")); if (!folder.isEmpty()) append({folder});
+        QObject::connect(add_folder, &QPushButton::clicked, page, [page, append] {
+            const auto folder = QFileDialog::getExistingDirectory(page, QString::fromUtf8("选择本机目录")); if (!folder.isEmpty()) append({folder});
         });
-        QObject::connect(remove, &QPushButton::clicked, &dialog, [=] { for (auto* item : selected->selectedItems()) delete item; });
-        QObject::connect(choose, &QPushButton::clicked, &dialog, [&] {
-            if (mode->currentIndex() == 0) { const auto paths = remote_select(true); if (!paths.isEmpty()) destination->setText(paths.front()); }
-            else { const auto path = QFileDialog::getExistingDirectory(&dialog, QString::fromUtf8("选择本机接收目录")); if (!path.isEmpty()) destination->setText(path); }
+        QObject::connect(remove, &QPushButton::clicked, page, [selected] { for (auto* item : selected->selectedItems()) delete item; });
+        QObject::connect(choose, &QPushButton::clicked, page, [this, page, mode, destination] {
+            if (mode->currentIndex() == 0) remote_select(true, [destination](const auto& paths) { if (!paths.isEmpty()) destination->setText(paths.front()); });
+            else { const auto path = QFileDialog::getExistingDirectory(page, QString::fromUtf8("选择本机接收目录")); if (!path.isEmpty()) destination->setText(path); }
         });
-        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        QObject::connect(buttons, &QDialogButtonBox::accepted, page, [this, selected, destination, mode, policy, message] {
+            if (busy() || !available) return;
             if (!selected->count() || destination->text().trimmed().isEmpty()) { message->setText(QString::fromUtf8("请选择源文件和接收目录。")); return; }
             sources.clear(); for (int index = 0; index < selected->count(); ++index) sources.push_back(selected->item(index)->text());
             direction = mode->currentIndex() == 0 ? Direction::kToHost : Direction::kToController;
@@ -231,10 +265,9 @@ struct FileTransferPanel::Impl {
             rate_timer.invalidate(); rate_bytes = 0; bytes_per_second = 0;
             cancel->setEnabled(true); progress->setRange(0, 0); status->setText(QString::fromUtf8("正在准备传送…")); refresh();
             QString error;
-            if (!send(request, &error)) { requested = false; status->setText(error); refresh(); message->setText(error); return; }
-            dialog.accept();
+            if (!send(request, &error)) { requested = false; status->setText(error); refresh(); message->setText(error); }
         });
-        dialog.exec(); selection_dialog.clear();
+        pages->addWidget(page);
     }
     void send_next_source() {
         if (!requested || selection_complete_sent || purpose != Purpose::kFiles) return;
@@ -257,20 +290,27 @@ struct FileTransferPanel::Impl {
 };
 FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, std::move(send))) {
     setObjectName("fileTransferPanel");
-    auto* row = new QHBoxLayout(this); row->setContentsMargins(0, 0, 0, 0);
+    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0);
+    auto* row = new QHBoxLayout();
     impl_->files = new QPushButton(QString::fromUtf8("文件传送"), this); impl_->files->setObjectName("fileTransferButton");
     impl_->copies = new QPushButton(QString::fromUtf8("剪贴板文件"), this); impl_->copies->setObjectName("clipboardCopiesButton");
     impl_->status = new QLabel(QString::fromUtf8("等待对端文件传送能力"), this); impl_->status->setWordWrap(true);
     impl_->status->setTextFormat(Qt::PlainText);
     impl_->status->setObjectName("fileTransferStatus");
-    impl_->progress = new QProgressBar(this); impl_->progress->setMaximumWidth(180); impl_->progress->setObjectName("fileTransferProgress");
+    impl_->progress = new QProgressBar(this); impl_->progress->setObjectName("fileTransferProgress");
     impl_->progress->setStyleSheet("QProgressBar { background: #142338; border: 1px solid #2b4059; border-radius: 4px; text-align: center; color: #dce8f6; } QProgressBar::chunk { background: #0d998f; }");
     impl_->cancel = new QPushButton(QString::fromUtf8("中止传送"), this); impl_->cancel->setObjectName("fileTransferCancel");
     impl_->results = new QPushButton(QString::fromUtf8("查看结果"), this); impl_->results->setObjectName("fileTransferResultsButton");
-    row->addWidget(impl_->files); row->addWidget(impl_->copies); row->addWidget(impl_->status, 1); row->addWidget(impl_->progress); row->addWidget(impl_->cancel);
+    row->addWidget(impl_->files); row->addWidget(impl_->copies);
     row->addWidget(impl_->results);
-    connect(impl_->results, &QPushButton::clicked, this, [this] { show_file_transfer_results(impl_->results_path, window()); });
-    connect(impl_->files, &QPushButton::clicked, this, [this] { impl_->open_dialog(); });
+    layout->addLayout(row);
+    impl_->pages = new QStackedWidget(this); layout->addWidget(impl_->pages, 1);
+    impl_->create_selection_page();
+    layout->addWidget(impl_->status);
+    auto* progress_row = new QHBoxLayout(); progress_row->addWidget(impl_->progress, 1); progress_row->addWidget(impl_->cancel);
+    layout->addLayout(progress_row);
+    connect(impl_->results, &QPushButton::clicked, this, [this] { impl_->show_results(); });
+    connect(impl_->files, &QPushButton::clicked, this, [this] { impl_->show_selection(); });
     connect(impl_->copies, &QPushButton::clicked, this, [this] { impl_->show_copies(); });
     connect(impl_->cancel, &QPushButton::clicked, this, [this] { impl_->cancel_transfer(); }); impl_->refresh();
 }
@@ -301,7 +341,6 @@ void FileTransferPanel::runtime_stopped() {
     impl_->copies_available = false;
     impl_->status->setText(QString::fromUtf8("连接已结束；未完成的传送不会自动重放。")); impl_->refresh();
     if (impl_->browser) impl_->browser->reject();
-    if (impl_->selection_dialog) impl_->selection_dialog->reject();
     if (impl_->copies_dialog) impl_->copies_dialog->reject();
 }
 void FileTransferPanel::receive(const Control& message) {

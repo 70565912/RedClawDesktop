@@ -494,7 +494,9 @@ bool ControllerRemoteInputCapture::eventFilter(QObject* watched, QEvent* event) 
             }
             update_keyboard_target(canvas_target);
         } else if (event->type() == QEvent::FocusIn && event_widget != window_) {
-            update_keyboard_target(is_canvas_widget(event_widget));
+            // Owned tools may restore focus to the canvas when hidden. Only a
+            // canvas mouse press may resume after local UI interaction.
+            if (!is_canvas_widget(event_widget)) update_keyboard_target(false);
         }
     }
     if (watched == window_ && watched != canvas_) {

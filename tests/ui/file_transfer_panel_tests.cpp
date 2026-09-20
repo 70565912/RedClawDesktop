@@ -13,10 +13,13 @@
 #include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QTreeWidget>
+#include <QEventLoop>
+#include <QThread>
+#include <memory>
 
 namespace {
 using namespace redclaw::protocol;
-TEST(FileTransferPanel, RealDialogSendsValidFramesAndWaitsForRuntimeCleanupBeforeUnblocking) {
+TEST(FileTransferPanel, NonModalFormRetainsTransferOnHideAndWaitsForCleanup) {
     std::vector<StreamControlMessageV1> sent;
     std::vector<bool> gate;
     redclaw::ui::FileTransferPanel panel([&](const auto& message, QString*) {
@@ -34,18 +37,18 @@ TEST(FileTransferPanel, RealDialogSendsValidFramesAndWaitsForRuntimeCleanupBefor
     panel.receive(state);
     auto* button = panel.findChild<QPushButton*>("fileTransferButton");
     ASSERT_TRUE(button && button->isEnabled());
-    QTimer::singleShot(0, &panel, [&] {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        if (!dialog) { ADD_FAILURE() << "transfer dialog absent"; return; }
-        auto* sources = dialog->findChild<QListWidget*>("fileTransferSources");
-        auto* destination = dialog->findChild<QLineEdit*>("fileTransferDestination");
-        auto* buttons = dialog->findChild<QDialogButtonBox*>();
-        if (!sources || !destination || !buttons) { ADD_FAILURE() << "transfer choices absent"; dialog->reject(); return; }
-        sources->addItem("C:/selected/file.txt"); destination->setText("D:/received");
-        buttons->button(QDialogButtonBox::Ok)->click();
-        if (sent.empty()) dialog->reject();
-    });
-    button->click();
+    panel.show(); button->click();
+    EXPECT_EQ(QApplication::activeModalWidget(), nullptr);
+    auto* sources = panel.findChild<QListWidget*>("fileTransferSources");
+    auto* destination = panel.findChild<QLineEdit*>("fileTransferDestination");
+    auto* buttons = panel.findChild<QDialogButtonBox*>();
+    ASSERT_TRUE(sources && destination && buttons);
+    sources->addItem("C:/selected/file.txt"); destination->setText("D:/received");
+    buttons->button(QDialogButtonBox::Ok)->click();
+    panel.hide(); QApplication::processEvents();
+    EXPECT_TRUE(panel.busy());
+    panel.show(); button->click();
+    EXPECT_EQ(sources->count(), 1); // Reopening keeps the draft and does not resend/cancel.
     ASSERT_EQ(sent.size(), 1U); EXPECT_EQ(sent.back().workspace->action, WorkspaceActionV1::kPrepare);
     EXPECT_TRUE(panel.busy()); EXPECT_EQ(gate, (std::vector<bool>{true}));
     state.request_id = sent.front().request_id; state.workspace->active = true; state.workspace->operation_revision = 1;
@@ -73,7 +76,7 @@ TEST(FileTransferPanel, RealDialogSendsValidFramesAndWaitsForRuntimeCleanupBefor
     EXPECT_FALSE(panel.busy()); EXPECT_EQ(gate, (std::vector<bool>{true, false}));
     EXPECT_TRUE(panel.findChild<QLabel*>("fileTransferStatus")->text().contains("transfer_cancelled"));
 }
-TEST(FileTransferPanel, ResultDialogReadsBoundedPagesWithoutLosingSkipOrUnicodeResults) {
+TEST(FileTransferPanel, ResultPageReadsBoundedPagesWithoutLosingSkipOrUnicodeResults) {
 #ifndef _WIN32
     GTEST_SKIP() << "Windows result journal.";
 #else
@@ -86,30 +89,33 @@ TEST(FileTransferPanel, ResultDialogReadsBoundedPagesWithoutLosingSkipOrUnicodeR
     for (unsigned i = 0; i < 129; ++i)
         ASSERT_TRUE(journal.append({unicode + std::to_string(i), i, false, i == 128}, &error)) << error;
     journal.finish();
-    QTimer timer; QElapsedTimer elapsed; elapsed.start(); int phase = 0;
-    QObject::connect(&timer, &QTimer::timeout, [&] {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        if (!dialog) return;
-        if (elapsed.elapsed() > 5000) { ADD_FAILURE() << "result page timeout"; dialog->reject(); return; }
-        auto* rows = dialog->findChild<QTreeWidget*>("fileTransferResultsEntries");
-        auto* next = dialog->findChild<QPushButton*>("fileTransferResultsNext");
-        auto* previous = dialog->findChild<QPushButton*>("fileTransferResultsPrevious");
-        if (!rows || !next || !previous) { ADD_FAILURE() << "result controls absent"; dialog->reject(); return; }
-        if (phase == 0 && next->isEnabled()) {
-            EXPECT_EQ(rows->topLevelItemCount(), 128); EXPECT_FALSE(previous->isEnabled());
-            EXPECT_EQ(rows->topLevelItem(0)->text(0), QString::fromUtf8("目录/已完成-0"));
-            ++phase; next->click();
-        } else if (phase == 1 && previous->isEnabled()) {
-            EXPECT_EQ(rows->topLevelItemCount(), 1); EXPECT_FALSE(next->isEnabled());
-            EXPECT_EQ(rows->topLevelItem(0)->text(2), QString::fromUtf8("已跳过"));
-            ++phase; previous->click();
-        } else if (phase == 2 && next->isEnabled()) {
-            EXPECT_EQ(rows->topLevelItemCount(), 128); ++phase; dialog->reject();
+    QWidget owner;
+    std::unique_ptr<QDialog> page(redclaw::ui::create_file_transfer_results_page(
+        QString::fromStdWString(journal.path().wstring()), &owner));
+    EXPECT_FALSE(page->isModal());
+    EXPECT_FALSE(page->isWindow());
+    auto* rows = page->findChild<QTreeWidget*>("fileTransferResultsEntries");
+    auto* next = page->findChild<QPushButton*>("fileTransferResultsNext");
+    auto* previous = page->findChild<QPushButton*>("fileTransferResultsPrevious");
+    ASSERT_TRUE(rows && next && previous);
+    const auto wait = [](const std::function<bool()>& ready) {
+        QElapsedTimer elapsed; elapsed.start();
+        while (!ready() && elapsed.elapsed() < 5000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 10); QThread::msleep(1);
         }
-    });
-    timer.start(10);
-    redclaw::ui::show_file_transfer_results(QString::fromStdWString(journal.path().wstring()), nullptr);
-    EXPECT_EQ(phase, 3);
+        return ready();
+    };
+    ASSERT_TRUE(wait([&] { return next->isEnabled(); }));
+    EXPECT_EQ(rows->topLevelItemCount(), 128); EXPECT_FALSE(previous->isEnabled());
+    EXPECT_EQ(rows->topLevelItem(0)->text(0), QString::fromUtf8("目录/已完成-0"));
+    next->click();
+    ASSERT_TRUE(wait([&] { return previous->isEnabled(); }));
+    EXPECT_EQ(rows->topLevelItemCount(), 1); EXPECT_FALSE(next->isEnabled());
+    EXPECT_EQ(rows->topLevelItem(0)->text(2), QString::fromUtf8("已跳过"));
+    previous->click();
+    ASSERT_TRUE(wait([&] { return next->isEnabled(); }));
+    EXPECT_EQ(rows->topLevelItemCount(), 128);
+
 #endif
 }
 TEST(FileTransferPanel, ClipboardUsesOneDeferredPrepareAndCancelsWithoutSelectingOrReplaying) {
@@ -148,22 +154,21 @@ TEST(FileTransferPanel, ClipboardCopiesRequireVersionTwoAndSendOnlySelectedOpaqu
     auto* copies = panel.findChild<QPushButton*>("clipboardCopiesButton"); ASSERT_TRUE(copies); EXPECT_FALSE(copies->isEnabled());
     state.clipboard_version = 2; panel.receive(state); ASSERT_TRUE(copies->isEnabled());
     const std::string id(32, 'a');
-    QTimer::singleShot(0, &panel, [&] {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        if (!dialog || sent.empty()) { ADD_FAILURE() << "copies dialog missing"; if (dialog) dialog->reject(); return; }
-        auto reply = sent.back(); EXPECT_EQ(reply.workspace->action, WorkspaceActionV1::kBrowseClipboardCopies);
-        reply.workspace->action = WorkspaceActionV1::kBrowseEntry; reply.workspace->path = id;
-        reply.workspace->directory = true; reply.workspace->entries = 1; reply.workspace->created_at_ms = 1700000000000;
-        panel.receive(reply); reply.workspace->action = WorkspaceActionV1::kBrowseEnd; reply.workspace->path.clear(); reply.workspace->created_at_ms = 0;
-        panel.receive(reply);
-        auto* list = dialog->findChild<QListWidget*>("clipboardCopiesList");
-        auto* cleanup = dialog->findChild<QPushButton*>("clipboardCopiesCleanup");
-        if (!list || !cleanup || list->count() != 1) { ADD_FAILURE() << "copy listing absent"; dialog->reject(); return; }
-        // Native UI Automation selects an item without changing currentItem.
-        list->item(0)->setSelected(true); EXPECT_EQ(list->currentItem(), nullptr);
-        EXPECT_TRUE(cleanup->isEnabled()); cleanup->click();
-    });
-    copies->click(); ASSERT_EQ(sent.size(), 2U); EXPECT_TRUE(panel.busy()); EXPECT_FALSE(copies->isEnabled());
+    copies->click();
+    EXPECT_EQ(QApplication::activeModalWidget(), nullptr);
+    EXPECT_FALSE(panel.findChild<QDialog*>("clipboardCopiesDialog")->isWindow());
+    ASSERT_FALSE(sent.empty());
+    auto reply = sent.back(); EXPECT_EQ(reply.workspace->action, WorkspaceActionV1::kBrowseClipboardCopies);
+    reply.workspace->action = WorkspaceActionV1::kBrowseEntry; reply.workspace->path = id;
+    reply.workspace->directory = true; reply.workspace->entries = 1; reply.workspace->created_at_ms = 1700000000000;
+    panel.receive(reply); reply.workspace->action = WorkspaceActionV1::kBrowseEnd; reply.workspace->path.clear(); reply.workspace->created_at_ms = 0;
+    panel.receive(reply);
+    auto* list = panel.findChild<QListWidget*>("clipboardCopiesList");
+    auto* cleanup = panel.findChild<QPushButton*>("clipboardCopiesCleanup");
+    ASSERT_TRUE(list && cleanup); ASSERT_EQ(list->count(), 1);
+    list->item(0)->setSelected(true); EXPECT_EQ(list->currentItem(), nullptr);
+    EXPECT_TRUE(cleanup->isEnabled()); cleanup->click();
+    ASSERT_EQ(sent.size(), 2U); EXPECT_TRUE(panel.busy()); EXPECT_FALSE(copies->isEnabled());
     EXPECT_EQ(sent.back().workspace->purpose, WorkspaceTransferPurposeV1::kClipboardCleanup);
     EXPECT_EQ(sent.back().workspace->path, id);
     auto finished = sent.back(); finished.workspace->path.clear(); finished.workspace->action = WorkspaceActionV1::kFinished;

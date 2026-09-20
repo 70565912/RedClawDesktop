@@ -63,10 +63,11 @@ Updated: 2026-09-20
 
 ## M10 UI
 
-Updated: 2026-09-15
+Updated: 2026-09-20
 
 - `M10-T01` Device-code Host/Controller GUI and playback workspace — done.
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
+- `M10-T03` Controller floating task workspace — done; four owned task windows, movable translucent task bar, local layout persistence, hide-only lifecycle and input isolation. Debug NoPublish build and 14 focused unattended cases passed, including a corrected initial-layout timing fixture's single-case recheck. Unaffected tests were not rerun; native visual/physical-keyboard/hardware evaluation remains optional. Working-tree delivery only: no publication, peer upgrade or session restart. See the [workspace presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03).
 
 ## M11 Portable Client
 

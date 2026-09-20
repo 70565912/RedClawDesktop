@@ -1,4 +1,5 @@
 #include "ui/agent_panel_presentation.h"
+#include "ui/agent_conversation_panel.h"
 
 #include <QDialog>
 #include <QLayout>
@@ -7,8 +8,8 @@
 
 namespace redclaw::ui {
 
-AgentPanelPresentation::AgentPanelPresentation(QWidget* panel, QWidget* owner)
-    : QObject(owner), panel_(panel), sidebar_layout_(panel->parentWidget()->layout()),
+AgentPanelPresentation::AgentPanelPresentation(AgentConversationPanel* panel, QWidget* owner)
+    : QObject(owner), panel_(panel), controller_layout_(panel->parentWidget()->layout()),
       window_(new QDialog(owner)), open_(new QPushButton("Remote Agent", owner)) {
     window_->setObjectName("hostRemoteAgentWindow");
     window_->setWindowTitle("Remote Agent — call the connected device");
@@ -28,7 +29,8 @@ void AgentPanelPresentation::set_desktop_host(bool host) {
     window_->hide();
     open_->setVisible(host);
     if (!panel_) return;
-    QLayout* target = host ? window_->layout() : sidebar_layout_.data();
+    panel_->set_window_auto_resize(host);
+    QLayout* target = host ? window_->layout() : controller_layout_.data();
     if (target == nullptr) return;
     target->addWidget(panel_);
     panel_->show();
