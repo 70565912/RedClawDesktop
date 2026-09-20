@@ -10,7 +10,9 @@ The portable ZIP is the only binary distribution for this release. The service M
 
 ## Verified local baseline
 
-The unpublished M10-T03 working-tree revision replaces Controller fixed panels with four owned floating tasks and a movable translucent task bar. Debug NoPublish build and 14 focused local automatic cases passed; the old Host autoresize fixture needed initial asynchronous layout settling and passed an isolated recheck. The final native-activation correction also passed its two directly affected focus/toolbar cases. No full matrix or cross-LAN run was repeated. The running app, peer and published v0.1.3 assets were not replaced or restarted. See the [presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03) and [development log](../logs/DEVLOG.md).
+X00-T19 corrects UPnP external endpoint advertisement without changing wire schemas or requiring a peer upgrade. The Debug main build and five focused local cases passed, including native ICE/control-message delivery through a differently numbered mapped port; one test-only Winsock initialization omission needed an isolated recheck. Physical peer connection is a separate live result, not implied by this local pass. The operator authorized commit/push and local Host deployment; generated run reports retain exact artifact and runtime identities.
+
+The initial M10-T03 implementation checkpoint replaced Controller fixed panels with four owned floating tasks and a movable translucent task bar. Debug NoPublish build and 14 focused local automatic cases passed; the old Host autoresize fixture needed initial asynchronous layout settling and passed an isolated recheck. The final native-activation correction also passed its two directly affected focus/toolbar cases. No full matrix or cross-LAN run was repeated for that implementation checkpoint. A subsequent authorized operation pushed `aec5d42`, deployed the local runtime and switched this machine to Host; peer update preparation was reported complete, but the reversed connection remained at ICE. Published v0.1.3 assets were not replaced. See the [presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03) and [development log](../logs/DEVLOG.md).
 
 For v0.1.3, serial Release build/publication and Debug NoPublish build succeeded. Runtime C++ is unchanged from main `88a3803`; this release task changes version metadata, documentation, automatic test registration/runner and packaging. Reuse the recorded functional, local endpoint and supported-version results instead of repeating them for publication. The reorganized 24-suite automatic selection passed with zero case skips; the runner's own regression and syntax checks passed.
 
@@ -23,7 +25,7 @@ The controlled local native-size comparison measured 17.71% / 17.53% total CPU a
 - Debug and Release builds use `build.ps1` so the matching app-local runtime is staged under `release/<Configuration>`.
 - The local two-GUI path has exercised real capture, encode, transport, decode, presentation, authorized input, and Control/Media/Agent channel activity.
 - The default ICE UDP port is 55000. GUI, CLI, runtime profiles, and integration scripts propagate the same setting. Local two-process tests use Controller 55001.
-- UPnP targets the configured ICE UDP port. DHT keeps its independent listening port and does not request a router mapping.
+- UPnP targets the configured ICE UDP socket; the router-assigned external address/port must also enter ICE as a standard additional srflx candidate. X00-T19 closes the former diagnostic-only mapping result path, including routers that assign a different external port. DHT keeps its independent listening port and does not request a router mapping.
 - GitHub Release publication triggers a checksum, archive-content, and packaged command-entry smoke on a fresh hosted Windows runner. Human-dependent capture/GPU/topology/input/Provider evaluations remain optional developer work, not release gates.
 - Startup reserves the configured ICE port so an occupied port fails early instead of silently changing the runtime contract.
 
@@ -51,6 +53,8 @@ For cross-machine Agent collaboration, use the [remote Agent result contract](..
 The repository is not a communication or signaling exchange. Cross-machine coordination uses the established Control/Agent channels when connected and explicit operator actions during recovery. Runtime signaling, encrypted blobs, local paths, credentials, and evidence archives remain outside Git.
 
 ## Resume point
+
+The latest operator request is the X00-T19 UPnP candidate fix, authorized GitHub push and staged local Host restart. Do not repeat the earlier input tests or full automated matrix. The peer reportedly probed the router-assigned external port successfully while the exchanged candidate used the internal port; use the fixed Host's local run report for subsequent DHT/ICE/media/Agent liveness, and do not treat that earlier peer probe as completed post-fix desktop acceptance.
 
 Last observed runtime state (2026-09-20 input test): this machine was the `88a3803` Debug Controller, video connected and remote input paused after the temporary target disappeared. The pending request for the operator to type a digit was withdrawn. This is a recorded checkpoint, not a fresh liveness claim. No subsequent deployment, peer restart or role change is implied by the test-process reorganization.
 

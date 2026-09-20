@@ -5528,6 +5528,13 @@ int run_runtime_mode(
         }
 
         std::string start_error;
+        if (ice_port_mapping_result.mapped) {
+            gathering_config.udp_port_mapping = redclaw::net::IceUdpPortMapping{
+                ice_port_mapping_result.internal_ip,
+                static_cast<std::uint16_t>(ice_port_mapping_result.internal_port),
+                ice_port_mapping_result.external_ip,
+                static_cast<std::uint16_t>(ice_port_mapping_result.external_port)};
+        }
         std::cout << "Runtime ICE gathering start requested role=" << role_name
                   << " reason=" << reason
                   << " ice_udp_port=" << options.ice_udp_port

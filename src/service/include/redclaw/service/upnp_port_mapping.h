@@ -10,6 +10,7 @@ struct UpnpPortMappingResult {
     bool mapped = false;
     int internal_port = 0;
     int external_port = 0;
+    std::string internal_ip;
     std::string external_ip;
     std::string status = "disabled";
     std::string detail;

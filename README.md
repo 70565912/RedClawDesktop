@@ -67,7 +67,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 - 产品默认 ICE UDP 端口为 **55000**，可在 GUI 的网络设置中修改并保存。
 - 两台不同电脑可以都使用 55000。同一电脑运行两个实例时应使用不同端口；项目测试脚本使用 Host 55000、Controller 55001。
-- 开启 UPnP 后，RedClawDesktop 尝试映射实际 ICE UDP 端口。UPnP 失败不会阻止 STUN、TURN 或普通打洞，但会在诊断状态中显示。
+- 开启 UPnP 后，RedClawDesktop 尝试映射实际 ICE UDP 端口。如果路由器分配了不同的外部端口，程序将该实际外部地址和端口作为额外的标准 ICE 候选告知对端，本机仍监听原配置端口。UPnP 失败不会阻止 STUN、TURN 或普通打洞，但会在诊断状态中显示。
 - 手工映射时选择 **UDP**，内部端口和外部端口均填写该设备配置的 ICE UDP 端口。
 - DHT 监听端口只承担 rendezvous，无需手工端口映射。
 

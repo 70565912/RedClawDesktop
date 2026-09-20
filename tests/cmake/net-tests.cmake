@@ -4,6 +4,11 @@ target_link_libraries(redclaw_net_test_support PRIVATE redclaw_net)
 redclaw_apply_warnings(redclaw_net_test_support)
 
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_ice_udp_mapping_tests net/ice_udp_mapping_tests.cpp)
+target_link_libraries(redclaw_ice_udp_mapping_tests PRIVATE redclaw_net GTest::gtest_main)
+redclaw_apply_warnings(redclaw_ice_udp_mapping_tests)
+add_test(NAME redclaw_ice_udp_mapping_tests COMMAND redclaw_ice_udp_mapping_tests)
+
 add_executable(redclaw_ice_filtered_path_integration_tests net/ice_filtered_path_integration_tests.cpp)
 
 add_executable(redclaw_ice_candidate_diagnostics_tests net/ice_candidate_diagnostics_tests.cpp)

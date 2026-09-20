@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "redclaw/net/ice_udp_mapping.h"
+
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -42,6 +44,7 @@ enum class DataChannelKind {
 struct IceGatheringConfig {
 	std::vector<std::string> ice_servers;
 	std::string bind_address;
+    std::optional<IceUdpPortMapping> udp_port_mapping;
 	bool enable_ice_tcp = false;
     // Initial connectivity only. Zero preserves native defaults; no timer renewal on trickle.
     std::uint32_t initial_check_window_ms = 0;
