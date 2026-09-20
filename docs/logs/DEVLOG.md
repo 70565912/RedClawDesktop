@@ -2,12 +2,12 @@
 
 This public log records release-level changes. Machine-specific paths, addresses, runtime signaling, credentials, and raw evidence are intentionally excluded.
 
-## 2026-09-20 — Combined v0.1.3 publication preparation
+## 2026-09-20 — Combined v0.1.3 published
 
 - The operator selected current main as v0.1.3 Developer Preview, superseding the separate v0.1.2-first plan. Unified CMake/vcpkg versions, bilingual README/download references and release notes; corrected the public terminal/current-user permission boundary and preserved supported-version common-capability compatibility.
 - Serial Release and Debug NoPublish builds succeeded. Release publishing initially hit an inherited Windows PowerShell module-path failure at Get-FileHash; the same build/publication entrypoint completed under PowerShell 7. The existing Debug GUI/runtime were not replaced or restarted.
 - Reuse prior functional and local endpoint/mixed-version evidence because runtime C++ is unchanged. The latest reorganized 24-suite automatic result had zero failures/skips; runner self-regression and script syntax passed. A redundant 110-suite Release attempt was stopped on the operator's instruction not to repeat tests. Before cancellation four DHT listener cases failed with TCP bind 10013; this incomplete sweep is retained, not relabeled passed. Only its owned CTest/test child were terminated.
-- The release helper now verifies SHA256, extracted required files and command startup on the exact ZIP before creating a tag/uploading. No new functional/manual/physical-peer run is required for this packaging step. Publication status will be recorded after remote assets are verified.
+- The release helper verified SHA256, extracted required files and command startup on the exact ZIP before creating a tag/uploading. [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) was published from `d7b022e` with 334 files and a 358,508,278-byte ZIP; its SHA256 is `49c992cdca5d808c9cd22fb48176ea397312225fbbf419f681f5898e96fcf7d2`. GitHub asset digest and tag commit match local provenance, and [published-package Windows smoke](https://github.com/70565912/RedClawDesktop/actions/runs/35495853502) passed. No additional functional/manual/physical-peer run was performed. Documentation-only completion does not rebuild or retag the immutable release.
 
 ## 2026-09-20 — Manual evaluations removed from automation and release gates
 
