@@ -300,11 +300,13 @@ TEST(MediaTransportTiming, LongSessionClockRateDoesNotCreateCongestionOrDisableR
         congestion.rtt_fresh = true;
         congestion.rtt_sample_id = 1;
         congestion.smoothed_rtt_ms = 10;
+        congestion.demand = {.pending_bytes = 512 * 1024, .target_fps = 30, .token_limited = true};
         congestion.local_backpressure = true;
         const auto lower = controller.update(congestion);
         ASSERT_TRUE(lower.backoff);
         congestion.local_backpressure = false;
         congestion.transport = estimate;
+        congestion.media_channel_open = true;
         auto decision = controller.update(congestion);
         EXPECT_FALSE(decision.backoff);
         EXPECT_FALSE(decision.reduce_fps);

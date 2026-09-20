@@ -1,4 +1,9 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_host_frame_trace_tests diag/host_frame_trace_tests.cpp)
+target_link_libraries(redclaw_host_frame_trace_tests PRIVATE redclaw_diag GTest::gtest_main)
+redclaw_apply_warnings(redclaw_host_frame_trace_tests)
+add_test(NAME redclaw_host_frame_trace_tests COMMAND redclaw_host_frame_trace_tests)
+
 add_executable(redclaw_diag_structured_logging_redaction_tests
   diag/structured_logging_redaction_tests.cpp
 )

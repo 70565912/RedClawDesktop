@@ -51,6 +51,7 @@
 #include "redclaw/net/video_frame_transport.h"
 #include "redclaw/security/security_module.h"
 #include "redclaw/session/session_module.h"
+#include "redclaw/session/frame_cadence.h"
 #include "redclaw/capture/capture_module.h"
 #include "redclaw/capture/capture_stream_gate.h"
 #include "redclaw/render/render_module.h"
@@ -61,6 +62,7 @@
 #include "redclaw/service/dht_publication_transaction.h"
 #include "redclaw/service/upnp_port_mapping.h"
 #include "redclaw/diag/diag_module.h"
+#include "redclaw/diag/host_frame_trace_file.h"
 #include "redclaw/helper/direct_frame_shared_memory.h"
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
@@ -90,16 +92,12 @@ constexpr std::uint32_t kDhtStaleRemoteFetchBackoffMs = 5000;
 // relay/srflx/host candidate before attempting the complete snapshot.
 constexpr std::size_t kDhtDirectCandidatePublishLimit = 1;
 constexpr std::size_t kDesktopStreamVideoFragmentPacketBytes = 16 * 1024;
-constexpr std::size_t kDesktopStreamDataChannelBufferedAmountResumeBytes = 512 * 1024;
-constexpr std::size_t kDesktopStreamDataChannelBufferedAmountHighWatermarkBytes =
-    kDesktopStreamDataChannelBufferedAmountResumeBytes + (32 * kDesktopStreamVideoFragmentPacketBytes);
 constexpr std::size_t kRemoteInputControlBufferedAmountHighWatermarkBytes = 64 * 1024;
 constexpr std::size_t kAgentDataChannelBufferedAmountHighWatermarkBytes = 256 * 1024;
 constexpr std::uint64_t kAgentDataChannelRebuildOpenTimeoutMs = 3000;
 constexpr std::uint64_t kAgentDataChannelRebuildStableMs = 3000;
 constexpr std::uint32_t kAgentDataChannelRebuildMaxAttempts = 3;
 constexpr std::uint32_t kDesktopStreamAdaptiveBitrateFloorKbps = 400;
-constexpr std::uint32_t kDesktopStreamTransportBitrateCeilingKbps = 20000;
 constexpr std::uint64_t kDesktopStreamPlaybackStarvationHoldMs = 5000;
 constexpr std::uint64_t kDesktopStreamRttPingIntervalMs = 1000;
 constexpr std::uint64_t kDesktopStreamRttPingTimeoutMs = 3000;
@@ -2949,6 +2947,9 @@ int run_runtime_mode(
     redclaw::net::MediaTransportFeedbackRecorder stream_transport_feedback_recorder;
     redclaw::net::MediaTransportEstimator stream_transport_estimator;
     redclaw::net::MediaCongestionController stream_congestion_controller;
+    redclaw::net::MediaFrameTraceRecorder stream_frame_trace;
+    redclaw::diag::HostFrameTraceFile stream_frame_trace_file(stream_frame_trace,
+        process_logger ? process_logger->log_path() : std::filesystem::path{});
     redclaw::net::DesktopMediaSendPacer stream_media_pacer;
     redclaw::net::MediaTransportEstimate stream_transport_estimate_snapshot;
     redclaw::net::MediaCongestionDecision stream_congestion_decision_snapshot;
@@ -3142,7 +3143,7 @@ int run_runtime_mode(
     auto& reconnect_attempt_count = reconnect_schedule.attempt_count;
     auto& automatic_recovery_active = reconnect_schedule.active;
     auto& reconnect_attempt_in_flight = reconnect_schedule.in_flight;
-    std::uint64_t next_stream_encode_ms = 0;
+    redclaw::session::FrameCadence stream_encode_cadence;
     std::uint64_t stream_pacer_geometry_revision = 0; // Encoder worker owned.
     std::optional<bool> stream_last_published_budget_wait; // Runtime loop owned.
     bool stream_capture_started = false;
@@ -3658,7 +3659,7 @@ int run_runtime_mode(
         },
         [&]() {
             stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kTransportWritable);
-        });
+        }, &stream_frame_trace);
     if (!media_pacer_started) {
         std::cerr << "Runtime desktop media pacer failed to start" << '\n';
         return 1;
@@ -3672,7 +3673,7 @@ int run_runtime_mode(
         }
     } media_pacer_scope{&stream_media_pacer};
     stream_media_pacer.update_budget(
-        kDesktopStreamTransportBitrateCeilingKbps,
+        kDesktopStreamAdaptiveBitrateFloorKbps,
         0,
         0);
     ice_wrapper.onDataChannelWritable([&](redclaw::net::DataChannelKind kind) {
@@ -4092,7 +4093,7 @@ int run_runtime_mode(
         }
         redclaw::net::DataChannelTransportStats transport_stats;
         std::string transport_error;
-        std::uint32_t open_pacing_kbps = kDesktopStreamTransportBitrateCeilingKbps;
+        std::uint32_t open_pacing_kbps = kDesktopStreamAdaptiveBitrateFloorKbps;
         std::uint32_t open_rtt_ms = 0;
         ice_wrapper.getDataChannelTransportStats(kind, &transport_stats, &transport_error);
         if (kind == redclaw::net::DataChannelKind::kAgent) {
@@ -4134,7 +4135,8 @@ int run_runtime_mode(
             open_pacing_kbps =
                 stream_congestion_decision_snapshot.pacing_bitrate_kbps != 0
                     ? stream_congestion_decision_snapshot.pacing_bitrate_kbps
-                    : kDesktopStreamTransportBitrateCeilingKbps;
+                    : std::max(kDesktopStreamAdaptiveBitrateFloorKbps,
+                        resolve_stream_target_bitrate_kbps(stream_adaptive_control_snapshot));
             open_rtt_ms = stream_rtt_telemetry_snapshot.smoothed_rtt_ms;
             if (stream_media_channel_open && stream_control_channel_open) {
                 required_channel_closed_at_ms = 0;
@@ -4781,25 +4783,20 @@ int run_runtime_mode(
                 const auto estimate = stream_transport_estimator.snapshot(
                     host_steady_us,
                     smoothed_rtt_ms);
-                std::uint32_t pacing_bitrate_kbps =
-                    kDesktopStreamTransportBitrateCeilingKbps;
+                const auto decision = stream_congestion_controller.on_feedback(
+                    estimate, stream_media_pacer.telemetry().demand(), host_steady_us / 1000);
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_transport_estimate_snapshot = estimate;
-                    pacing_bitrate_kbps =
-                        stream_congestion_decision_snapshot.pacing_bitrate_kbps != 0
-                            ? stream_congestion_decision_snapshot.pacing_bitrate_kbps
-                            : kDesktopStreamTransportBitrateCeilingKbps;
+                    if (decision.decision_revision >= stream_congestion_decision_snapshot.decision_revision)
+                        stream_congestion_decision_snapshot = decision;
                     if (applied) {
                         ++stream_transport_feedback_received_total;
                     } else {
                         ++stream_transport_feedback_ignored_total;
                     }
                 }
-                stream_media_pacer.update_budget(
-                    pacing_bitrate_kbps,
-                    smoothed_rtt_ms,
-                    estimate.in_flight_bytes);
+                stream_media_pacer.update_policy(decision, smoothed_rtt_ms, estimate.in_flight_bytes);
                 if (applied && estimate.feedback_fresh
                     && estimate.rate_revision == current_rate_revision) {
                     stream_media_pacer.observe_ack_progress(estimate.acknowledged_packets);
@@ -6020,6 +6017,11 @@ int run_runtime_mode(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - capture_start)
                 .count());
+        if (stream_frame_trace.active(redclaw::net::media_trace_now_us())) {
+            captured_frame.local_capture_begin_us = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(capture_start.time_since_epoch()).count());
+            captured_frame.local_capture_end_us = captured_frame.local_capture_begin_us + capture_us;
+        }
         set_stream_worker_stage(
             &stream_capture_worker_stage,
             &stream_capture_worker_stage_since_ms,
@@ -6091,6 +6093,9 @@ int run_runtime_mode(
         captured_geometry.height = captured_frame.desktop_height;
         captured_geometry.rotation = captured_frame.desktop_rotation;
         captured_geometry.revision = active_region.revision;
+        if (captured_frame.local_capture_begin_us != 0) {
+            captured_frame.local_capture_ready_us = redclaw::net::media_trace_now_us();
+        }
         auto latest_frame = std::make_shared<redclaw::capture::CapturedFrame>(std::move(captured_frame));
         {
             std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
@@ -6198,8 +6203,8 @@ int run_runtime_mode(
             }
         }
 
-        // Encoding is admitted only when the pacer has room for one latest
-        // pending frame. The capture side already owns the two-slot
+        // Encoding is admitted only when the adaptive FIFO has capacity.
+        // The capture side already owns the two-slot
         // latest-frame policy, so network pressure skips old capture
         // opportunities without damaging the encoder prediction chain.
         if (!stream_media_pacer.can_accept_frame()) {
@@ -6265,9 +6270,7 @@ int run_runtime_mode(
             adaptive_control.target_fps == 0 ? kDesktopStreamTargetFps : adaptive_control.target_fps);
         const std::uint64_t encode_interval_ms = stream_frame_interval_ms(adaptive_target_fps);
 
-        if (next_stream_encode_ms == 0) {
-            next_stream_encode_ms = now_ms;
-        }
+        const auto next_stream_encode_ms = stream_encode_cadence.due_ms();
         if (now_ms < next_stream_encode_ms) {
             return;
         }
@@ -6281,7 +6284,7 @@ int run_runtime_mode(
         // Every encode attempt, including setup failures, consumes one pacing
         // interval. Otherwise an event-driven worker can retry the same frame
         // in a tight loop when a hardware backend is temporarily unavailable.
-        next_stream_encode_ms = now_ms + encode_interval_ms;
+        stream_encode_cadence.advance(now_ms, adaptive_target_fps);
 
         bool should_attempt_rate_control_update = false;
         std::uint64_t rate_control_revision = 0;
@@ -6703,6 +6706,21 @@ int run_runtime_mode(
         }
 
         redclaw::capture::EncodedFramePacket encoded_packet;
+        redclaw::net::MediaFrameTrace frame_trace;
+        const auto trace_encode_begin_us = redclaw::net::media_trace_now_us();
+        frame_trace.enabled = stream_frame_trace.active(trace_encode_begin_us);
+        if (frame_trace.enabled) {
+            frame_trace.capture_begin_us = captured_frame->local_capture_begin_us;
+            frame_trace.capture_end_us = captured_frame->local_capture_end_us;
+            frame_trace.capture_ready_us = captured_frame->local_capture_ready_us;
+            frame_trace.capture_generation = captured_frame->capture_generation;
+            frame_trace.capture_sequence = capture_sequence;
+            frame_trace.encode_begin_us = trace_encode_begin_us;
+        }
+        auto encoding_reservation = stream_media_pacer.reserve_encode();
+        if (!encoding_reservation) return;
+        encoded_packet.payload = std::move(encoding_reservation.payload);
+        encoded_packet.payload_limit_bytes = encoding_reservation.payload_limit_bytes();
         std::string encode_error;
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
@@ -6754,6 +6772,7 @@ int run_runtime_mode(
             return;
         }
 
+        if (frame_trace.enabled) frame_trace.encode_end_us = redclaw::net::media_trace_now_us();
         redclaw::render::EncodedVideoFrame encoded_frame;
         encoded_frame.codec = to_render_codec(encoded_packet.codec);
         encoded_frame.width = encode_width;
@@ -6779,6 +6798,7 @@ int run_runtime_mode(
         const std::uint64_t frame_id = ++stream_video_frame_id;
         encoded_frame.frame_id = frame_id;
         redclaw::net::PacedEncodedVideoFrame paced_frame;
+        paced_frame.trace = frame_trace;
         paced_frame.frame_id = frame_id;
         paced_frame.rate_revision = encoded_rate_revision;
         paced_frame.capture_region_revision =
@@ -6812,7 +6832,7 @@ int run_runtime_mode(
         }
         redclaw::net::MediaAdmissionResult admission;
         if (!stream_capture_gate.submit(captured_frame->capture_generation, [&]() {
-                admission = stream_media_pacer.submit_frame(std::move(paced_frame));
+                admission = encoding_reservation.submit(std::move(paced_frame));
             })) { return; }
         if (!admission.ready()) {
             std::lock_guard<std::mutex> lock(callback_mutex);
@@ -6926,7 +6946,7 @@ int run_runtime_mode(
             while (stream_worker_running.load()) {
                 const auto observed = stream_work_coordinator.snapshot().generation;
                 redclaw::session::HostStreamEncodeReadiness readiness;
-                readiness.due_ms = next_stream_encode_ms;
+                readiness.due_ms = stream_encode_cadence.due_ms();
                 std::uint64_t geometry_revision = 0;
                 {
                     std::lock_guard lock(callback_mutex);
@@ -8414,7 +8434,7 @@ int run_runtime_mode(
             apply_source_activity_update(activity_update);
 
             std::uint32_t source_srtt_ms = 0;
-            std::uint32_t source_pacing_kbps = kDesktopStreamTransportBitrateCeilingKbps;
+            std::uint32_t source_pacing_kbps = kDesktopStreamAdaptiveBitrateFloorKbps;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 source_srtt_ms = stream_rtt_telemetry_snapshot.smoothed_rtt_ms;
@@ -8686,21 +8706,26 @@ int run_runtime_mode(
                     resolve_stream_target_bitrate_kbps(adaptive_control);
                 congestion_sample.encoder_target_bitrate_kbps =
                     encoder_transport_budget_kbps == 0
-                        ? kDesktopStreamTransportBitrateCeilingKbps
-                        : std::min<std::uint32_t>(
-                              encoder_transport_budget_kbps,
-                              kDesktopStreamTransportBitrateCeilingKbps);
+                        ? kDesktopStreamAdaptiveBitrateFloorKbps : encoder_transport_budget_kbps;
                 congestion_sample.smoothed_rtt_ms = rtt_telemetry.smoothed_rtt_ms;
                 congestion_sample.rtt_queue_delay_ms = rtt_signal.queue_delay_ms;
                 congestion_sample.rtt_sample_id = rtt_telemetry.ping_ack_count;
                 congestion_sample.rtt_fresh = rtt_sample_fresh;
+                const auto admission_telemetry = stream_media_pacer.telemetry();
                 congestion_sample.local_backpressure = severe_receiver_damage
                     || transmit_failures_delta > 0
                     || media_transport_stats.send_blocked
                     || media_transport_stats.buffered_amount
-                        >= kDesktopStreamDataChannelBufferedAmountHighWatermarkBytes;
+                        >= std::max<std::size_t>(kDesktopStreamVideoFragmentPacketBytes,
+                            admission_telemetry.buffered_limit_bytes);
                 congestion_sample.transport = transport_estimate;
-                const auto admission_telemetry = stream_media_pacer.telemetry();
+                congestion_sample.demand = admission_telemetry.demand();
+                congestion_sample.demand.target_fps = clamp_stream_target_fps(adaptive_control.target_fps);
+                if (receiver_stats_match_current_revision && receiver_decoded_delta > 0
+                    && receiver_stats.latest_complete_frame_id > receiver_stats.latest_displayable_frame_id + 1) {
+                    congestion_sample.demand.receiver_frame_period_us =
+                        adaptation_window_ms * 1000ULL / receiver_decoded_delta;
+                }
                 congestion_sample.recovery_budget_blocked = admission_telemetry.keyframe_required
                     && admission_telemetry.rejected_wire_bytes != 0;
                 congestion_sample.media_channel_open = media_transport_stats.open;
@@ -8736,10 +8761,10 @@ int run_runtime_mode(
                             > receiver_stats.latest_displayable_frame_id
                             ? receiver_stats.latest_complete_frame_id - receiver_stats.latest_displayable_frame_id : 0,
                     });
-                stream_media_pacer.update_budget(
-                    congestion_decision.pacing_bitrate_kbps,
+                stream_media_pacer.update_policy(
+                    congestion_decision,
                     rtt_telemetry.smoothed_rtt_ms,
-                    transport_estimate.in_flight_bytes, &congestion_decision.recovery_probe);
+                    transport_estimate.in_flight_bytes);
                 const auto pacer_telemetry = stream_media_pacer.telemetry();
                 std::string low_threshold_error;
                 (void)ice_wrapper.setDataChannelBufferedAmountLowThreshold(
@@ -8950,7 +8975,8 @@ int run_runtime_mode(
                     stream_adaptive_control_snapshot.last_rtt_queue_delay_ms =
                         rtt_signal.queue_delay_ms;
                     stream_transport_estimate_snapshot = transport_estimate;
-                    stream_congestion_decision_snapshot = congestion_decision;
+                    if (congestion_decision.decision_revision >= stream_congestion_decision_snapshot.decision_revision)
+                        stream_congestion_decision_snapshot = congestion_decision;
                     stream_adaptive_control_snapshot.pressure_window_count = pressure_window_count;
                     stream_adaptive_control_snapshot.relief_window_count = relief_window_count;
                     if (relief_window_count >= kDesktopStreamAdaptiveReliefWindowThreshold) {
@@ -11315,6 +11341,7 @@ int run_runtime_mode(
                             *timing, now_steady_ms() * 1000ULL,
                             adaptive_control.last_rtt_queue_delay_ms) << '\n';
                     }
+                    stream_frame_trace_file.poll(redclaw::net::media_trace_now_us());
                 }
                 std::cout << "Runtime media transport feedback stats role=" << role_name
                           << " feedback_sent_total=" << transport_feedback_sent
@@ -11326,6 +11353,13 @@ int run_runtime_mode(
                           << " feedback_age_ms=" << transport_estimate.feedback_age_ms
                           << " acked_bitrate_kbps="
                           << transport_estimate.acknowledged_bitrate_kbps
+                          << " delivery_bitrate_kbps=" << transport_estimate.delivery_bitrate_kbps
+                          << " delivery_rate_valid=" << transport_estimate.delivery_rate_valid
+                          << " application_limited=" << transport_estimate.application_limited
+                          << " feedback_round_trip_us=" << transport_estimate.feedback_round_trip_us
+                          << " feedback_interval_us=" << transport_estimate.feedback_interval_us
+                          << " feedback_jitter_us=" << transport_estimate.feedback_jitter_us
+                          << " controller_reason=" << congestion_decision.reason
                           << " pacing_bitrate_kbps="
                           << pacer_telemetry.pacing_bitrate_kbps
                           << " transport_loss_per_mille="
@@ -11357,6 +11391,16 @@ int run_runtime_mode(
                           << " pacer_budget_retry_attempt=" << pacer_telemetry.budget_retry_attempt
                           << " pacer_next_admission_ms=" << pacer_telemetry.next_admission_ms
                           << " pacer_probe_wire_bytes=" << pacer_telemetry.probe_wire_bytes
+                          << " pacer_queue_target_frames=" << pacer_telemetry.queue_target_frames
+                          << " pacer_queue_target_bytes=" << pacer_telemetry.queue_target_bytes
+                          << " pacer_queue_target_us=" << pacer_telemetry.queue_target_us
+                          << " pacer_pending_bytes=" << pacer_telemetry.pending_bytes
+                          << " pacer_retained_bytes=" << pacer_telemetry.retained_bytes
+                          << " pacer_reserved_bytes=" << pacer_telemetry.reserved_bytes
+                          << " pacer_oldest_pending_us=" << pacer_telemetry.oldest_pending_us
+                          << " pacer_timer_lateness_us=" << pacer_telemetry.timer_lateness_us
+                          << " pacer_resource_limited=" << pacer_telemetry.resource_limited
+                          << " pacer_buffer_reason=" << static_cast<int>(pacer_telemetry.buffer_target_reason)
                           << " pacer_token_deadline_drops="
                           << pacer_telemetry.pacing_token_deadline_drops
                           << " pacer_in_flight_deadline_drops="

@@ -104,6 +104,7 @@ enum class EncoderExecutionFailureCategory {
 	kFrameSizeMismatch,
 	kOutputNotReady,
 	kEncodeFailed,
+	kOutputResourceLimit,
 };
 
 enum class EncoderRateControlUpdateStatus {
@@ -182,6 +183,8 @@ struct EncodedFramePacket {
 	bool keyframe = false;
 	std::uint64_t timestamp_ms = 0;
 	std::vector<std::uint8_t> payload;
+	// Local sender reservation, zero for callers without a bounded output pool.
+	std::size_t payload_limit_bytes = 0;
 };
 
 struct EncoderExecutionDiagnostics {
@@ -426,6 +429,8 @@ bool run_capture_stability_probe(
 	std::string* error_detail = nullptr);
 
 struct CapturedFrame {
+    // Optional process-local trace stamps; not part of the captured image or wire format.
+    std::uint64_t local_capture_begin_us = 0, local_capture_end_us = 0, local_capture_ready_us = 0;
 	std::uint64_t capture_generation = 0;
 	std::uint32_t width = 0;
 	std::uint32_t height = 0;

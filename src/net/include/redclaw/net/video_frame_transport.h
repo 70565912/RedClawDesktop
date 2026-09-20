@@ -1,10 +1,13 @@
 #pragma once
+#include "redclaw/net/media_frame_trace.h"
+#include "redclaw/net/media_sample_window.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -265,6 +268,8 @@ struct SentMediaTransportPacket {
     bool first_packet = false;
     std::uint32_t target_fps = 0;
     std::uint32_t target_bitrate_kbps = 0;
+    bool application_limited = false;
+    std::uint64_t probe_generation = 0;
 };
 
 struct MediaTransportEstimate {
@@ -281,6 +286,18 @@ struct MediaTransportEstimate {
     std::uint64_t expired_in_flight_packets = 0;
     std::uint64_t expired_in_flight_bytes = 0;
     std::uint64_t ignored_feedback = 0;
+    bool delivery_rate_valid = false;
+    bool application_limited = true;
+    std::uint32_t delivery_bitrate_kbps = 0;
+    std::uint64_t feedback_interval_us = 0;
+    std::uint64_t feedback_jitter_us = 0;
+    std::uint64_t feedback_round_trip_us = 0;
+    std::uint64_t latest_acknowledged_sequence = 0;
+    std::size_t acknowledged_batch_bytes = 0;
+    std::uint64_t probe_generation = 0;
+    std::uint32_t probe_delivery_bitrate_kbps = 0;
+    std::size_t probe_acknowledged_bytes = 0;
+    bool probe_rate_valid = false;
 };
 
 // Diagnostic only: one latest applied packet, not a packet history or a
@@ -343,6 +360,15 @@ enum class MediaNetworkPressure {
     kSevere,
 };
 
+struct MediaSendDemand {
+    std::size_t pending_bytes = 0;
+    std::uint32_t target_fps = 0;
+    std::uint64_t receiver_frame_period_us = 0;
+    bool token_limited = false;
+    bool resource_limited = false;
+    std::uint64_t probe_end_sequence = 0;
+};
+
 struct MediaCongestionSample {
     std::uint64_t now_steady_ms = 0;
     std::uint32_t encoder_target_bitrate_kbps = 0;
@@ -355,15 +381,19 @@ struct MediaCongestionSample {
     bool recovery_budget_blocked = false;
     bool media_channel_open = false;
     std::size_t buffered_amount = 0;
+    MediaSendDemand demand;
 };
 
 enum class MediaRecoveryProbePhase { kNone, kProbing, kConfirmed, kCancelled };
 struct MediaRecoveryProbe {
     std::uint64_t generation = 0;
     MediaRecoveryProbePhase phase = MediaRecoveryProbePhase::kNone;
+    std::size_t wire_budget_bytes = 0;
+    bool recovery = true;
 };
 
 struct MediaCongestionDecision {
+    std::uint64_t decision_revision = 0;
     MediaNetworkPressure pressure = MediaNetworkPressure::kStable;
     std::uint32_t pacing_bitrate_kbps = 0;
     bool probe = false;
@@ -373,27 +403,44 @@ struct MediaCongestionDecision {
     std::uint64_t probe_count = 0;
     std::uint64_t backoff_count = 0;
     MediaRecoveryProbe recovery_probe;
+    std::size_t in_flight_limit_bytes = 0;
+    std::uint64_t feedback_horizon_us = 0;
+    std::uint64_t queue_allowance_us = 0;
+    std::uint64_t receiver_frame_period_us = 0;
+    bool delivery_rate_valid = false;
+    std::string reason;
 };
 
 class MediaCongestionController final {
 public:
     [[nodiscard]] MediaCongestionDecision update(const MediaCongestionSample& sample);
+    [[nodiscard]] MediaCongestionDecision on_feedback(
+        const MediaTransportEstimate& estimate, const MediaSendDemand& demand,
+        std::uint64_t now_ms);
     void reset();
 
 private:
+    MediaCongestionDecision update_locked(const MediaCongestionSample& sample);
+    std::mutex mutex_;
+    MediaCongestionSample latest_;
+    MediaCongestionDecision decision_;
+    MediaSampleWindow delivery_samples_;
+    MediaSampleWindow queue_noise_;
+    std::uint64_t next_probe_ms_ = 0;
+    std::uint64_t queue_allowance_us_ = 0;
+    std::uint32_t confirmed_rate_kbps_ = 0;
+    std::uint32_t bootstrap_rate_kbps_ = 0;
+    std::uint32_t rtt_pressure_rounds_ = 0;
     std::uint32_t pacing_bitrate_kbps_ = 0;
     std::uint32_t consecutive_loss_windows_ = 0;
-    std::uint64_t stable_since_ms_ = 0;
     std::uint64_t probe_count_ = 0;
     std::uint64_t backoff_count_ = 0;
     std::uint64_t last_transport_feedback_sample_id_ = 0;
     std::uint64_t last_rtt_sample_id_ = 0;
-    std::uint64_t last_severe_rtt_ms_ = 0;
     MediaRecoveryProbe recovery_probe_;
     std::uint64_t recovery_probe_started_ms_ = 0;
-    std::uint64_t recovery_probe_ack_base_ = 0;
     std::uint32_t recovery_probe_original_rate_ = 0;
-    std::uint32_t healthy_rtt_samples_ = 0;
+    std::uint64_t last_backoff_sample_ms_ = 0;
 };
 
 // Independent constraints use the same previous cadence, never sequential
@@ -404,6 +451,7 @@ private:
     const ReceiverDecodeCapacityDecision& capacity);
 
 struct PacedEncodedVideoFrame {
+    MediaFrameTrace trace;
     std::uint64_t frame_id = 0;
     std::uint64_t rate_revision = 0;
     std::uint64_t capture_region_revision = 1;
@@ -423,6 +471,7 @@ struct PacedEncodedVideoFrame {
     std::uint32_t content_rect_width = 0;
     std::uint32_t content_rect_height = 0;
     std::vector<std::uint8_t> payload;
+    std::uint64_t enqueued_us = 0;
 };
 
 struct MediaPacerSendResult {
@@ -460,6 +509,8 @@ struct MediaPacerFrameEvent {
     std::string reason;
 };
 
+enum class MediaBufferTargetReason { kBootstrap, kMeasuredService, kCongestion, kResourceLimit };
+
 struct MediaPacerTelemetry {
     std::uint32_t pacing_bitrate_kbps = 0;
     std::uint32_t smoothed_rtt_ms = 0;
@@ -487,6 +538,23 @@ struct MediaPacerTelemetry {
     std::uint64_t rejected_wire_bytes = 0;
     std::uint64_t probe_wire_bytes = 0;
     std::uint64_t budget_retry_attempt = 0;
+    std::size_t pending_bytes = 0;
+    std::size_t active_bytes = 0;
+    std::size_t retained_bytes = 0;
+    std::size_t reserved_bytes = 0;
+    std::size_t queue_target_frames = 1;
+    std::size_t queue_target_bytes = 0;
+    std::uint64_t queue_target_us = 0;
+    std::uint64_t oldest_pending_us = 0;
+    std::uint64_t timer_lateness_us = 0;
+    std::uint64_t token_wait_total_us = 0;
+    bool frame_token_limited = false;
+    std::uint64_t probe_end_sequence = 0;
+    std::uint32_t target_fps = 0;
+    bool resource_limited = false;
+    bool congested = false;
+    MediaBufferTargetReason buffer_target_reason = MediaBufferTargetReason::kBootstrap;
+    [[nodiscard]] MediaSendDemand demand() const;
 };
 
 inline constexpr std::uint64_t kMediaPacerMaximumFrameDeadlineMs = 5000;
@@ -557,6 +625,10 @@ public:
         std::size_t wire_bytes,
         std::uint64_t now_steady_us);
     bool consume(std::size_t wire_bytes, std::uint64_t now_steady_us);
+    void observe_wait(std::uint64_t requested_us, std::uint64_t elapsed_us);
+    void suspend(std::uint64_t now_steady_us);
+    void set_window_limit(std::size_t bytes);
+    [[nodiscard]] std::uint64_t lateness_us() const;
     void reset();
 
 private:
@@ -566,6 +638,9 @@ private:
     std::uint64_t last_refill_us_ = 0;
     double tokens_bytes_ = 0.0;
     double burst_bytes_ = 0.0;
+    bool initialized_ = false;
+    std::size_t window_limit_bytes_ = 1024 * 1024;
+    MediaSampleWindow lateness_;
 };
 
 using MediaPacerSendCallback =
@@ -577,6 +652,22 @@ using MediaPacerCapacityCallback = std::function<void()>;
 
 class DesktopMediaSendPacer final {
 public:
+    class EncodeReservation final {
+    public:
+        EncodeReservation() = default;
+        EncodeReservation(EncodeReservation&& other) noexcept;
+        EncodeReservation& operator=(EncodeReservation&& other) noexcept;
+        ~EncodeReservation();
+        explicit operator bool() const { return owner_ != nullptr; }
+        [[nodiscard]] std::size_t payload_limit_bytes() const;
+        std::vector<std::uint8_t> payload;
+        MediaAdmissionResult submit(PacedEncodedVideoFrame frame);
+    private:
+        friend class DesktopMediaSendPacer;
+        DesktopMediaSendPacer* owner_ = nullptr;
+        std::uint64_t generation_ = 0;
+        void release();
+    };
     DesktopMediaSendPacer();
     ~DesktopMediaSendPacer();
 
@@ -588,7 +679,8 @@ public:
         MediaPacerTransportStateCallback transport_state_callback,
         MediaPacerPacketSentCallback packet_sent_callback,
         MediaPacerFrameEventCallback frame_event_callback,
-        MediaPacerCapacityCallback capacity_callback = {});
+        MediaPacerCapacityCallback capacity_callback = {},
+        MediaFrameTraceRecorder* trace_recorder = nullptr);
     void stop();
     // Source/capture recovery stays in the current feedback sequence space.
     // Pass true only when both transport feedback endpoints start a new epoch.
@@ -597,7 +689,11 @@ public:
         std::uint32_t pacing_bitrate_kbps,
         std::uint32_t smoothed_rtt_ms,
         std::size_t in_flight_bytes,
-        const MediaRecoveryProbe* recovery_probe = nullptr);
+        const MediaRecoveryProbe* recovery_probe = nullptr,
+        const MediaCongestionDecision* policy = nullptr);
+    void update_policy(const MediaCongestionDecision& decision,
+        std::uint32_t smoothed_rtt_ms, std::size_t in_flight_bytes);
+    [[nodiscard]] EncodeReservation reserve_encode();
     void observe_ack_progress(std::uint64_t acknowledged_packets);
     void notify_writable();
 
@@ -608,6 +704,8 @@ public:
     [[nodiscard]] MediaPacerTelemetry telemetry() const;
 
 private:
+    MediaAdmissionResult submit_reserved(PacedEncodedVideoFrame frame, std::uint64_t generation);
+    void cancel_reservation(std::uint64_t generation, std::vector<std::uint8_t> payload);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

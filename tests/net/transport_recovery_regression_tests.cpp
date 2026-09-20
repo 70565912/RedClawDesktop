@@ -202,22 +202,27 @@ TEST(RecoveryBudget, ProbeNeedsMediaAckAndCannotTreatHealthyPingAsBandwidth) {
         sample.rtt_sample_id = second;
         if (second == 2) sample.encoder_target_bitrate_kbps = 2000;
         const auto decision = controller.update(sample);
-        EXPECT_LE(decision.pacing_bitrate_kbps, 500U);
+        EXPECT_LE(decision.pacing_bitrate_kbps, 800U);
         EXPECT_NE(decision.recovery_probe.phase, MediaRecoveryProbePhase::kConfirmed);
-        EXPECT_LE(decision.probe_count, 6U);
+        EXPECT_LE(decision.probe_count, second); // No stacked unconfirmed increment.
     }
     controller.reset();
     sample.encoder_target_bitrate_kbps = 400;
     sample.now_steady_ms = 1000; sample.rtt_sample_id = 1;
-    (void)controller.update(sample);
-    sample.encoder_target_bitrate_kbps = 2000;
-    sample.now_steady_ms = 2000; sample.rtt_sample_id = 2;
     const auto probe = controller.update(sample);
+    sample.encoder_target_bitrate_kbps = 2000;
     ASSERT_EQ(probe.recovery_probe.phase, MediaRecoveryProbePhase::kProbing);
-    sample.now_steady_ms = 2100;
+    sample.now_steady_ms = 1010;
     sample.transport.feedback_fresh = true;
     sample.transport.feedback_sample_id = 1;
     sample.transport.acknowledged_packets = 1;
+    EXPECT_EQ(controller.update(sample).recovery_probe.phase, MediaRecoveryProbePhase::kProbing);
+    sample.transport.probe_generation = probe.recovery_probe.generation;
+    sample.transport.probe_rate_valid = true;
+    sample.transport.probe_delivery_bitrate_kbps = probe.pacing_bitrate_kbps;
+    sample.transport.latest_acknowledged_sequence = 4;
+    sample.demand.probe_end_sequence = 4;
+    ++sample.transport.feedback_sample_id;
     EXPECT_EQ(controller.update(sample).recovery_probe.phase, MediaRecoveryProbePhase::kConfirmed);
 }
 

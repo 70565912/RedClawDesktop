@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 ## Current release
 
@@ -9,6 +9,8 @@ RedClawDesktop [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
 ## Verified local baseline
+
+Latest X00-T20 follow-up: the approved adaptive-sender candidate is implemented and locally verified, but not deployed. Real media feedback drives delivery estimates, bounded probes, in-flight windows and reusable FIFO admission; accumulated waits/cadence retain fractional credit, and encoder output reserves bounded storage before copying. No GOP/VBV/resolution or wire-schema change. Nine new automatic cases and affected regressions passed after targeted failure fixes; Debug NoPublish main build plus a final incremental relink passed. The previous Host remains unchanged. The incident is still open: local algorithm/codec results do not prove that deployed long-session stutters are resolved. Next action requires separate deployment authorization and matched-scene bounded endpoint measurements. See the [task ledger](MODULE_KANBAN.md) and [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md).
 
 X00-T20 post-deployment diagnosis found further recovery defects: capture availability/region changes reset transport sequence without a connection epoch reset, while both feedback endpoints retain monotonic gates; NVENC forced I-frame requests were not configured as forced IDR. Same-instance media feedback froze after capture generation changes and pacing fell from 3806 to 638 kbps; transmission dropped from about 22.6 to 4.25 FPS. The follow-up preserves sequence by default and resets it explicitly only at connection-epoch boundaries, and verifies NVENC `forced-idr=1` during initialization. Three focused recovery cases, one local developer-selected NVENC H.264 standalone-IDR case and one Debug NoPublish main build passed; prior clock tests are reused. Implementation `f75ac19` is pushed and deployed to the local Host with a verified complete rollback bundle; the peer reconnected. A 40-second same-instance interval transmitted 853 real frames (21.32 FPS) with ACK +1148 and no additional stream failures or pacer deadline drops. This is not a matched-scene trial or long-session proof; capture generation did not change in the window, and individual 3–4-second stalls remain unclosed. Details are in the [diagnostic handoff](../testing/desktop-latency-quality-investigation-20260915.md).
 
