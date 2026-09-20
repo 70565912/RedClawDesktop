@@ -350,6 +350,10 @@ if (-not $SkipBuild) {
 }
 
 $identity = New-PortableArchive
+$smokeReportPath = Join-Path $repoRoot "build\reports\release-$tagName-package-smoke.json"
+& (Join-Path $scriptRoot 'test-portable-package.ps1') `
+    -ArchivePath $zipPath -ChecksumPath $checksumPath -OutputJsonPath $smokeReportPath
+Write-Host "[release] Extracted package smoke passed: $smokeReportPath" -ForegroundColor Green
 Write-Host "[release] ZIP: $zipPath" -ForegroundColor Green
 Write-Host "[release] ZIP SHA256: $($identity.ZipSha256)"
 Write-Host "[release] EXE SHA256: $($identity.ExeSha256)"

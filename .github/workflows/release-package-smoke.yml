@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing Git releaseTag to verify, for example v0.1.1
+        description: Existing Git releaseTag to verify, for example v0.1.3
         required: true
-        default: v0.1.1
+        default: v0.1.3
 
 permissions:
   contents: read

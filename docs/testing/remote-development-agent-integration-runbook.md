@@ -1,6 +1,8 @@
 # P1-AG-01 remote development Agent integration runbook
 
-This is the formal two-machine acceptance procedure for `redclaw-agent-v1`. Local fake-provider tests are a prerequisite, not a substitute.
+This is the Agent scenario catalog for `redclaw-agent-v1`. Follow the [local-first automated matrix](test-matrix.md): protocol, lifecycle, approval permutations, output parsing and UI behavior run locally; local dual endpoints cover both roles. Physical cross-LAN adds one representative authorized real-Provider round trip, not a repeat of every scenario/provider/model below. A fake Provider is not evidence of real account readiness, while a real Provider can be checked locally without a remote operator.
+
+Real account login/consent and operator-assisted scenarios here are developer-selected manual evaluations, not automated sequence items or version-release conditions. Automatic CTests exclude real Provider readiness instead of leaving it skipped. Do not request a manual follow-up solely to close an automatic report.
 
 The bidirectional Agent gate covers both roles. Either role may
 invoke the peer; each machine must grant local execution consent for its own
@@ -8,8 +10,8 @@ current desktop role. Controller local settings are not a remote login entry.
 
 ## 1. Prepare compatible endpoints
 
-For the compressed Protobuf upgrade, perform a configure/build on both endpoints
-(do not initially use SkipConfigure), and publish the complete fixed Debug directory,
+When the compressed Protobuf build inputs change, configure/build the affected endpoint
+and publish the complete fixed Debug directory; otherwise reuse its validated artifact,
 including `redclaw_protocol_codec.exe`, Protobuf and Zstd DLLs. The local PowerShell
 Agent API requires a codec compatible with the negotiated wire. During migration,
 still-supported Control/Agent text-wire versions must remain interoperable; if no common
@@ -17,11 +19,11 @@ mandatory capability exists, report `protocol_version_incompatible` explicitly.
 See [wire and migration bounds](../architecture/compressed-protobuf-wire-v1.md).
 
 1. Record each machine's committed Git SHA and product/protocol version. Different supported versions are required to interoperate; do not require matching commits or binaries.
-2. Build and publish Debug with `./build.ps1 -Configuration Debug`.
+2. Only when a matching artifact is missing or affected sources/dependencies changed, build and publish Debug with `./build.ps1 -Configuration Debug`.
 3. Record SHA-256 for both `release/Debug/redclaw_desktop.exe` files as endpoint-specific artifact identities. Independent builds do not need matching hashes; require negotiated common capabilities and successful runtime interoperability instead.
 4. Before Runtime starts, open **Development Agent Settings** on the Host. Use only its local Login/Refresh controls; there is no Controller login or API-key field.
-5. Confirm Codex is `ready`. The probe covers version, official account login status, and app-server readiness without starting a model turn.
-6. For Cursor/Grok acceptance, separately install the official `cursor-agent` Headless CLI, click its local Login button, complete the official browser flow, and Refresh. Require `ready` plus at least one Grok identifier returned by the authenticated account. The Cursor editor alone is insufficient. RedClaw must not install it.
+5. Select the already-authorized Provider for this scenario. For Codex, confirm `ready`; the probe covers version, official account login status and app-server readiness without starting a model turn.
+6. If Cursor/Grok is the selected Provider, its official `cursor-agent` Headless CLI and local login must be ready. Require `ready` plus an applicable model identifier returned by the authenticated account. The Cursor editor alone is insufficient. RedClaw must not install it. Do not require both Providers or another login to repeat a transport check that already passed with one.
 
 The settings dialog keeps account-command output visible and reports start failures,
 non-zero exits, cancellation, and timeouts. Do not close or hide the dialog while an

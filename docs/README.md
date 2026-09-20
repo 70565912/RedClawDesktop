@@ -10,17 +10,18 @@
 - [CMake Tools 故障排查](setup/cmake-tools-api-failure-troubleshooting.md)
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
+- [v0.1.3 Release notes](releases/v0.1.3.md)
+- [v0.1.2 历史候选说明（已并入 v0.1.3）](releases/v0.1.2.md)
 - [v0.1.1 Release notes](releases/v0.1.1.md)
-- [v0.1.2 候选发行说明](releases/v0.1.2.md)
 - [v0.1.0 Release notes](releases/v0.1.0.md)
 
-发布 Windows x64 便携包使用：
+发布 Windows x64 便携包使用 PowerShell 7：
 
 ```powershell
-.\scripts\release\publish-github-release.ps1 -Version 0.1.1 -PackageOnly
+.\scripts\release\publish-github-release.ps1 -Version 0.1.3 -PackageOnly
 ```
 
-去掉 `-PackageOnly` 后，脚本会校验干净的公开 `main`、创建注释标签并发布 GitHub Pre-release。
+脚本对最终 ZIP 自动执行哈希、提取文件与命令启动检查，结果保存在 `build/reports/`。去掉 `-PackageOnly` 后，脚本会先校验干净的公开 `main`，包检查成功后才创建注释标签并上传同一个已验证 ZIP 为 GitHub Pre-release。构建/CTest 自动集合遵循 [无人值守验收矩阵](testing/test-matrix.md)；需要人工的评估不作为发布条件。
 
 ## 架构
 
@@ -39,7 +40,7 @@
 
 ## 测试与联调
 
-- [测试矩阵](testing/test-matrix.md)
+- [测试分层、自动化入口与验收矩阵](testing/test-matrix.md)
 - [双机桌面流运行手册](testing/p0-dual-machine-desktop-stream-runbook.md)
 - [跨 LAN 双机联调](testing/cross-lan-dual-machine-integration-playbook.md)
 - [画面排队迟缓与静止模糊诊断交接](testing/desktop-latency-quality-investigation-20260915.md)
@@ -59,6 +60,7 @@
 - [Agent 执行协议](runtime/AGENT_EXECUTION_PROTOCOL.md)
 - [模块规格](modules/module-specs.md)
 - [阶段日志](logs/DEVLOG.md)
+- [v0.1.3 发布说明](releases/v0.1.3.md)
 - [v0.1.1 发布说明](releases/v0.1.1.md)
 - [v0.1.0 发布说明](releases/v0.1.0.md)
 

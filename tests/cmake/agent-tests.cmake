@@ -58,4 +58,5 @@ redclaw_apply_warnings(redclaw_agent_provider_tests)
 add_test(
   NAME redclaw_agent_provider_tests
   COMMAND redclaw_agent_provider_tests
+    --gtest_filter=-AgentProviders.RealProviderReadinessWhenExplicitlyEnabled
 )

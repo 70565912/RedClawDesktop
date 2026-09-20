@@ -4,10 +4,10 @@
 
 **A Windows P2P remote desktop and remote Agent workspace for developers**
 
-[简体中文](README.md) · [Download v0.1.1](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
+[简体中文](README.md) · [Download v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
+[![Release](https://img.shields.io/badge/release-v0.1.3-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,7 +16,7 @@
 
 RedClawDesktop connects a developer to their own Windows workstation by device code. One GUI combines the live desktop, explicitly authorized keyboard and mouse input, and interaction with AI coding Agents running on the Host. Online DHT rendezvous and ICE/STUN/TURN negotiation are used to establish a direct P2P connection whenever possible.
 
-> `v0.1.1` is a Windows x64 Developer Preview for evaluation and two-machine testing. It does not yet include a signed installer or complete coverage of every cross-site NAT and TURN combination.
+> `v0.1.3` is a Windows x64 Developer Preview combining capture recovery, Host cursor handling, and a file/clipboard/terminal workspace. It has no signed installer and does not claim coverage of every cross-site NAT and TURN combination. See the [release notes](docs/releases/v0.1.3.md).
 
 ![RedClawDesktop Controller showing the live desktop stream and Agent panel](docs/assets/redclaw-controller-desktop-stream.png)
 
@@ -30,7 +30,7 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 ## Current capabilities
 
-| Capability | v0.1.1 status |
+| Capability | v0.1.3 status |
 | --- | --- |
 | Windows Host and Controller GUI | Available |
 | Device code and public-DHT rendezvous | Available |
@@ -40,20 +40,26 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 | Authorized keyboard and mouse control | Available; secure-desktop cases fail closed |
 | Control, Media, and Agent channels | Available |
 | Codex and Cursor provider bridge | Available after Host-side setup and authorization |
+| Bidirectional file and folder transfer | Available with SHA256 verification, conflicts, cancellation and per-file results |
+| On-demand clipboard transfer | Remote-canvas Ctrl+V triggers a snapshot, not continuous sync; focus and input gates apply |
+| Embedded PowerShell terminal | ConPTY with bundled WebView2/xterm.js; same-session reconnect retains the shell |
+| Independent restart and full-directory upgrade | Current-user worker, startup rollback, independent of the initiating Agent/terminal |
 | Signed Windows MSI and mobile clients | Planned |
 
 ## Quick start
 
-1. Download `RedClawDesktop-windows-x64-v0.1.1.zip` and `SHA256SUMS.txt` from the [v0.1.1 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1).
+1. Download `RedClawDesktop-windows-x64-v0.1.3.zip` and `SHA256SUMS.txt` from the [v0.1.3 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3).
 2. Verify the archive:
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.1.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.3.zip -Algorithm SHA256
    ```
 
 3. Extract it into a new directory and run `redclaw_desktop.exe`. Supported Host and Controller versions negotiate their common capabilities; connecting does not require identical versions or binaries.
 4. Select **Host** on the controlled PC and wait. Select **Controller** on the controlling PC, enter the Host device code, and connect.
 5. Once video is visible, enable remote input explicitly. Agent features also require a configured provider and registered projects on the Host.
+
+File, clipboard and terminal features use common negotiated capabilities. Unsupported features stay unavailable with older peers; both sides need not upgrade together. Transfers pause new desktop/terminal input and Agent operations while video and existing output continue. Completion or cancellation restores only operations still eligible under their other authorization gates.
 
 The portable archive does not install a Windows service. Windows SmartScreen may warn because this Developer Preview is not code-signed.
 
@@ -65,7 +71,7 @@ The portable archive does not install a Windows service. Windows SmartScreen may
 - For a manual router rule, select **UDP** and use the configured ICE port for both the internal and external port.
 - The DHT listening port is used only for rendezvous and does not need a manual mapping.
 
-Direct connectivity depends on NAT, CGNAT, firewall, and ISP policy. Configure TURN when direct traversal is unavailable. `v0.1.1` has not yet been tested across every network combination.
+Direct connectivity depends on NAT, CGNAT, firewall, and ISP policy. Configure TURN when direct traversal is unavailable. The current version has not been tested across every network combination.
 
 ## GitHub cloud validation boundary
 
@@ -73,12 +79,12 @@ GitHub Actions uses a newly provisioned Windows virtual machine for each job. De
 
 After a prerelease is published, a separate package check downloads the final ZIP from GitHub Releases, verifies it against `SHA256SUMS.txt`, checks required portable files, and runs `redclaw_desktop.exe --help` from the archive. It does not rebuild the application; it detects damaged uploads, missing DLLs, and a broken command entry point.
 
-The GitHub-hosted VM is not a real desktop acceptance environment. Desktop capture, hardware-backed D3D11 decode and presentation, UPnP, cross-site ICE traversal, and physical keyboard or mouse input remain local or physical two-machine checks. See [GitHub Actions validation](docs/testing/github-actions-validation.md) for the exact boundary.
+The GitHub-hosted VM is not a real desktop acceptance environment. Automated sequences and release requirements contain only unattended cases. Physical keys, application paste, UAC/account interaction, special hardware/topology and visual judgment are optional developer evaluations, not pending release gates. Unexecuted coverage is not a pass. See the [automated matrix](docs/testing/test-matrix.md) and [GitHub Actions validation](docs/testing/github-actions-validation.md).
 
 ## Security model
 
 - Remote input is rejected when capability, authorization, lease, or lifecycle state is missing.
-- Agents can work only inside projects registered by the Host; the protocol exposes no arbitrary remote shell.
+- Agents can work only inside projects registered by the Host. The terminal is a separate connected-desktop capability executing with the Host's current-user permissions, without automatic elevation; file browsing also obeys that user's filesystem permissions.
 - Diagnostics bound sensitive paths, addresses, and credentials. Runtime signaling, keys, and local configuration must never be committed.
 - Local encrypted debug signaling files remain in operator-selected directories; the repository is not a communication or signaling exchange.
 
@@ -97,7 +103,7 @@ The standard entry point builds the project and stages a runnable tree under `re
 
 ## Project status
 
-`v0.1.1` covers local dual-GUI validation of real capture, encode, transport, decode, and presentation plus the Control, Media, and Agent channels. Strict performance targets remain observed engineering metrics and do not block this functional preview; results depend on hardware, drivers, resolution, and network conditions.
+`v0.1.3` retains the real desktop and Control/Media/Agent baseline and adds negotiated remote workspace capabilities. Automated acceptance is separate from optional manual development evaluation; local endpoint evidence is not proof of all cross-site networks. Strict performance targets remain engineering observations dependent on hardware, drivers, resolution, and network conditions.
 
 The next phase expands cross-site and TURN coverage, hardens unattended install and upgrade, adds code signing, and continues reducing GUI scheduling cost during large Agent output. See [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 

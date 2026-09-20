@@ -4,10 +4,10 @@
 
 **面向开发者的 Windows P2P 远程桌面与远端 Agent 工作台**
 
-[English](README.en.md) · [下载 v0.1.1](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
+[English](README.en.md) · [下载 v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1)
+[![Release](https://img.shields.io/badge/release-v0.1.3-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,7 +16,7 @@
 
 RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，在同一个界面中查看真实桌面、发送经过授权的键鼠输入，并与开发机上的 AI coding Agent 交互。连接采用在线 DHT rendezvous 与 ICE/STUN/TURN 协商，优先建立端到端 P2P 直连。
 
-> `v0.1.1` 是 Windows x64 Developer Preview。它适合开发者测试和双机联调，尚未提供签名安装器，也尚未覆盖所有异地 NAT/TURN 组合。
+> `v0.1.3` 是 Windows x64 Developer Preview，合并采集恢复、Host 光标与文件/剪贴板/终端工作台。尚未提供签名安装器，也不宣称覆盖所有异地 NAT/TURN 组合。详见 [发行说明](docs/releases/v0.1.3.md)。
 
 ![RedClawDesktop Controller 正在显示真实视频链路与 Agent 面板](docs/assets/redclaw-controller-desktop-stream.png)
 
@@ -30,7 +30,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 当前能力
 
-| 能力 | v0.1.1 状态 |
+| 能力 | v0.1.3 状态 |
 | --- | --- |
 | Windows Host / Controller 图形界面 | 可用 |
 | 机器码与 public-DHT 在线 rendezvous | 可用 |
@@ -40,20 +40,26 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 | 授权键盘和鼠标控制 | 可用，安全桌面等场景会拒绝或暂停 |
 | Control / Media / Agent 三通道 | 可用 |
 | Codex / Cursor Provider 桥接 | 可用，需在 Host 上单独配置和授权 |
+| 双向文件/文件夹传输 | 可用，含 SHA256 校验、冲突处理、取消与逐文件结果 |
+| 按需剪贴板传送 | 可用，远程画布 Ctrl+V 触发，不持续同步；粘贴受焦点和输入门禁约束 |
+| 内嵌 PowerShell 终端 | 可用，ConPTY + 随包 WebView2/xterm.js，同一桌面会话重连保留 Shell |
+| 独立重启与完整目录升级 | 可用，当前用户权限、启动失败回滚，不依赖发起 Agent/终端存活 |
 | Windows 签名 MSI、移动端 | 后续版本 |
 
 ## 快速开始
 
-1. 从 [v0.1.1 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.1) 下载 `RedClawDesktop-windows-x64-v0.1.1.zip` 和 `SHA256SUMS.txt`。
+1. 从 [v0.1.3 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) 下载 `RedClawDesktop-windows-x64-v0.1.3.zip` 和 `SHA256SUMS.txt`。
 2. 校验 ZIP：
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.1.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.3.zip -Algorithm SHA256
    ```
 
 3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。仍受支持的 Host 和 Controller 版本通过共同能力互通；连接不要求相同版本或相同二进制。
 4. 在受控电脑选择 **Host** 并等待连接；在控制电脑选择 **Controller**，输入 Host 显示的机器码并连接。
 5. 画面出现后，按界面提示显式开启远程输入。Agent 功能需要 Host 端配置允许的项目和 Provider。
+
+文件、剪贴板和终端按双方共同能力启用；旧端不支持的新功能保持不可用，不要求两端同时升级。传输期间暂停新的桌面/终端输入及 Agent 操作，画面和已有输出继续；取消或完成后恢复符合其他授权条件的操作。
 
 便携 ZIP 不写入安装目录之外的系统服务配置。首次运行可能出现 Windows SmartScreen 提示，因为 Developer Preview 尚未进行代码签名。
 
@@ -65,7 +71,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 - 手工映射时选择 **UDP**，内部端口和外部端口均填写该设备配置的 ICE UDP 端口。
 - DHT 监听端口只承担 rendezvous，无需手工端口映射。
 
-不同 NAT、CGNAT、防火墙和运营商策略会影响直连结果。无法直连时可配置 TURN；`v0.1.1` 尚未完成所有异地网络组合的覆盖测试。
+不同 NAT、CGNAT、防火墙和运营商策略会影响直连结果。无法直连时可配置 TURN；当前版本尚未完成所有异地网络组合的覆盖测试。
 
 ## GitHub 云端验证范围
 
@@ -73,12 +79,12 @@ GitHub Actions 在每次任务中使用新建的 Windows 虚拟机。本机已�
 
 发布 Pre-release 后，独立的包检查会直接下载 GitHub Release 中的最终 ZIP，核对 `SHA256SUMS.txt`，检查便携包必需文件，并运行包内 `redclaw_desktop.exe --help`。这项检查不重新构建程序，主要发现上传损坏、缺少 DLL 或命令入口无法启动等问题。
 
-GitHub 托管虚拟机不作为真实桌面验收环境。桌面采集、D3D11 硬件解码与呈现、UPnP、异地 ICE 穿透及真实键鼠输入仍由本地或物理双机验证。详细边界见 [GitHub Actions 验证说明](docs/testing/github-actions-validation.md)。
+GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本发布只要求无人值守用例；物理键盘、应用粘贴、UAC/账号、特殊硬件/拓扑和视觉判断由开发者自行选测，不是发布前待补项目。未执行的场景不算通过。详见 [自动化矩阵](docs/testing/test-matrix.md) 和 [GitHub Actions 验证说明](docs/testing/github-actions-validation.md)。
 
 ## 安全模型
 
 - 缺少能力、授权、有效租约或生命周期通道时，远程输入默认拒绝。
-- Agent 只能在 Host 明确注册的项目中工作；协议不提供任意远程 shell。
+- Agent 只能在 Host 明确注册的项目中工作。终端是独立的已连接桌面能力，按 Host 当前用户权限执行命令，不自动提权；文件浏览也受该用户的文件系统权限约束。
 - 日志和诊断对路径、地址和凭据做边界控制，运行信令、密钥和本地配置不得提交到仓库。
 - 调试用本地密文信令文件只保存在操作员指定目录，仓库不承担通信或信令交换。
 
@@ -97,7 +103,7 @@ GitHub 托管虚拟机不作为真实桌面验收环境。桌面采集、D3D11 �
 
 ## 项目状态
 
-`v0.1.1` 已覆盖 Windows 本机双 GUI 的真实采集、编码、传输、解码、呈现，以及 Control / Media / Agent 三通道回归。严格性能目标作为持续观测项，不阻塞本次功能预发布；性能结果会随硬件、驱动、分辨率和网络环境变化。
+`v0.1.3` 沿用真实桌面和 Control / Media / Agent 基线，增加可协商的远程工作台能力。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。
 
 下一阶段重点是扩大异地网络与 TURN 覆盖、完善无人值守安装和升级、补充代码签名，并继续降低 GUI 与 Agent 大输出下的调度开销。当前执行状态见 [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md)。
 

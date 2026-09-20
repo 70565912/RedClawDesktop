@@ -17,7 +17,8 @@ for executable work. Recovery remains an explicit operator action.
    Agent relay additionally requires a registered-project manifest and explicit
    Host `-AllowAgentTasks` authorization.
 
-Before a two-machine attempt, run the deterministic local gate. It creates and
+For relevant bridge changes, run the deterministic local gate once (reuse unaffected
+artifact-bound evidence; do not repeat it for every remote query). It creates and
 removes its own random passphrase and bridge processes, and writes only bounded
 evidence under `build/reports`:
 
@@ -134,6 +135,7 @@ No script action accepts arbitrary shell text.
   route-cache hit; a different network fingerprint reports a miss;
 - tampered/stale signals, unknown actions, replay, and absent Agent
   authorization fail closed;
-- formal public-DHT GUI validation still proves same SHA, real media counters,
-  all required channels, remote logs, and dual-endpoint evidence. The debug
-  bridge connection alone is not a P0 pass.
+- formal public-DHT GUI validation records each endpoint's version/hash, common
+  capabilities, real media counters and required channels. The debug bridge alone
+  is not a P0 pass; follow the [test matrix](test-matrix.md) without duplicate
+  functional sweeps or a same-SHA interoperability requirement.
