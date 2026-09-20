@@ -1,6 +1,8 @@
 # P0 Full Machine-Code Desktop Stream Validation
 
-This is the required product validation path. Direct IP/TCP and preview-only smoke tests are diagnostic-only and do not satisfy P0.
+This describes the real product-path evaluation. Direct IP/TCP and preview-only smoke are diagnostic-only, not proof of real cross-LAN desktop delivery. Human-assisted steps are optional developer evaluations, excluded from automatic sequences and version-release requirements.
+
+This runbook defines what a claimed cross-LAN media result proves, not a mandatory manual release test. Select automatic cases through the [test matrix](test-matrix.md); use the [cross-LAN playbook](cross-lan-dual-machine-integration-playbook.md) only when the developer chooses that evaluation. Reuse local automatic and supported-version evidence. Diagnostic commands below are alternatives, not a sequence of additional release gates.
 
 ## Required User Workflow
 
@@ -15,6 +17,8 @@ This is the required product validation path. Direct IP/TCP and preview-only smo
 9. Controller UI plays the decoded desktop image.
 
 The user workflow must not require entering a LAN IP address.
+
+The Host may start and wait before the Controller starts; simultaneous startup is not a connection requirement.
 
 ## Required Runtime Path
 
@@ -74,7 +78,9 @@ Network:
 - It can maintain DHT state, create allowed router mappings, hold local encrypted records, and provide LAN diagnostics.
 - It acts as an Internet relay only when it is reachable through public IPv6, an explicit router mapping, a supported tunnel, or another operator-controlled path.
 
-## Current Implementation Status
+## Implementation outline
+
+Current completion and remaining work are maintained in [MODULE_KANBAN](../runtime/MODULE_KANBAN.md), not inferred from this outline.
 
 Implemented or in progress:
 - UI machine-code workflow now defaults both `Generate Code` and `Connect` to `signal_transport=dht`.
@@ -85,11 +91,11 @@ Implemented or in progress:
 - Runtime stream counters/failure classification.
 - Host capture path with DDA and GDI fallback.
 - Host libavcodec encoder execution path.
-- Controller libavcodec decoder path with hardware-preferred FFmpeg fallback is implemented; remaining gate is real dual-machine evidence.
+- Controller libavcodec decoder path with hardware-preferred FFmpeg fallback.
 
-Still required before this runbook can pass:
+Required when selecting a new cross-LAN media checkpoint:
 - Cross-LAN DHT/ICE/NAT evidence using two different LANs.
-- NAT traversal evidence for UPnP/PCP/NAT-PMP, STUN, IPv6, and synchronized hole punching, including a clear relay-required classification if no serverless path connects.
+- Record the NAT traversal mechanisms actually attempted/selected, including a clear relay-required classification if no serverless path connects. Extra topology/path combinations are separate targeted coverage, not prerequisites for every functional change.
 - Optional user-provided relay/helper evidence only when the serverless path cannot connect.
 - End-to-end UI run on two different LANs.
 

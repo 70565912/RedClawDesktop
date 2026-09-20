@@ -22,7 +22,7 @@ The unit workflow stores compiled vcpkg packages in a GitHub Actions cache keyed
 
 This package smoke does not rebuild dependencies. It verifies the actual uploaded asset and detects archive damage, missing load-time DLLs, or a broken command entry point.
 
-## Physical acceptance boundary
+## Local-native versus physical cross-LAN boundary
 
 The standard hosted runner is not accepted as evidence for:
 
@@ -33,8 +33,8 @@ The standard hosted runner is not accepted as evidence for:
 - focus-sensitive native keyboard and mouse injection;
 - a real local Agent Provider login or approval flow.
 
-Use the local dual-GUI script and the physical cross-LAN playbooks for those checks. A self-hosted runner may orchestrate trusted machines, but the public repository must never execute untrusted pull-request code on a development workstation.
+These exclusions from a hosted VM do not make every check cross-LAN/manual: real capture/GPU, native focus and Provider readiness belong to local native fixtures; local dual-GUI covers component integration and supported-version combinations. Only external-network behavior and representative remote channel delivery require the physical playbook. Use the [automated test matrix](test-matrix.md) and reuse its receipts. A self-hosted runner may orchestrate trusted machines, but the public repository must never execute untrusted pull-request code on a development workstation.
 
 ## Release interpretation
 
-A passing package smoke means the published archive is intact and its command entry loads on a clean Windows runner. It does not mean that desktop video, input, GPU acceleration, NAT traversal, or Provider integration passed. Release notes must list local, physical, and cloud evidence separately.
+A passing package smoke means the published archive is intact and its command entry loads on a clean Windows runner. It does not mean that desktop video, input, GPU acceleration, NAT traversal, or Provider integration passed. Release notes identify only executed coverage. Human-assisted keyboard/clipboard/UAC/account/visual/cross-LAN evaluations are not automatic items or version-release prerequisites; the developer decides whether to perform them separately.

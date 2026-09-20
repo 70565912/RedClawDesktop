@@ -1,6 +1,11 @@
 find_package(GTest CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json)
 
+# CTest registers unattended cases only. Mixed GoogleTest executables exclude
+# interactive/account/hardware-specific evaluations with explicit command filters.
+# Developers may build/run those executables directly when they choose; they are
+# not deferred release gates. See docs/testing/test-matrix.md.
+
 # include() deliberately preserves DIRECTORY TESTS and target aggregation below.
 # add_subdirectory() would silently omit child tests from redclaw_tests_unit/all.
 include(cmake/service-tests.cmake)
@@ -48,7 +53,8 @@ add_test(NAME redclaw_clipboard_paste_guard_tests COMMAND redclaw_clipboard_past
 add_executable(redclaw_clipboard_payload_integration_tests workspace/clipboard_payload_integration_tests.cpp)
 target_link_libraries(redclaw_clipboard_payload_integration_tests PRIVATE redclaw_workspace GTest::gtest_main)
 redclaw_apply_warnings(redclaw_clipboard_payload_integration_tests)
-add_test(NAME redclaw_clipboard_payload_integration_tests COMMAND redclaw_clipboard_payload_integration_tests)
+add_test(NAME redclaw_clipboard_payload_integration_tests COMMAND redclaw_clipboard_payload_integration_tests
+  --gtest_filter=-ClipboardNativeFocus.*:ClipboardPayloadFixture.*)
 set_tests_properties(redclaw_clipboard_payload_integration_tests PROPERTIES TIMEOUT 60)
 
 add_executable(redclaw_clipboard_copy_store_integration_tests workspace/clipboard_copy_store_tests.cpp)

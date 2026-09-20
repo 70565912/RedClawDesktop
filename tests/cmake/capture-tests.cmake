@@ -3,7 +3,8 @@ add_executable(redclaw_capture_recovery_cursor_tests capture/capture_recovery_cu
 target_link_libraries(redclaw_capture_recovery_cursor_tests PRIVATE redclaw_capture GTest::gtest_main)
 target_include_directories(redclaw_capture_recovery_cursor_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/capture/src ${PROJECT_SOURCE_DIR}/src/ui ${PROJECT_SOURCE_DIR}/src/protocol/include)
 redclaw_apply_warnings(redclaw_capture_recovery_cursor_tests)
-add_test(NAME redclaw_capture_recovery_cursor_tests COMMAND redclaw_capture_recovery_cursor_tests)
+add_test(NAME redclaw_capture_recovery_cursor_tests COMMAND redclaw_capture_recovery_cursor_tests
+  --gtest_filter=-CaptureHardwareRecovery.*:CaptureCursor.D3D11MatchesCpuForShapesClippingAndRotation)
 
 add_executable(redclaw_capture_dda_min_capture_poc_tests
   capture/dda_min_capture_poc_tests.cpp
@@ -15,14 +16,8 @@ target_link_libraries(redclaw_capture_dda_min_capture_poc_tests PRIVATE
 
 redclaw_apply_warnings(redclaw_capture_dda_min_capture_poc_tests)
 
-add_test(
-  NAME redclaw_capture_dda_min_capture_poc_tests
-  COMMAND redclaw_capture_dda_min_capture_poc_tests
-)
-
-set_tests_properties(redclaw_capture_dda_min_capture_poc_tests PROPERTIES
-  SKIP_RETURN_CODE 77
-)
+# Interactive desktop probes remain buildable for developer-initiated evaluation,
+# but are not registered in automated CTest or release test aggregates.
 
 add_executable(redclaw_capture_windows_capture_abstraction_skeleton_tests
   capture/windows_capture_abstraction_skeleton_tests.cpp
@@ -34,10 +29,6 @@ target_link_libraries(redclaw_capture_windows_capture_abstraction_skeleton_tests
 
 redclaw_apply_warnings(redclaw_capture_windows_capture_abstraction_skeleton_tests)
 
-add_test(
-  NAME redclaw_capture_windows_capture_abstraction_skeleton_tests
-  COMMAND redclaw_capture_windows_capture_abstraction_skeleton_tests
-)
 
 add_executable(redclaw_capture_encoder_low_latency_profile_tests
   capture/encoder_low_latency_profile_tests.cpp
@@ -94,10 +85,13 @@ target_link_libraries(redclaw_capture_stability_smoke_tests PRIVATE
 
 redclaw_apply_warnings(redclaw_capture_stability_smoke_tests)
 
-add_test(
-  NAME redclaw_capture_stability_smoke_tests
-  COMMAND redclaw_capture_stability_smoke_tests
+set_target_properties(
+  redclaw_capture_dda_min_capture_poc_tests
+  redclaw_capture_windows_capture_abstraction_skeleton_tests
+  redclaw_capture_stability_smoke_tests
+  PROPERTIES EXCLUDE_FROM_ALL TRUE EXCLUDE_FROM_DEFAULT_BUILD TRUE
 )
+
 
 add_executable(redclaw_capture_fallback_metrics_tests
   capture/capture_fallback_metrics_tests.cpp

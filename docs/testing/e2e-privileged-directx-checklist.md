@@ -3,6 +3,8 @@
 Date: 2026-03-20
 Owner: M04/M06/M07/M10 joint validation
 
+This is an optional developer manual-evaluation catalog, excluded from automatic test sequences and version-release requirements. Its pass criteria describe a selected scenario only; they do not create a pending manual release gate. Product authorization and secure-desktop restrictions remain unchanged.
+
 ## Environment Preconditions
 - Windows host service installed and running.
 - Full-control policy enabled for test operator and test device.

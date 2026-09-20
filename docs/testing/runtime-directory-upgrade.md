@@ -4,6 +4,8 @@ Updated: 2026-09-16
 
 This is the fixed upgrade path for an authorized two-machine maintenance task. It preserves each GUI's role and arguments and updates the complete runtime directory. Task status and remaining release gates are in [PROJECT_STATE](../runtime/PROJECT_STATE.md).
 
+Actual peer maintenance is a separately authorized operation, not a required manual release test. Automated qualification uses isolated local runtime fixtures; developers decide whether to perform real deployments. The safety/ownership checks below still apply whenever maintenance is explicitly requested.
+
 ## Prepare and hand off
 
 1. Protect pre-existing work, synchronize to the agreed exact commit and run `build.ps1 -Configuration Debug -NoPublish` plus relevant tests. Publish the complete bundle to a separate candidate directory with `publish.ps1 -Configuration Debug -PublishDirectory <candidate>`.

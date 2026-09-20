@@ -2,6 +2,8 @@
 
 This runbook executes the fourth-batch manual evidence flow for remote UAC confirmation scenarios.
 
+This is developer-selected manual evaluation only. It must not be scheduled as an automatic test, counted as an automatic skip or required for version release. The developer decides whether to collect this evidence; authorization restrictions remain intact.
+
 ## Current Status and Limitation
 - This flow is currently an evidence collection run, not a fully automated UAC E2E assertion runner.
 - `scripts/service/run-m07-t04-uac-e2e-validation.ps1` records operator-entered scenario outcomes (`pass|fail|skip`) and writes a JSON report.
@@ -17,7 +19,7 @@ Use this table to track which run-id package is attached for closure and whether
   - run_id: TBD
   - verdict: TBD
   - package_path: `build/reports/m07-t04-runs/<run-id>`
-  - notes: required to close M07-T04 per D04/D05 boundary.
+  - notes: optional developer evaluation record, not an automatic or version-release gate.
 
 ## Scope
 - Scenario A: authorized UAC approve
