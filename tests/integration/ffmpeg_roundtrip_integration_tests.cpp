@@ -227,6 +227,58 @@ TEST(FfmpegRoundtripIntegration, EncodesAndDecodesSingleFrame) {
     encoder_session.stop();
 }
 
+// Developer-selected hardware check; not part of the portable CTest/release gate.
+TEST(FfmpegNvencRecoveryIntegration, RequestProducesStandaloneIdr) {
+    redclaw::capture::EncoderProfileRequest request;
+    request.width = 320;
+    request.height = 180;
+    request.fps = 30;
+    redclaw::capture::EncoderConfigProfile profile;
+    std::string error;
+    ASSERT_TRUE(redclaw::capture::build_low_latency_encoder_profile(request, &profile, &error)) << error;
+    profile.gop_length_frames = 60;
+    redclaw::capture::EncoderBackendBridgePlan plan;
+    plan.selected_backend = redclaw::capture::EncoderBackendType::kNvenc;
+    redclaw::capture::EncoderExecutionSession encoder;
+    ASSERT_TRUE(encoder.start(profile, plan, &error)) << error;
+    const auto captured = make_test_bgra_frame(request.width, request.height);
+    for (std::uint64_t index = 0; index < 5; ++index) {
+        const bool recovery = index == 2 || index == 4;
+        if (recovery) encoder.request_keyframe();
+        redclaw::capture::EncodedFramePacket packet;
+        ASSERT_TRUE(encoder.encode_bgra_frame(captured, 1000 + index * 34, &packet, &error)) << error;
+        ASSERT_FALSE(packet.payload.empty());
+        if (!recovery) {
+            EXPECT_EQ(packet.keyframe, index == 0);
+            continue;
+        }
+        ASSERT_TRUE(packet.keyframe);
+        bool contains_idr = false;
+        for (std::size_t offset = 0; offset + 3 < packet.payload.size(); ++offset) {
+            if (packet.payload[offset] == 0 && packet.payload[offset + 1] == 0
+                && packet.payload[offset + 2] == 1
+                && (packet.payload[offset + 3] & 0x1f) == 5) {
+                contains_idr = true;
+            }
+        }
+        ASSERT_TRUE(contains_idr) << "Requested recovery must contain H.264 IDR, not only an intra slice";
+        redclaw::render::EncodedVideoFrame encoded;
+        encoded.codec = to_render_codec(packet.codec);
+        encoded.width = captured.width;
+        encoded.height = captured.height;
+        encoded.timestamp_ms = packet.timestamp_ms;
+        encoded.keyframe = packet.keyframe;
+        encoded.payload = std::move(packet.payload);
+        // A fresh decoder has neither the initial headers nor prior references.
+        redclaw::render::FfmpegVideoFrameDecoder decoder;
+        redclaw::render::DecodedVideoFrame decoded;
+        ASSERT_TRUE(decoder.decode_frame(encoded, &decoded, &error)) << error;
+        EXPECT_EQ(decoded.width, captured.width);
+        EXPECT_EQ(decoded.height, captured.height);
+        EXPECT_FALSE(decoded.pixels.empty());
+    }
+}
+
 TEST(FfmpegRoundtripIntegration, DecoderCanAdvanceWithoutBgraOutput) {
     redclaw::capture::EncoderProfileRequest profile_request;
     profile_request.width = 320;

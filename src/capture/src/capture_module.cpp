@@ -2725,6 +2725,19 @@ private:
             av_opt_set(context_->priv_data, "rc-lookahead", "0", 0);
         }
         const bool supports_nvenc_tuning = selected_encoder_name_ == "h264_nvenc" || selected_encoder_name_ == "hevc_nvenc";
+        if (supports_nvenc_tuning) {
+            // AV_PICTURE_TYPE_I alone permits a non-IDR intra frame in NVENC.
+            // Recovery requests must sever old references, independently of tuning.
+            std::int64_t forced_idr = 0;
+            if (context_->priv_data == nullptr
+                || av_opt_set_int(context_->priv_data, "forced-idr", 1, 0) < 0
+                || av_opt_get_int(context_->priv_data, "forced-idr", 0, &forced_idr) < 0
+                || forced_idr != 1) {
+                stop_runtime_context_only();
+                return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
+                    "NVENC forced IDR option could not be applied", error_detail);
+            }
+        }
         if (profile_.zero_latency_tuning && supports_nvenc_tuning && context_->priv_data != nullptr) {
             av_opt_set(context_->priv_data, "preset", "p1", 0);
             av_opt_set(context_->priv_data, "tune", "ull", 0);

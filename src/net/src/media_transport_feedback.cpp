@@ -22,6 +22,79 @@ constexpr std::uint64_t kTransportFeedbackIntervalUs = 100000;
 constexpr std::size_t kTransportFeedbackPacketTrigger = 32;
 constexpr std::size_t kTransportFeedbackPacketLimit = 64;
 constexpr std::uint64_t kTransportEstimateWindowUs = 500000;
+
+// A fixed clock offset cancels in transit deltas; a clock *rate* difference
+// does not. Estimate that slow trend from the lower envelope, not the latest
+// packet or a periodic queue reset. Median long-baseline slopes reject a short
+// queue/jitter burst. Storage and work are bounded; fitting runs once per 10 s.
+class TransitClockRate final {
+public:
+    void observe(std::uint64_t send_us, double transit_us) {
+        if (bucket_start_us_ == 0) {
+            bucket_start_us_ = send_us;
+            bucket_min_ = {send_us, transit_us};
+            return;
+        }
+        if (send_us < bucket_start_us_) return;
+        if (send_us - bucket_start_us_ < kBucketUs) {
+            if (transit_us < bucket_min_.transit_us) bucket_min_ = {send_us, transit_us};
+            return;
+        }
+        points_[next_] = bucket_min_;
+        next_ = (next_ + 1) % points_.size();
+        count_ = std::min(count_ + 1, points_.size());
+        bucket_start_us_ = send_us;
+        bucket_min_ = {send_us, transit_us};
+
+        if (count_ < points_.size()) return;
+        // Use staggered ~30 s differences, not every pair across the window:
+        // a delay step contaminates only three of ten slopes, not a majority.
+        constexpr std::size_t kLag = 3;
+        std::array<double, kPointCount - kLag> slopes{};
+        std::size_t size = 0;
+        for (std::size_t i = 0; i + kLag < count_; ++i) {
+            const auto& a = points_[(next_ + i) % points_.size()];
+            const auto& b = points_[(next_ + i + kLag) % points_.size()];
+            const auto elapsed = b.send_us - a.send_us;
+            if (elapsed < 2 * kBucketUs || elapsed > 5 * kBucketUs) continue;
+            const double slope = (b.transit_us - a.transit_us) / static_cast<double>(elapsed);
+            if (std::abs(slope) <= 0.001) slopes[size++] = slope;
+        }
+        if (size < 5) return;
+        std::sort(slopes.begin(), slopes.begin() + size);
+        const double median = size % 2 == 0
+            ? (slopes[size / 2 - 1] + slopes[size / 2]) / 2.0 : slopes[size / 2];
+        // Average the inliers so millisecond receive timestamp quantization
+        // does not bias a 30 ppm clock to the nearest 33.3 ppm slope forever.
+        // 100 ppm admits two milliseconds over the minimum 20 s baseline.
+        double total = 0.0;
+        std::size_t inliers = 0;
+        for (std::size_t i = 0; i < size; ++i) {
+            if (std::abs(slopes[i] - median) <= 0.0001) {
+                total += slopes[i];
+                ++inliers;
+            }
+        }
+        if (inliers < 3) return;
+        rate_ = total / static_cast<double>(inliers);
+        ready_ = true;
+    }
+
+    [[nodiscard]] double rate() const { return rate_; }
+    [[nodiscard]] bool ready() const { return ready_; }
+
+private:
+    struct Point { std::uint64_t send_us = 0; double transit_us = 0.0; };
+    static constexpr std::uint64_t kBucketUs = 10000000;
+    static constexpr std::size_t kPointCount = 13;
+    std::array<Point, kPointCount> points_{};
+    std::size_t next_ = 0;
+    std::size_t count_ = 0;
+    std::uint64_t bucket_start_us_ = 0;
+    Point bucket_min_;
+    double rate_ = 0.0;
+    bool ready_ = false;
+};
 }  // namespace
 
 bool MediaTransportFeedbackRecorder::record(
@@ -124,6 +197,8 @@ struct MediaTransportEstimator::Impl {
     std::uint64_t anchor_arrival_us = 0;
     double smoothed_relative_transit_us = 0.0;
     double minimum_smoothed_relative_transit_us = 0.0;
+    TransitClockRate clock_rate;
+    std::uint64_t last_transit_send_us = 0;
     std::uint32_t acknowledged_bitrate_kbps = 0;
     std::uint32_t loss_per_mille = 0;
     std::uint32_t queue_delay_ms = 0;
@@ -296,6 +371,13 @@ bool MediaTransportEstimator::apply_feedback(
                 impl_->smoothed_relative_transit_us =
                     impl_->smoothed_relative_transit_us * 0.9
                     + relative_transit_us * 0.1;
+                // Move the baseline only by learned clock drift. Never reset
+                // accumulated real queue or rewrite past samples when the
+                // slope changes. Independent RTT/loss/backpressure stay intact.
+                if (sent.steady_send_us >= impl_->last_transit_send_us) {
+                    impl_->minimum_smoothed_relative_transit_us += impl_->clock_rate.rate()
+                        * static_cast<double>(sent.steady_send_us - impl_->last_transit_send_us);
+                }
                 impl_->minimum_smoothed_relative_transit_us = std::min(
                     impl_->minimum_smoothed_relative_transit_us,
                     impl_->smoothed_relative_transit_us);
@@ -306,6 +388,8 @@ bool MediaTransportEstimator::apply_feedback(
                 impl_->queue_delay_ms = static_cast<std::uint32_t>(
                     std::min<double>(queue_us / 1000.0, 120000.0));
             }
+            impl_->clock_rate.observe(sent.steady_send_us, relative_transit_us);
+            impl_->last_transit_send_us = sent.steady_send_us;
             // Fixed-size overwrite under the existing lock: no allocation or
             // disk I/O here. Retain the exact pair before the local sent copy expires.
             impl_->timing_sample = {
@@ -325,6 +409,8 @@ bool MediaTransportEstimator::apply_feedback(
                 .minimum_smoothed_relative_transit_us =
                     impl_->minimum_smoothed_relative_transit_us,
                 .queue_delay_ms = impl_->queue_delay_ms,
+                .clock_rate_ppm = impl_->clock_rate.rate() * 1000000.0,
+                .clock_rate_ready = impl_->clock_rate.ready(),
             };
         }
         if (!blocked_by_newer_revision) {
@@ -409,7 +495,9 @@ std::string format_media_transport_timing_sample(
          << " ewma_us=" << sample.smoothed_relative_transit_us
          << " min_us=" << sample.minimum_smoothed_relative_transit_us
          << " queue_ms=" << sample.queue_delay_ms
-         << " rtt_queue_latest_ms=" << rtt_queue_latest_ms;
+         << " rtt_queue_latest_ms=" << rtt_queue_latest_ms
+         << " clock_ppm=" << sample.clock_rate_ppm
+         << " clock_ready=" << (sample.clock_rate_ready ? 1 : 0);
     return line.str();
 }
 
@@ -438,6 +526,8 @@ void MediaTransportEstimator::reset() {
     impl_->anchor_arrival_us = 0;
     impl_->smoothed_relative_transit_us = 0.0;
     impl_->minimum_smoothed_relative_transit_us = 0.0;
+    impl_->clock_rate = {};
+    impl_->last_transit_send_us = 0;
     impl_->acknowledged_bitrate_kbps = 0;
     impl_->loss_per_mille = 0;
     impl_->queue_delay_ms = 0;

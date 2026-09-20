@@ -299,8 +299,11 @@ struct MediaTransportTimingSample {
     std::uint64_t anchor_arrival_us = 0;
     double relative_transit_us = 0.0;
     double smoothed_relative_transit_us = 0.0;
+    // Lower baseline projected by the learned clock rate, not a lifetime min.
     double minimum_smoothed_relative_transit_us = 0.0;
     std::uint32_t queue_delay_ms = 0;
+    double clock_rate_ppm = 0.0;
+    bool clock_rate_ready = false;
 };
 
 // Call only on the periodic diagnostic path, never for each packet. The RTT
@@ -587,7 +590,9 @@ public:
         MediaPacerFrameEventCallback frame_event_callback,
         MediaPacerCapacityCallback capacity_callback = {});
     void stop();
-    void reset(bool reset_transport_sequence = true);
+    // Source/capture recovery stays in the current feedback sequence space.
+    // Pass true only when both transport feedback endpoints start a new epoch.
+    void reset(bool reset_transport_sequence = false);
     void update_budget(
         std::uint32_t pacing_bitrate_kbps,
         std::uint32_t smoothed_rtt_ms,
