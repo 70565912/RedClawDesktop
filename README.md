@@ -56,10 +56,11 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
    ```
 
 3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。仍受支持的 Host 和 Controller 版本通过共同能力互通；连接不要求相同版本或相同二进制。
-4. 在受控电脑选择 **Host** 并等待连接；在控制电脑选择 **Controller**，输入 Host 显示的机器码并连接。
-5. 画面出现后，按界面提示显式开启远程输入。Agent 功能需要 Host 端配置允许的项目和 Provider。
+4. **当前开发候选**（已发布 v0.1.3 尚无此能力，需升级包含本功能的候选）：在受控电脑设置并确认**本机连接密码**，保存后选择 **Host** 等待连接；在控制电脑选择 **Controller**，输入 Host 的机器码和**对方连接密码**。密码正确后自动连接，错误不会开放画面或工作台。
+5. 密码使用当前 Windows 用户的 DPAPI 加密保存。Client 只在验证成功后按机器码记住密码，可修改或忘记。不支持密码验证的旧端必须升级，不能回退到无密码连接。详见[连接密码说明](docs/architecture/connection-password-v1.md)。
+6. 画面出现后，按界面提示显式开启远程输入。Agent 功能需要 Host 端配置允许的项目和 Provider。
 
-文件、剪贴板和终端按双方共同能力启用；旧端不支持的新功能保持不可用，不要求两端同时升级。传输期间暂停新的桌面/终端输入及 Agent 操作，画面和已有输出继续；取消或完成后恢复符合其他授权条件的操作。
+在双方均支持连接密码的前提下，文件、剪贴板和终端按双方共同能力启用；旧端不支持的新功能保持不可用，不要求两端同时升级。传输期间暂停新的桌面/终端输入及 Agent 操作，画面和已有输出继续；取消或完成后恢复符合其他授权条件的操作。
 
 [本地工作台调用接口](docs/architecture/workspace-control-v1.md)让脚本复用当前 P2P 会话调用终端、文件和剪贴板。通过 `--enable-workspace-control` 显式开启当前用户管道；不增加公网监听端口。候选包附带 `maintenance/invoke-workspace-control.ps1`，与当前运行实例分别交付。
 
@@ -74,6 +75,8 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 - DHT 监听端口只承担 rendezvous，无需手工端口映射。
 
 不同 NAT、CGNAT、防火墙和运营商策略会影响直连结果。无法直连时可配置 TURN；当前版本尚未完成所有异地网络组合的覆盖测试。
+
+当前版本支持 System default 和显式网卡绑定；普通 Windows HTTP/HTTPS 系统代理只影响支持 WinHTTP 的中心化 HTTP 信令，不承载 public-DHT 或 ICE UDP。Host 与 Controller 分别选择 System default、物理/虚拟网卡或系统代理的完整配置方案已记录在[网络出口选择与异地联线概率分析](docs/architecture/network-exit-selection-analysis.md)。
 
 ## GitHub 云端验证范围
 

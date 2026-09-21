@@ -86,6 +86,7 @@ enum StreamControlMessageTypeV1 {
   StreamControlMessageTypeV1_kCaptureRegionApplied = 23;
   StreamControlMessageTypeV1_kCaptureRegionRejected = 24;
   StreamControlMessageTypeV1_kWorkspace = 25;
+  StreamControlMessageTypeV1_kConnectionAuth = 26;
 }
 
 enum RemoteLogModeV1 {
@@ -287,6 +288,9 @@ message StreamControlMessageV1 {
   uint32 file_transfer_version = 82;
   WorkspaceControlV1 workspace = 83;
   uint32 clipboard_version = 84;
+  uint32 connection_auth_version = 85;
+  string auth_step = 86;
+  string auth_data = 87;
 }
 
 message WorkspaceControlV1 {

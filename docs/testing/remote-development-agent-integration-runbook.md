@@ -58,8 +58,8 @@ Agent-channel failure is not allowed to reset the two required channels.
 1. In Controller **Development Agent**, select Codex, the registered project, and **Isolated worktree**.
 2. Submit a bounded task that changes one fixture file and runs one focused test.
 3. Confirm one `task_id`, live normalized progress, file/tool events, and no provider-private JSON.
-4. Accept one requested safe tool/file approval and reject a second request. Confirm the rejected operation does not occur and the task reaches a typed paused/terminal state.
-5. Send a follow-up turn on the same RedClaw task. Confirm it resumes only the RedClaw-created Codex thread.
+4. Confirm the fixture edit and test run without task, command or file approval prompts. Current execution peers advertise both approval flags as false; the Codex thread uses `never` with the existing `workspace-write` sandbox. Operations outside that sandbox fail without opening an approval card.
+5. Send a follow-up turn on the same RedClaw task. Confirm it resumes only the RedClaw-created Codex thread and still does not prompt for approval.
 6. Verify the registered project working tree is untouched and the task branch is `redclaw/agent/<task-id>`.
 
 ## 5. Disconnect, replay, and interrupt
@@ -70,15 +70,15 @@ Agent-channel failure is not allowed to reset the two required channels.
 4. After the optional channel reopens, request task sync from the last acknowledged `event_sequence`.
 5. Confirm the same `task_id` returns, missing events are replayed once, a gap is explicit if text was evicted, and the turn was not submitted twice.
 6. Start another long fixture and interrupt it from Controller. Confirm the provider process stops and the task reaches `interrupted`.
-7. Repeat with an outstanding approval: channel loss must reject it and pause the task.
+7. Legacy compatibility only: using an older execution peer or the Debug approval fixture, repeat with an outstanding approval; channel loss must reject it and pause the task. Current production providers do not create this state.
 
 ## 6. Cursor/Grok task
 
 Run only when `cursor-agent` readiness is true.
 
 1. Select Cursor and Grok, then submit a second independent isolated-worktree task.
-2. Confirm the UI displays `per_turn` approval granularity before the process starts.
-3. Reject once and confirm no process work begins; resubmit and approve once. Acceptance starts only that Cursor child process with the official `--trust --force` flags; RedClaw must not persist either permission globally and must not use `--yolo`.
+2. Confirm the task starts immediately after submission and the UI reports execution without approval prompts.
+3. Confirm commands execute without an extra approval. The Cursor child process uses the official `--trust --force` flags; RedClaw must not persist either permission globally and must not use `--yolo`. Interrupt remains available.
 4. Confirm `stream-json` progress is normalized, chat ID remains Host-private, non-zero exit becomes `failed`, and a follow-up uses the registered resume ID.
 
 If readiness is false, record Cursor/Grok as **not executed—official Headless CLI unavailable/not logged in**. Do not mark it passed and do not substitute the editor executable.

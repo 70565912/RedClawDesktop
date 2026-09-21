@@ -2516,7 +2516,18 @@ int run_runtime_mode(
             45909
 #endif
         );
+    redclaw::security::ConnectionCredential connection_credential;
+    const bool credential_loaded = options.connection_credential_file.empty()
+        ? redclaw::security::read_connection_credential_pipe(&connection_credential)
+        : redclaw::security::load_connection_credential_file(
+            std::filesystem::u8path(options.connection_credential_file), &connection_credential);
+    if (!credential_loaded || connection_credential.host != (options.role == RuntimeRole::kHost)) {
+        std::cerr << "Runtime connection_auth rejected reason=connection_credentials_unavailable\n";
+        return 78;
+    }
     redclaw::net::IceConnectivityWrapper ice_wrapper;
+    if (!ice_wrapper.requireConnectionAuthentication(std::move(connection_credential))) return 78;
+
     std::string ice_port_reservation_error;
     if (!ice_wrapper.reserveFixedUdpPort(
             options.ice_udp_port,
@@ -4600,6 +4611,10 @@ int run_runtime_mode(
                 return;
             }
             const auto& control = parsed.value;
+            // Auth frames are consumed before admission; reject late duplicates here
+            // using the existing parse rather than decoding every control frame twice.
+            if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kConnectionAuth
+                || !control.auth_step.empty()) return;
             input_qa_receipts.command(redclaw::runtime::InputQaStage::kPeerReceived, control, received_monotonic_us);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -7025,7 +7040,25 @@ int run_runtime_mode(
     std::uint64_t last_stream_rate_sample_ms = last_stream_adaptation_sample_ms;
     bool ice_failure_reported = false;
     std::uint64_t last_transport_diagnostic_sequence = 0;
+    auto last_auth_state = redclaw::security::ConnectionAuthState::kPending;
+    bool auth_repair_pending = false;
     while (true) {
+        std::string auth_error;
+        const auto auth_state = ice_wrapper.authenticationState(&auth_error);
+        if (auth_state != last_auth_state) {
+            last_auth_state = auth_state;
+            if (auth_state == redclaw::security::ConnectionAuthState::kAccepted) {
+                std::cout << "Runtime connection_auth accepted\n";
+            } else if (auth_state == redclaw::security::ConnectionAuthState::kVerifying) {
+                std::cout << "Runtime connection_auth verifying\n";
+            } else if (auth_state == redclaw::security::ConnectionAuthState::kRejected) {
+                std::cout << "Runtime connection_auth rejected reason=" << auth_error << '\n';
+                if (options.role == RuntimeRole::kController || !use_dht_transport) {
+                    ice_wrapper.close(); return 78;
+                }
+                auth_repair_pending = true;
+            }
+        }
         if (local_control_output.failed()) {
             remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected);
             remote_input_session.release_all();
@@ -7730,13 +7763,16 @@ int run_runtime_mode(
             }
         }
 
-        bool should_repair_signaling = false;
+        const bool password_rejected = std::exchange(auth_repair_pending, false);
+        bool should_repair_signaling = password_rejected;
         bool reset_for_new_controller_request = false;
+        // Rejected authentication must publish a fresh standby offer immediately.
+        // No authenticated Controller exists to initiate established-session recovery.
         bool post_connected_recovery = false;
-        bool reset_runtime_session = false;
+        bool reset_runtime_session = password_rejected;
         bool connected_recovery_waiting = false;
         std::string accepted_controller_request_tag;
-        std::string repair_reason;
+        std::string repair_reason = password_rejected ? "password verification rejected; Host returning to wait" : "";
         {
             std::unique_lock<std::mutex> lock(callback_mutex);
             if (!runtime_error.empty()) {
@@ -9966,6 +10002,9 @@ int run_runtime_mode(
                                     remote_signal->publisher_instance_id,
                                 .exact_failed_offer = failed_host_generation,
                                 .completed_offer = completed_host_offer,
+                                .authenticated_once = stream_required_channels_open_total != 0,
+                                .current_generation = dht_negotiation.generation(),
+                                .offered_generation = remote_signal->generation,
                             });
                         const bool request_tag_mismatch =
                             remote_signal->connection_request_tag

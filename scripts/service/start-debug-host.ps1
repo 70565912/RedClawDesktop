@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $arguments = @{
-    Role = 'controller'
+    Role = 'host'
 }
 if ($ConnectionCredentialFile) { $arguments.ConnectionCredentialFile = $ConnectionCredentialFile }
 if ($DryRun) {

@@ -713,6 +713,32 @@ TEST(ConnectionNegotiationTest, EstablishedControllerRecoveryWaitsForMatchingNew
     EXPECT_EQ(controller.generation(), 8U);
 }
 
+TEST(ConnectionNegotiationTest, UnauthenticatedControllerCanLeaveRejectedStaleHostOffer) {
+    PersistentHostOfferAdoptionInput input;
+    input.remote_description_ever_applied = true;
+    input.last_applied_host_instance_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    input.offered_host_instance_id = input.last_applied_host_instance_id;
+    input.authenticated_once = false;
+    input.current_generation = 1; input.offered_generation = 2;
+    const auto adoption = decide_persistent_host_offer_adoption(input);
+    EXPECT_EQ(adoption, PersistentHostOfferAdoption::kNewerUnauthenticatedHost);
+    ConnectionNegotiationCoordinator controller(ConnectionNegotiationRole::kController);
+    ASSERT_TRUE(controller.begin_controller_request("first").accepted());
+    ASSERT_TRUE(controller.observe_host_offer(1, "first", "old-offer").accepted());
+    ASSERT_TRUE(controller.mark_remote_offer_applied());
+    ASSERT_TRUE(controller.mark_local_answer_ready("old-answer"));
+    const auto replacement = controller.observe_host_offer(2, "standby-new", "new-offer", adoption);
+    EXPECT_TRUE(replacement.accepted()); EXPECT_TRUE(replacement.generation_changed);
+    EXPECT_EQ(controller.connection_request_tag(), "standby-new");
+    EXPECT_FALSE(controller.observe_host_offer(1, "first", "old-offer", adoption).accepted());
+    input.authenticated_once = true;
+    EXPECT_EQ(decide_persistent_host_offer_adoption(input), PersistentHostOfferAdoption::kRejected);
+    input.authenticated_once = false; input.offered_generation = 1;
+    EXPECT_EQ(decide_persistent_host_offer_adoption(input), PersistentHostOfferAdoption::kRejected);
+    input.offered_generation = 2; input.exact_failed_offer = true;
+    EXPECT_EQ(decide_persistent_host_offer_adoption(input), PersistentHostOfferAdoption::kRejected);
+}
+
 TEST(ConnectionNegotiationTest, PersistentOfferAdoptionRequiresFreshOrRestartedHost) {
     EXPECT_EQ(
         decide_persistent_host_offer_adoption({

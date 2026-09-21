@@ -48,6 +48,11 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             continue;
         }
 
+        if (arg == "--connection-credential-file") {
+            if (i + 1 >= args.size()) { *error = "missing encrypted credential file"; return false; }
+            options->connection_credential_file = args[++i]; continue;
+        }
+
         if (arg == "--role") {
             if (i + 1 >= args.size()) {
                 *error = "missing value for --role";

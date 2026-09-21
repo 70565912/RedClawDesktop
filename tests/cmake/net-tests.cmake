@@ -1,4 +1,9 @@
 # Test-only peer pairs, not part of the shipping net library.
+add_executable(redclaw_connection_auth_integration_tests net/connection_auth_integration_tests.cpp)
+target_link_libraries(redclaw_connection_auth_integration_tests PRIVATE redclaw_net GTest::gtest_main)
+redclaw_apply_warnings(redclaw_connection_auth_integration_tests)
+add_test(NAME redclaw_connection_auth_integration_tests COMMAND redclaw_connection_auth_integration_tests)
+set_tests_properties(redclaw_connection_auth_integration_tests PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
 add_library(redclaw_net_test_support STATIC net/support/peer_harness.cpp)
 target_link_libraries(redclaw_net_test_support PRIVATE redclaw_net)
 redclaw_apply_warnings(redclaw_net_test_support)

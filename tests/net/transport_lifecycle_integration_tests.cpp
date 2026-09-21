@@ -147,7 +147,7 @@ TEST_P(DelayedAnswerTransport, OpensRequiredChannelsOrExpiresAtHardDeadline) {
         }
     });
     receiver.onLocalCandidate([&](const auto& candidate, const auto& mid) {
-        std::lock_guard lock(mutex); pending_candidates.emplace_back(candidate, mid);
+        std::lock_guard lock(mutex); pending_candidates.emplace_back(candidate, mid); cv.notify_all();
     });
     host.onLocalCandidate([&](const auto& candidate, const auto& mid) { (void)receiver.applyRemoteCandidate(candidate, mid); });
     receiver.onLocalDescription([&](const auto& sdp, bool offer) {
@@ -170,7 +170,7 @@ TEST_P(DelayedAnswerTransport, OpensRequiredChannelsOrExpiresAtHardDeadline) {
     std::string answer;
     {
         std::unique_lock lock(mutex);
-        ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return !pending_answer.empty(); }));
+        ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return !pending_answer.empty() && !pending_candidates.empty(); }));
         answer = pending_answer;
     }
     if (GetParam() >= 0) {

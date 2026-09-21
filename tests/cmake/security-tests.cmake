@@ -1,4 +1,8 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_connection_auth_tests security/connection_auth_tests.cpp)
+target_link_libraries(redclaw_connection_auth_tests PRIVATE redclaw_security GTest::gtest_main)
+redclaw_apply_warnings(redclaw_connection_auth_tests)
+add_test(NAME redclaw_connection_auth_tests COMMAND redclaw_connection_auth_tests)
 add_executable(redclaw_security_replay_guard_tests
   security/replay_guard_tests.cpp
 )

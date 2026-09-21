@@ -152,6 +152,12 @@ PersistentHostOfferAdoption decide_persistent_host_offer_adoption(
         && input.last_applied_host_instance_id != input.offered_host_instance_id) {
         return PersistentHostOfferAdoption::kRestartedHost;
     }
+    if (!input.authenticated_once && input.current_generation > 0
+        && input.offered_generation > input.current_generation
+        && is_valid_dht_publisher_instance_id(input.last_applied_host_instance_id)
+        && input.last_applied_host_instance_id == input.offered_host_instance_id) {
+        return PersistentHostOfferAdoption::kNewerUnauthenticatedHost;
+    }
     return PersistentHostOfferAdoption::kRejected;
 }
 
@@ -164,6 +170,8 @@ std::string persistent_host_offer_adoption_to_string(
         return "fresh_controller";
     case PersistentHostOfferAdoption::kRestartedHost:
         return "restarted_host";
+    case PersistentHostOfferAdoption::kNewerUnauthenticatedHost:
+        return "newer_unauthenticated_host";
     }
     return "rejected";
 }
@@ -336,7 +344,10 @@ ConnectionNegotiationResult ConnectionNegotiationCoordinator::observe_host_offer
             && generation_ == 0
             && (phase_ == ConnectionNegotiationPhase::kRequestReady
                 || phase_ == ConnectionNegotiationPhase::kRequestPublished);
-        if (!may_adopt_persistent_host_offer) {
+        const bool may_replace_unauthenticated_offer =
+            persistent_offer_adoption == PersistentHostOfferAdoption::kNewerUnauthenticatedHost
+            && generation_ > 0 && generation > generation_;
+        if (!may_adopt_persistent_host_offer && !may_replace_unauthenticated_offer) {
             return result(ConnectionNegotiationObservation::kRejectedOfferMismatch);
         }
         // A long-running Host publishes its complete standby offer before a

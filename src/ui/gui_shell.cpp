@@ -149,6 +149,7 @@
 #include "ui/agent_panel_presentation.h"
 #include "ui/agent_control_server.h"
 #include "ui/connection_entry_page.h"
+#include "ui/connection_password_panel.h"
 #include "ui/connection_flow_model.h"
 #include "ui/connection_progress_page.h"
 #include "ui/desktop_navigation_panel.h"
@@ -420,6 +421,7 @@ struct GuiAutoStartOptions {
   QString session_code;
   QString signal_dir;
   QString signal_passphrase;
+  QString connection_credential_file;
   QStringList ice_servers;
   QString ice_server_file;
   QString network_bind_address;
@@ -487,6 +489,10 @@ bool parse_gui_auto_start_options(
     if (arg == "--gui-persist-host-wait") {
       options->persist_host_wait = true;
       continue;
+    }
+    if (arg == "--connection-credential-file") {
+      if (!require_value(&i, &value)) return false;
+      options->connection_credential_file = value; continue;
     }
     if (arg == "--gui-role") {
       if (!require_value(&i, &value)) {
@@ -1465,7 +1471,7 @@ public:
   WorkspacePipeServer& workspace_pipe() { return workspace_pipe_; }
 #endif
 
-  bool start(const QString& program, const QStringList& args, const QString& role, QString* error_detail) {
+  bool start(const QString& program, const QStringList& args, const QString& role, const std::string& credential_frame, QString* error_detail) {
     if (is_running()) {
       if (error_detail != nullptr) {
         *error_detail = "Runtime process is already running.";
@@ -1510,6 +1516,11 @@ public:
       return false;
     }
 
+    if (process_.write(credential_frame.data(), static_cast<qint64>(credential_frame.size())) != static_cast<qint64>(credential_frame.size())
+        || (process_.bytesToWrite() > 0 && !process_.waitForBytesWritten(3000))) {
+      if (error_detail) *error_detail = "Could not deliver connection credentials to Runtime.";
+      process_.kill(); process_.waitForFinished(3000); return false;
+    }
     agent_pipe_.set_expected_peer_pid(static_cast<std::uint32_t>(process_.processId()));
 #ifdef _WIN32
     if (maintenance_ready && !maintenance_context_.save(gui_arguments_, args, static_cast<quint64>(process_.processId()), &maintenance_error)) {
@@ -2317,6 +2328,16 @@ bool launch_gui_shell(
   auto* ui_settings = gui_auto_start.agent_qa_fixture_provider
       ? new QSettings(QDir(effective_log_dir).filePath("qa-ui-settings.ini"), QSettings::IniFormat, &window)
       : new QSettings("RedClaw", "RedClawDesktop", &window);
+  connection_entry_page->password_panel()->set_settings(ui_settings);
+  QString connection_credential_error;
+  QString connection_auth_failure;
+  if (!gui_auto_start.connection_credential_file.isEmpty()) {
+    redclaw::security::ConnectionCredential credential;
+    if (!redclaw::security::load_connection_credential_file(
+          std::filesystem::path(gui_auto_start.connection_credential_file.toStdWString()), &credential)) {
+      connection_credential_error = "Encrypted connection credential is unavailable. Recreate it for this Windows user.";
+    } else connection_entry_page->password_panel()->set_credential_override(std::move(credential));
+  }
   const int saved_ice_udp_port = ui_settings->value("network/ice_udp_port", 55000).toInt();
   const int initial_ice_udp_port = gui_auto_start.ice_udp_port_explicit
       ? static_cast<int>(gui_auto_start.ice_udp_port)
@@ -5193,6 +5214,20 @@ bool launch_gui_shell(
           persist_debug_status(previous_phase != debug_status.phase);
         }
 
+        if (trimmed == "Runtime connection_auth accepted") {
+          connection_entry_page->password_panel()->accepted();
+          set_link_status("Connection password verified.", "good");
+        } else if (trimmed == "Runtime connection_auth verifying") {
+          set_link_status("Verifying connection password...", "warn");
+        } else if (trimmed.startsWith("Runtime connection_auth rejected reason=")) {
+          connection_auth_failure = trimmed.contains("protocol_version_incompatible")
+              ? "The other device does not support connection passwords. Upgrade it before connecting."
+              : trimmed.contains("cooldown") ? "Too many incorrect passwords. Retry after 30 seconds."
+              : trimmed.contains("timeout") ? "Connection password verification timed out. Retry the connection."
+              : "Connection password rejected. Enter the Host's password and reconnect.";
+          if (role_combo->currentText() == "controller") connection_entry_page->password_panel()->rejected();
+          set_link_status(connection_auth_failure, "bad");
+        }
         const ConnectionFlowRole flow_role = role_combo->currentText() == "host"
             ? ConnectionFlowRole::kHost
             : ConnectionFlowRole::kController;
@@ -5497,6 +5532,14 @@ bool launch_gui_shell(
           "process",
           status.toStdString());
 
+        if (exit_code == 78 && !expected_stop) {
+          reset_playback_surface("Your remote desktop will appear here", "Connection authentication failed.", true);
+          connection_flow_model.reset(); refresh_connection_flow_page();
+          set_link_status(connection_auth_failure.isEmpty()
+              ? "Connection credentials are unavailable. Set or enter the connection password."
+              : connection_auth_failure, "bad");
+          return;
+        }
         if (debug_reconnect || host_persist_wait) {
           // Explicit reconnect may start a new flow after Stop completed;
           // late runtime retry notifications must never undo a pending Stop.
@@ -5573,6 +5616,14 @@ bool launch_gui_shell(
     sync_link_network_settings_to_session_form();
 
     QString role = role_combo->currentText();
+    if (!connection_credential_error.isEmpty()) { set_link_status(connection_credential_error, "bad"); return; }
+    redclaw::security::ConnectionCredential connection_credential;
+    QString password_error;
+    if (!connection_entry_page->password_panel()->prepare(role == "host", &connection_credential, &password_error)) {
+      set_link_status(password_error, "bad"); return;
+    }
+    connection_auth_failure.clear();
+
     if (role == "host") {
       host_wait_remote_input_authorized =
           connection_entry_page->allow_remote_control_checkbox()->isChecked();
@@ -5923,7 +5974,11 @@ bool launch_gui_shell(
     QString start_error;
     const QString program = QCoreApplication::applicationFilePath();
     if (role == "host" && !maintenance_runtime_arguments.isEmpty()) args = std::exchange(maintenance_runtime_arguments, {});
-    if (!controller.start(program, args, role, &start_error)) {
+    auto credential_frame = redclaw::security::serialize_local_connection_credential(connection_credential);
+    redclaw::security::erase_secret(connection_credential.secret);
+    const bool runtime_started = controller.start(program, args, role, credential_frame, &start_error);
+    redclaw::security::erase_secret(credential_frame);
+    if (!runtime_started) {
       set_link_workflow_running(false);
 #if defined(_WIN32)
       direct_frame_pipe_server.stop();

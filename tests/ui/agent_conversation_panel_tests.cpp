@@ -67,6 +67,32 @@ void make_panel_ready(AgentConversationPanel* panel) {
   panel->apply_project_catalog_message(project);
 }
 
+TEST(AgentConversationPanel, DescribesNoninteractiveAndLegacyProviderApprovalModes) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("panel.ini"), QSettings::IniFormat);
+  AgentConversationPanel panel(&settings);
+  make_panel_ready(&panel);
+  auto* status = panel.findChild<QLabel*>("agentPanelStatus");
+  auto* banner = panel.findChild<QFrame*>("agentApprovalBanner");
+  ASSERT_NE(status, nullptr);
+  ASSERT_NE(banner, nullptr);
+  AgentMessageEnvelopeV1 capability;
+  capability.type = AgentMessageTypeV1::kCapabilities;
+  capability.provider = AgentProviderKindV1::kCodex;
+  capability.provider_readiness = AgentProviderReadinessV1::kReady;
+  capability.available = true;
+  panel.apply_capability_message(capability);
+  EXPECT_TRUE(status->text().contains("without approval prompts"));
+  EXPECT_TRUE(banner->isHidden());
+  capability.supports_structured_approval = true;
+  panel.apply_capability_message(capability);
+  EXPECT_TRUE(status->text().contains("tool approvals"));
+  capability.supports_structured_approval = false;
+  capability.requires_turn_approval = true;
+  panel.apply_capability_message(capability);
+  EXPECT_TRUE(status->text().contains("pre-approval"));
+}
+
 TEST(AgentConversationPanel, HostWindowSharesConversationAndClosingOnlyHidesIt) {
   QTemporaryDir directory;
   QSettings settings(directory.filePath("host.ini"), QSettings::IniFormat);

@@ -45,6 +45,7 @@ struct RuntimeOptions {
     bool stream_require_capture = false;
     bool stream_qa_native_size = false;
     bool gui_runtime_stdio = false;
+    std::string connection_credential_file;
     bool stream_qa_drop_one_media_fragment = false;
     std::string stream_qa_incomplete_feedback_class = "fresh";
     std::string stream_qa_force_required_channel_close;

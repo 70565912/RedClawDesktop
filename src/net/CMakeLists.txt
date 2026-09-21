@@ -25,6 +25,7 @@ target_include_directories(redclaw_net
 target_link_libraries(redclaw_net
   PUBLIC
     LibDataChannel::LibDataChannel
+    redclaw_security
   PRIVATE OpenSSL::Crypto
 )
 

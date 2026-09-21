@@ -1,4 +1,5 @@
-﻿#pragma once
+#pragma once
+#include "redclaw/security/connection_auth.h"
 
 #include "redclaw/net/ice_udp_mapping.h"
 
@@ -163,6 +164,8 @@ class IceConnectivityWrapper {
 public:
 	IceConnectivityWrapper();
 	~IceConnectivityWrapper();
+    bool requireConnectionAuthentication(security::ConnectionCredential credential);
+    security::ConnectionAuthState authenticationState(std::string* error = nullptr);
     IceConnectivityWrapper(const IceConnectivityWrapper&) = delete;
     IceConnectivityWrapper& operator=(const IceConnectivityWrapper&) = delete;
 

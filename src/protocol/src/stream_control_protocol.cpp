@@ -108,6 +108,7 @@ std::string_view to_string(StreamControlMessageTypeV1 type) {
     case StreamControlMessageTypeV1::kCaptureRegionApplied: return "capture_region_applied";
     case StreamControlMessageTypeV1::kCaptureRegionRejected: return "capture_region_rejected";
     case StreamControlMessageTypeV1::kWorkspace: return "workspace";
+    case StreamControlMessageTypeV1::kConnectionAuth: return "connection_auth";
     }
     return "unknown";
 }
@@ -185,6 +186,13 @@ std::string_view to_string(RemoteLogModeV1 mode) {
 }
 
 bool validate_stream_control_message_v1(const StreamControlMessageV1& message, std::string* error) {
+    if (message.auth_step.size() > 32 || message.auth_data.size() > 4096) {
+        assign_error("invalid authentication frame size", error); return false;
+    }
+    if (message.type == StreamControlMessageTypeV1::kConnectionAuth
+        && (message.connection_auth_version != 1 || message.auth_step.empty())) {
+        assign_error("invalid authentication frame", error); return false;
+    }
     if (message.type == StreamControlMessageTypeV1::kWorkspace) {
         if (!message.workspace || !valid_token(message.request_id, 128) || !message.payload.empty()) {
             assign_error("workspace control requires a request identity and typed content", error); return false;

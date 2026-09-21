@@ -8,6 +8,8 @@ param(
 
     [string]$RuntimeExe = '',
 
+    [string]$ConnectionCredentialFile = '',
+
     [string]$SessionCode = '',
 
     [string]$RunId = '',
@@ -260,6 +262,9 @@ if ($DhtListenPort -gt 0) {
 }
 if (-not [string]::IsNullOrWhiteSpace($NetworkBindAddress)) {
     $arguments += @('--network-bind-address', $NetworkBindAddress)
+}
+if ($ConnectionCredentialFile) {
+    $arguments += @('--connection-credential-file', (Resolve-Path -LiteralPath $ConnectionCredentialFile).Path)
 }
 if ($AutoStart) {
     $arguments += '--gui-auto-start'

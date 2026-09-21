@@ -32,6 +32,9 @@
 
 #include "redclaw/input/input_module.h"
 #include "ui/connection_entry_page.h"
+#include "ui/connection_password_panel.h"
+#include <QSettings>
+#include <QTemporaryDir>
 #include "ui/connection_flow_model.h"
 #include "ui/connection_progress_page.h"
 #include "ui/playback_control_hint_overlay.h"
@@ -424,7 +427,7 @@ TEST(ConnectionEntryPage, MakesReadOnlyAndEditableCodesVisiblyDistinct) {
   EXPECT_FALSE(page.local_code_display()->inherits("QLineEdit"));
   EXPECT_TRUE(page.peer_code_input()->isEnabled());
   EXPECT_TRUE(page.peer_code_input()->focusPolicy() != Qt::NoFocus);
-  EXPECT_TRUE(page.wait_button()->isEnabled());
+  EXPECT_FALSE(page.wait_button()->isEnabled());
   EXPECT_EQ(page.findChild<QLabel*>("readOnlyBadge"), nullptr);
   const auto* local_card = page.findChild<QFrame*>("localCodeCard");
   ASSERT_NE(local_card, nullptr);
@@ -432,10 +435,81 @@ TEST(ConnectionEntryPage, MakesReadOnlyAndEditableCodesVisiblyDistinct) {
 
   page.set_peer_code("ab12 cd34");
   EXPECT_EQ(page.peer_code(), "AB12CD34");
+  EXPECT_FALSE(page.connect_button()->isEnabled());
+  page.findChild<QLineEdit*>("peerConnectionPassword")->setText("fixture password");
   EXPECT_TRUE(page.connect_button()->isEnabled());
   const auto* helper = page.findChild<QLabel*>("fieldHelper");
   ASSERT_NE(helper, nullptr);
   EXPECT_TRUE(helper->isHidden());
+}
+
+TEST(ConnectionEntryPage, PasswordSettingsEncryptConfirmRememberAndForget) {
+  QTemporaryDir directory;
+  QSettings settings(directory.filePath("passwords.ini"), QSettings::IniFormat);
+  redclaw::ui::ConnectionEntryPage page;
+  page.password_panel()->set_settings(&settings);
+  page.set_local_code("AB12CD34"); page.set_peer_code("EF56GH78");
+  auto* local = page.findChild<QLineEdit*>("localConnectionPassword");
+  auto* confirm = page.findChild<QLineEdit*>("confirmConnectionPassword");
+  auto* peer = page.findChild<QLineEdit*>("peerConnectionPassword");
+  ASSERT_EQ(local->echoMode(), QLineEdit::Password);
+  ASSERT_EQ(peer->echoMode(), QLineEdit::Password);
+  local->setText(" exact Password "); confirm->setText("different");
+  page.findChild<QPushButton*>("saveConnectionPassword")->click();
+  EXPECT_FALSE(page.wait_button()->isEnabled());
+  confirm->setText(local->text());
+  page.findChild<QPushButton*>("saveConnectionPassword")->click();
+  EXPECT_FALSE(page.wait_button()->isEnabled());
+  QEventLoop save_loop;
+  QTimer heartbeat; int ticks = 0;
+  QObject::connect(&heartbeat, &QTimer::timeout, [&] {
+    ++ticks;
+    if (page.password_panel()->host_ready()) save_loop.quit();
+  });
+  heartbeat.start(5);
+  QTimer::singleShot(10000, &save_loop, &QEventLoop::quit);
+  save_loop.exec();
+  EXPECT_GT(ticks, 1);
+  EXPECT_TRUE(page.wait_button()->isEnabled());
+  EXPECT_TRUE(local->text().isEmpty());
+  EXPECT_FALSE(settings.value("connectionAuth/v1/host").toString().contains("Password"));
+  peer->setText(" exact Password ");
+  redclaw::security::ConnectionCredential credential; QString error;
+  ASSERT_TRUE(page.password_panel()->prepare(false, &credential, &error));
+  EXPECT_EQ(credential.secret, " exact Password ");
+  EXPECT_FALSE(settings.contains("connectionAuth/v1/peers/EF56GH78"));
+  page.password_panel()->accepted();
+  EXPECT_TRUE(settings.contains("connectionAuth/v1/peers/EF56GH78"));
+  page.set_actions_enabled(false);
+  EXPECT_FALSE(local->isEnabled()); EXPECT_FALSE(peer->isEnabled());
+  page.set_actions_enabled(true);
+  page.set_peer_code("ZZ11YY22"); EXPECT_TRUE(peer->text().isEmpty());
+  page.set_peer_code("EF56GH78"); EXPECT_EQ(peer->text(), " exact Password ");
+  page.findChild<QPushButton*>("forgetConnectionPassword")->click();
+  EXPECT_TRUE(peer->text().isEmpty());
+  EXPECT_FALSE(settings.contains("connectionAuth/v1/peers/EF56GH78"));
+  redclaw::ui::ConnectionEntryPage restored;
+  restored.password_panel()->set_settings(&settings); restored.set_local_code("AB12CD34");
+  EXPECT_TRUE(restored.wait_button()->isEnabled());
+  settings.setValue("connectionAuth/v1/host", "corrupted");
+  restored.password_panel()->set_settings(&settings);
+  EXPECT_FALSE(restored.wait_button()->isEnabled());
+}
+
+TEST(ConnectionEntryPage, PasswordStorageWriteFailureKeepsWaitDisabled) {
+  QTemporaryDir directory;
+  QSettings settings(directory.path(), QSettings::IniFormat); // A directory is not a writable settings file.
+  redclaw::ui::ConnectionEntryPage page;
+  page.password_panel()->set_settings(&settings); page.set_local_code("AB12CD34");
+  page.findChild<QLineEdit*>("localConnectionPassword")->setText("password");
+  page.findChild<QLineEdit*>("confirmConnectionPassword")->setText("password");
+  page.findChild<QPushButton*>("saveConnectionPassword")->click();
+  QEventLoop loop; QTimer timer;
+  QObject::connect(&timer, &QTimer::timeout, [&] { if (page.password_panel()->isEnabled()) loop.quit(); });
+  timer.start(5); QTimer::singleShot(10000, &loop, &QEventLoop::quit); loop.exec();
+  EXPECT_FALSE(page.password_panel()->host_ready());
+  EXPECT_FALSE(page.wait_button()->isEnabled());
+  EXPECT_TRUE(page.findChild<QLabel*>("connectionPasswordStatus")->text().contains("Could not"));
 }
 
 TEST(ConnectionEntryPage, InvalidPeerCodeCannotStartConnection) {

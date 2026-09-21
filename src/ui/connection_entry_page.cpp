@@ -1,4 +1,5 @@
 #include "ui/connection_entry_page.h"
+#include "ui/connection_password_panel.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -123,6 +124,9 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   code_grid->setColumnStretch(0, 1);
   code_grid->setColumnStretch(1, 1);
   card_layout->addLayout(code_grid);
+  passwords_ = new ConnectionPasswordPanel(primary_group);
+  card_layout->addWidget(passwords_);
+
 
   allow_remote_control_ = new QCheckBox(
       "Allow the connected device to control this computer's keyboard and mouse",
@@ -203,13 +207,15 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   });
   QObject::connect(peer_code_, &QLineEdit::textChanged, this, [this]() {
     normalize_peer_code();
+    passwords_->set_peer_code(peer_code());
     refresh_peer_validation();
   });
+  passwords_->readiness_changed = [this] { set_actions_enabled(actions_enabled_); };
 }
 
 void ConnectionEntryPage::set_local_code(const QString& code) {
   local_code_->setText(normalize_code(code));
-  wait_->setEnabled(is_complete_code(local_code_->text()));
+  set_actions_enabled(actions_enabled_);
 }
 
 void ConnectionEntryPage::set_peer_code(const QString& code) {
@@ -230,9 +236,11 @@ void ConnectionEntryPage::set_status(const QString& text, const QString& tone) {
 }
 
 void ConnectionEntryPage::set_actions_enabled(bool enabled) {
+  actions_enabled_ = enabled;
+  passwords_->set_busy(!enabled);
   peer_code_->setEnabled(enabled);
-  wait_->setEnabled(enabled && is_complete_code(local_code()));
-  connect_->setEnabled(enabled && is_complete_code(peer_code()));
+  wait_->setEnabled(enabled && is_complete_code(local_code()) && passwords_->host_ready());
+  connect_->setEnabled(enabled && is_complete_code(peer_code()) && passwords_->client_ready());
   allow_remote_control_->setEnabled(enabled);
   allow_remote_agent_->setEnabled(enabled);
   allow_controller_agent_->setEnabled(enabled);
@@ -312,7 +320,7 @@ void ConnectionEntryPage::refresh_peer_validation() {
   const QString code = peer_code();
   const bool complete = is_complete_code(code);
   static const QRegularExpression invalid_character("[^A-Z0-9]");
-  connect_->setEnabled(peer_code_->isEnabled() && complete);
+  connect_->setEnabled(peer_code_->isEnabled() && complete && passwords_->client_ready());
   bool show_helper = false;
   if (code.isEmpty()) {
     peer_helper_->clear();

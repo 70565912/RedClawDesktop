@@ -13,7 +13,6 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 #include <boost/json.hpp>
@@ -163,7 +162,7 @@ public:
             .readiness = readiness_,
             .version = version_,
             .models = {},
-            .supports_structured_approval = true,
+            .supports_structured_approval = false,
             .requires_turn_approval = false,
             .unavailable_reason = unavailable_reason_,
         };
@@ -228,6 +227,8 @@ public:
         pending_requests_[request_id] = PendingRequest::kThreadResume;
         boost::json::object params;
         params["threadId"] = thread_id_;
+        params["approvalPolicy"] = "never";
+        params["sandbox"] = "workspace-write";
         return send_request_locked(request_id, "thread/resume", std::move(params), error);
     }
 
@@ -294,35 +295,12 @@ public:
     }
 
     bool respond_to_approval(
-        const std::string& task_id,
-        const std::string& request_id,
-        redclaw::protocol::AgentApprovalDecisionV1 decision,
+        const std::string&,
+        const std::string&,
+        redclaw::protocol::AgentApprovalDecisionV1,
         std::string* error) override {
-        std::lock_guard lock(mutex_);
-        if (task_id != current_task_id_) {
-            assign_error("approval does not belong to active Codex task", error);
-            return false;
-        }
-        const auto found = approval_rpc_ids_.find(request_id);
-        if (found == approval_rpc_ids_.end()) {
-            assign_error("unknown Codex approval request", error);
-            return false;
-        }
-        if (decision == redclaw::protocol::AgentApprovalDecisionV1::kAccept
-            && undescribed_approvals_.contains(request_id)) {
-            assign_error("approval lacks an auditable operation description", error);
-            return false;
-        }
-        boost::json::object result;
-        result["decision"] = decision == redclaw::protocol::AgentApprovalDecisionV1::kAccept
-            ? "accept" : "decline";
-        boost::json::object response;
-        response["id"] = found->second;
-        response["result"] = std::move(result);
-        if (!process_->write_line(boost::json::serialize(response), error)) return false;
-        approval_rpc_ids_.erase(found);
-        undescribed_approvals_.erase(request_id);
-        return true;
+        assign_error("Codex runs without interactive approvals", error);
+        return false;
     }
 
     void shutdown() override {
@@ -485,9 +463,7 @@ private:
         pending_requests_[request_id] = PendingRequest::kThreadStart;
         boost::json::object params;
         params["cwd"] = path_utf8(working_directory_);
-        // The current app-server schema calls the former unless-trusted
-        // behavior "untrusted".  Use the protocol token, not a CLI spelling.
-        params["approvalPolicy"] = "untrusted";
+        params["approvalPolicy"] = "never";
         params["sandbox"] = "workspace-write";
         if (!model_.empty()) {
             params["model"] = model_;
@@ -498,6 +474,7 @@ private:
     bool send_turn_locked(const std::string& instruction, std::string* error) {
         boost::json::object params;
         params["threadId"] = thread_id_;
+        params["approvalPolicy"] = "never";
         params["input"] = make_text_input(instruction);
         const std::uint64_t request_id = next_rpc_id_++;
         pending_requests_[request_id] = PendingRequest::kTurnStart;
@@ -638,28 +615,23 @@ private:
             if (id_found == full_object.end()) {
                 return;
             }
-            const std::string request_id = "codex-approval-"
-                + std::to_string(next_approval_id_++);
-            approval_rpc_ids_[request_id] = id_found->value();
-            std::string summary = "Approval operation: " + method;
-            bool described = false;
-            for (const auto* key : {"command", "reason", "cwd"}) {
-                if (const auto value = json_string(params, key); value && !value->empty()) {
-                    summary += "\n" + std::string(key) + ": " + value->substr(0, 1536);
-                    if (std::string_view(key) != "cwd") described = true;
-                }
-            }
-            if (!described) {
-                summary += "\nOperation details unavailable. Reject and request an explicit scoped operation.";
-                undescribed_approvals_.insert(request_id);
-            }
+            // A server that cannot honor the noninteractive policy must not
+            // leave a hidden approval pending or silently gain more access.
+            boost::json::object response;
+            response["id"] = id_found->value();
+            response["result"] = boost::json::object{{"decision", "decline"}};
+            std::string error;
+            const bool replied = process_->write_line(boost::json::serialize(response), &error);
             emit_locked({
                 .task_id = current_task_id_,
-                .request_id = request_id,
-                .event_kind = method,
-                .text = std::move(summary),
-                .state = redclaw::protocol::AgentTaskStateV1::kAwaitingApproval,
-                .approval_request = true,
+                .event_kind = "provider_approval_rejected",
+                .text = replied
+                    ? "Codex requested approval despite the noninteractive policy; operation declined"
+                    : "Failed to decline an unexpected Codex approval request",
+                .error_code = replied ? "unexpected_approval" : "approval_reply_failed",
+                .state = replied ? redclaw::protocol::AgentTaskStateV1::kRunning
+                    : redclaw::protocol::AgentTaskStateV1::kFailed,
+                .terminal = !replied,
             });
             return;
         }
@@ -796,8 +768,6 @@ private:
             turn_id_.clear();
             thread_id_.clear();
             pending_requests_.clear();
-            approval_rpc_ids_.clear();
-            undescribed_approvals_.clear();
         }
         pending_events_.push_back(std::move(event));
     }
@@ -845,10 +815,7 @@ private:
     std::string turn_id_;
     std::string turn_output_emitted_;
     std::uint64_t next_rpc_id_ = 1;
-    std::uint64_t next_approval_id_ = 1;
     std::unordered_map<std::uint64_t, PendingRequest> pending_requests_;
-    std::unordered_map<std::string, boost::json::value> approval_rpc_ids_;
-    std::unordered_set<std::string> undescribed_approvals_;
     std::unordered_map<std::string, std::string> thread_ids_;
     BeginAfterInitialize begin_after_initialize_ = BeginAfterInitialize::kNone;
     std::thread dispatch_thread_;

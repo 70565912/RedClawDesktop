@@ -97,6 +97,7 @@ enum class PersistentHostOfferAdoption {
     kRejected,
     kFreshController,
     kRestartedHost,
+    kNewerUnauthenticatedHost,
 };
 
 struct PersistentHostOfferAdoptionInput {
@@ -105,6 +106,9 @@ struct PersistentHostOfferAdoptionInput {
     std::string_view offered_host_instance_id;
     bool exact_failed_offer = false;
     bool completed_offer = false;
+    bool authenticated_once = true;
+    std::uint64_t current_generation = 0;
+    std::uint64_t offered_generation = 0;
 };
 
 enum class EstablishedSessionRecoveryAction {

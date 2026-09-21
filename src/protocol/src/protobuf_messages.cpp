@@ -198,6 +198,9 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_terminal_version(message.terminal_version);
     encoded.set_file_transfer_version(message.file_transfer_version);
     encoded.set_clipboard_version(message.clipboard_version);
+    encoded.set_connection_auth_version(message.connection_auth_version);
+    encoded.set_auth_step(message.auth_step);
+    encoded.set_auth_data(message.auth_data);
     if (message.workspace) {
         const auto& data = *message.workspace;
         auto* nested = encoded.mutable_workspace();
@@ -315,6 +318,9 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.terminal_version = encoded.terminal_version();
     message.file_transfer_version = encoded.file_transfer_version();
     message.clipboard_version = encoded.clipboard_version();
+    message.connection_auth_version = encoded.connection_auth_version();
+    message.auth_step = encoded.auth_step();
+    message.auth_data = encoded.auth_data();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
         if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kBrowseClipboardCopies)

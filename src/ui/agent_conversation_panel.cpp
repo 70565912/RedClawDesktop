@@ -1123,7 +1123,9 @@ void AgentConversationPanel::apply_capability_message(
     } else if (message.available) {
         impl_->set_status(message.requires_turn_approval
             ? "Provider ready; each turn requires one pre-approval."
-            : "Provider ready; tool approvals are relayed individually.", false);
+            : message.supports_structured_approval
+                ? "Provider ready; tool approvals are relayed individually."
+                : "Provider ready; tasks run without approval prompts.", false);
     }
     impl_->refresh_context_summary();
     impl_->refresh_controls();
