@@ -13,16 +13,17 @@ TEST(StreamAdaptationRegression, RttIsConsumedOnceAndDirectPressureRemainsImmedi
     sample.rtt_sample_id = 1;
     sample.rtt_queue_delay_ms = 220;
     auto first = controller.update(sample);
-    ASSERT_TRUE(first.backoff);
+    ASSERT_FALSE(first.backoff);
     EXPECT_FALSE(first.reduce_fps);
     for (int tick = 0; tick < 3; ++tick) {
         sample.now_steady_ms += 500;
         auto duplicate = controller.update(sample);
         EXPECT_FALSE(duplicate.backoff);
-        EXPECT_EQ(duplicate.backoff_count, 1U);
+        EXPECT_EQ(duplicate.backoff_count, 0U);
     }
     ++sample.rtt_sample_id;
     auto repeated = controller.update(sample);
+    EXPECT_TRUE(repeated.backoff);
     EXPECT_TRUE(repeated.reduce_fps);
     --sample.rtt_sample_id;
     EXPECT_FALSE(controller.update(sample).backoff); // An older sample is not new evidence.

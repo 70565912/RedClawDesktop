@@ -418,7 +418,15 @@ TEST(AdaptiveController, MediaEventsDoNotReplayAnOldRttOrLocalPressureObservatio
         s.rtt_sample_id = 1;
         s.rtt_queue_delay_ms = local ? 0 : 220;
         s.local_backpressure = local;
-        ASSERT_TRUE(controller.update(s).backoff);
+        const auto first = controller.update(s);
+        if (local) {
+            ASSERT_TRUE(first.backoff);
+        } else {
+            ASSERT_FALSE(first.backoff);
+            ++s.rtt_sample_id;
+            s.now_steady_ms += 500;
+            ASSERT_TRUE(controller.update(s).backoff);
+        }
         for (std::uint64_t ack = 1; ack <= 8; ++ack) {
             MediaTransportEstimate t;
             t.feedback_fresh = true;
@@ -437,14 +445,17 @@ TEST(AdaptiveController, UncertainForwardQueueCannotCascadeRateCollapse) {
     s.encoder_target_bitrate_kbps = 8000;
     s.media_channel_open = s.rtt_fresh = true;
     s.smoothed_rtt_ms = 10;
-    s.demand = {.pending_bytes = 512 * 1024, .target_fps = 30, .token_limited = true};
+    s.demand.target_fps = 30;
     s.transport.feedback_fresh = s.transport.delivery_rate_valid = true;
     s.transport.application_limited = false;
     s.transport.delivery_bitrate_kbps = 8000;
     s.transport.feedback_interval_us = s.transport.feedback_round_trip_us = 100000;
     s.now_steady_ms = 1000;
-    s.transport.feedback_sample_id = 1;
-    ASSERT_FALSE(controller.update(s).backoff);
+    for (unsigned i = 1; i <= 8; ++i) {
+        s.transport.feedback_sample_id = i;
+        s.now_steady_ms += 200;
+        ASSERT_FALSE(controller.update(s).backoff);
+    }
 
     s.transport.queue_delay_ms = 200;
     s.transport.delivery_bitrate_kbps = 4000;
@@ -457,6 +468,7 @@ TEST(AdaptiveController, UncertainForwardQueueCannotCascadeRateCollapse) {
     ASSERT_TRUE(drained.backoff);
     ASSERT_EQ(drained.backoff_count, 1U);
     ASSERT_LT(drained.pacing_bitrate_kbps, 8000U);
+    ASSERT_GT(drained.pacing_bitrate_kbps, 2000U);
 
     for (unsigned i = 0; i < 12; ++i) {
         s.now_steady_ms += 500;
@@ -477,6 +489,43 @@ TEST(AdaptiveController, UncertainForwardQueueCannotCascadeRateCollapse) {
     s.now_steady_ms += 500;
     ++s.transport.feedback_sample_id;
     EXPECT_FALSE(controller.update(s).backoff);
+}
+
+TEST(AdaptiveController, FailedProbeCancelsIncrementBeforeBaselineBackoff) {
+    MediaCongestionController controller;
+    MediaCongestionSample s;
+    s.encoder_target_bitrate_kbps = 8000;
+    s.media_channel_open = s.rtt_fresh = true;
+    s.smoothed_rtt_ms = 10;
+    s.demand.target_fps = 30;
+    s.transport.feedback_fresh = s.transport.delivery_rate_valid = true;
+    s.transport.application_limited = false;
+    s.transport.delivery_bitrate_kbps = 8000;
+    s.transport.feedback_interval_us = s.transport.feedback_round_trip_us = 100000;
+    s.now_steady_ms = 1000;
+    for (unsigned i = 1; i <= 8; ++i) {
+        s.transport.feedback_sample_id = i;
+        s.now_steady_ms += 200;
+        (void)controller.update(s);
+    }
+    s.demand.pending_bytes = 512 * 1024;
+    s.demand.token_limited = true;
+    ++s.transport.feedback_sample_id;
+    const auto probe = controller.update(s);
+    ASSERT_TRUE(probe.probe);
+    ASSERT_GT(probe.pacing_bitrate_kbps, 8000U);
+
+    s.now_steady_ms += 200;
+    ++s.transport.feedback_sample_id;
+    ++s.rtt_sample_id;
+    s.rtt_queue_delay_ms = 200;
+    s.transport.queue_delay_ms = 200;
+    s.transport.delivery_bitrate_kbps = 500;
+    const auto cancelled = controller.update(s);
+    EXPECT_EQ(cancelled.recovery_probe.phase, MediaRecoveryProbePhase::kCancelled);
+    EXPECT_FALSE(cancelled.backoff);
+    EXPECT_EQ(cancelled.backoff_count, 0U);
+    EXPECT_EQ(cancelled.pacing_bitrate_kbps, 8000U);
 }
 
 }  // namespace
