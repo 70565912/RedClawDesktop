@@ -1,4 +1,5 @@
 #include "ui/file_transfer_panel.h"
+#include "ui/transfer_coordinator.h"
 #include "ui/file_transfer_results_dialog.h"
 #include "ui/clipboard_copies_dialog.h"
 #include <algorithm>
@@ -124,6 +125,7 @@ private:
 }
 struct FileTransferPanel::Impl {
     FileTransferPanel* owner;
+    TransferCoordinator coordinator;
     Send send;
     std::function<void(bool)> busy_changed;
     QPushButton* files = nullptr;
@@ -151,9 +153,11 @@ struct FileTransferPanel::Impl {
     std::string operation;
     Direction direction = Direction::kToHost;
     Purpose purpose = Purpose::kFiles;
+    std::uint32_t clipboard_mode = 0;
     protocol::TransferConflictV1 conflict = protocol::TransferConflictV1::kKeepBoth;
     QStringList sources;
-    Impl(FileTransferPanel* widget, Send sender) : owner(widget), send(std::move(sender)) {}
+    Impl(FileTransferPanel* widget, Send sender) : owner(widget), coordinator(std::move(sender), widget),
+        send([this](const Control& message, QString* error) { return coordinator.submit(message, error); }) {}
     bool busy() const { return requested || runtime_busy; }
     void refresh() {
         const bool blocked = busy(); files->setEnabled(available && !blocked);
@@ -265,27 +269,16 @@ struct FileTransferPanel::Impl {
             rate_timer.invalidate(); rate_bytes = 0; bytes_per_second = 0;
             cancel->setEnabled(true); progress->setRange(0, 0); status->setText(QString::fromUtf8("正在准备传送…")); refresh();
             QString error;
-            if (!send(request, &error)) { requested = false; status->setText(error); refresh(); message->setText(error); }
+            if (!coordinator.start_files(request, sources, &error)) { requested = false; status->setText(error); refresh(); message->setText(error); }
         });
         pages->addWidget(page);
     }
-    void send_next_source() {
-        if (!requested || selection_complete_sent || purpose != Purpose::kFiles) return;
-        const bool complete = source_index >= static_cast<std::uint64_t>(sources.size());
-        auto request = control(complete ? Action::kSelectionComplete : Action::kSelectSource, operation, direction);
-        if (!complete) request.workspace->path = sources[static_cast<qsizetype>(source_index)].toUtf8().toStdString();
-        request.workspace->conflict = conflict;
-        QString error;
-        if (!send(request, &error)) { status->setText(error); cancel_transfer(); return; }
-        selection_complete_sent = complete;
-    }
     void cancel_transfer() {
         if (!busy() || operation.empty()) return;
-        QString error;
-        auto request = control(Action::kCancel, operation, direction); request.workspace->purpose = purpose;
-        if (send(request, &error)) {
+        const auto result = coordinator.invoke("operation.cancel", {}, QString::fromStdString(operation));
+        if (result.value("ok").toBool()) {
             cancel->setEnabled(false); status->setText(QString::fromUtf8("正在中止传送并清理未完成文件…"));
-        } else status->setText(error);
+        } else status->setText(result.value("error").toString());
     }
 };
 FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, std::move(send))) {
@@ -313,8 +306,17 @@ FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(paren
     connect(impl_->files, &QPushButton::clicked, this, [this] { impl_->show_selection(); });
     connect(impl_->copies, &QPushButton::clicked, this, [this] { impl_->show_copies(); });
     connect(impl_->cancel, &QPushButton::clicked, this, [this] { impl_->cancel_transfer(); }); impl_->refresh();
+    impl_->coordinator.started = [this](const Control& message) {
+        impl_->operation = message.request_id; impl_->direction = message.workspace->direction;
+        impl_->purpose = message.workspace->purpose; impl_->requested = true;
+        impl_->clipboard_mode = message.workspace->clipboard_mode;
+        impl_->results_path.clear(); impl_->result_visible = true;
+        impl_->cancel->setEnabled(true); impl_->progress->setRange(0, 0); impl_->refresh();
+    };
+    impl_->coordinator.local_event = [this](const Control& message) { receive(message); };
 }
 FileTransferPanel::~FileTransferPanel() = default;
+TransferCoordinator& FileTransferPanel::coordinator() { return impl_->coordinator; }
 void FileTransferPanel::set_busy_callback(std::function<void(bool)> callback) { impl_->busy_changed = std::move(callback); }
 bool FileTransferPanel::busy() const { return impl_->busy(); }
 void FileTransferPanel::request_clipboard_paste(std::uint32_t sequence) {
@@ -334,9 +336,10 @@ void FileTransferPanel::request_clipboard_paste(std::uint32_t sequence) {
     if (!impl_->send(request, &error)) { impl_->requested = false; impl_->operation.clear(); impl_->status->setText(error); impl_->refresh(); }
 }
 void FileTransferPanel::cancel_clipboard_paste() {
-    if (impl_->purpose == Purpose::kClipboard && impl_->cancel->isEnabled()) impl_->cancel_transfer();
+    if (impl_->purpose == Purpose::kClipboard && impl_->clipboard_mode == 0 && impl_->cancel->isEnabled()) impl_->cancel_transfer();
 }
 void FileTransferPanel::runtime_stopped() {
+    impl_->coordinator.disconnected();
     impl_->clipboard_available = impl_->available = impl_->runtime_busy = impl_->requested = false;
     impl_->copies_available = false;
     impl_->status->setText(QString::fromUtf8("连接已结束；未完成的传送不会自动重放。")); impl_->refresh();
@@ -344,6 +347,7 @@ void FileTransferPanel::runtime_stopped() {
     if (impl_->copies_dialog) impl_->copies_dialog->reject();
 }
 void FileTransferPanel::receive(const Control& message) {
+    impl_->coordinator.receive(message);
     if (message.type != protocol::StreamControlMessageTypeV1::kWorkspace || !message.workspace) return;
     if (impl_->browser) impl_->browser->receive(message);
     if (impl_->copies_dialog) impl_->copies_dialog->receive(message);
@@ -359,9 +363,9 @@ void FileTransferPanel::receive(const Control& message) {
     }
     if (message.request_id != impl_->operation || details.purpose != impl_->purpose) return;
     switch (details.action) {
-    case Action::kPrepared: impl_->send_next_source(); break;
+    case Action::kPrepared: break;
     case Action::kSourceAccepted:
-        if (details.accepted_sources == impl_->source_index + 1) { ++impl_->source_index; impl_->send_next_source(); } break;
+        break;
     case Action::kScanProgress:
         impl_->progress->setRange(0, 0);
         impl_->status->setText(impl_->purpose == Purpose::kClipboard
@@ -404,7 +408,7 @@ void FileTransferPanel::receive(const Control& message) {
             : QString::fromUtf8("传送已结束：") + qtext(details.error_code))
             + QString::fromUtf8(" 已校验 %1；完成 %2 / %3 个文件，跳过 %4 项。")
                 .arg(amount(details.committed_bytes)).arg(details.completed_files).arg(details.files).arg(details.skipped_entries));
-        if (impl_->purpose == Purpose::kClipboard) impl_->status->setText(
+        if (impl_->purpose == Purpose::kClipboard && (impl_->clipboard_mode == 0 || impl_->clipboard_mode == 3)) impl_->status->setText(
             details.error_code.empty() && details.paste_submitted
                 ? QString::fromUtf8("剪贴板已送达，已向原对端窗口提交一次粘贴。")
                 : QString::fromUtf8("剪贴板传送已结束，未确认粘贴：") + qtext(details.error_code));

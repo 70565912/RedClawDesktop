@@ -1,5 +1,7 @@
 # Remote workspace v0.1.3
 
+The opt-in script-facing extension is specified in [Local workspace control v1](workspace-control-v1.md).
+
 Status: implemented workspace contract from v0.1.3, with the local floating-window presentation revision tracked as M10-T03. The floating presentation is an unpublished working-tree change; it does not change the published v0.1.3 package. See [MODULE_KANBAN](../runtime/MODULE_KANBAN.md) for qualification and publication status.
 
 On 2026-09-20 the operator selected one v0.1.3 Developer Preview from current main, including both the unreleased v0.1.2 capture/recovery work and this workspace. The earlier requirement to publish v0.1.2 first is superseded. Task status belongs in [MODULE_KANBAN](../runtime/MODULE_KANBAN.md).

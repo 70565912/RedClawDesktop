@@ -1,5 +1,6 @@
 #include "redclaw/workspace/terminal_session.h"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -73,7 +74,7 @@ struct TerminalSession::Impl {
     HPCON console = nullptr;
     ResizeConsole resize_console = nullptr;
     CloseConsole close_console = nullptr;
-    Handle input_pipe, output_pipe, process, job;
+    Handle input_pipe, output_pipe, integration_pipe, process, job;
     std::thread reader, writer;
 
     void read_loop() {
@@ -129,7 +130,7 @@ struct TerminalSession::Impl {
 TerminalSession::TerminalSession() : impl_(std::make_unique<Impl>()) {}
 TerminalSession::~TerminalSession() { stop(); }
 
-bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize size, std::string* error) {
+bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize size, std::string* error, std::string_view integration_nonce) {
     if (error) error->clear();
     if (running()) { fail(error, "already_running"); return false; }
     stop();
@@ -147,10 +148,18 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
     if (!create_console || !impl_->resize_console || !impl_->close_console) {
         fail(error, "conpty_unavailable"); return false;
     }
-    Handle console_input, console_output;
+    Handle console_input, console_output, integration_writer;
     if (!CreatePipe(console_input.receive(), impl_->input_pipe.receive(), nullptr, 0)
         || !CreatePipe(impl_->output_pipe.receive(), console_output.receive(), nullptr, 0)) {
         fail(error, "pipe_create", GetLastError()); stop(); return false;
+    }
+    const bool integrated = !integration_nonce.empty();
+    if (integrated) {
+        SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+        if (!CreatePipe(impl_->integration_pipe.receive(), integration_writer.receive(), &security, 65536)
+            || !SetHandleInformation(impl_->integration_pipe.get(), HANDLE_FLAG_INHERIT, 0)) {
+            fail(error, "integration_pipe_create", GetLastError()); stop(); return false;
+        }
     }
     const auto result = create_console(COORD{static_cast<SHORT>(size.columns), static_cast<SHORT>(size.rows)},
         console_input.get(), console_output.get(), 0, &impl_->console);
@@ -174,10 +183,10 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
     };
 
     SIZE_T bytes = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    InitializeProcThreadAttributeList(nullptr, integrated ? 2 : 1, 0, &bytes);
     std::vector<unsigned char> storage(bytes);
     auto* attributes_list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-    if (!InitializeProcThreadAttributeList(attributes_list, 1, 0, &bytes)) {
+    if (!InitializeProcThreadAttributeList(attributes_list, integrated ? 2 : 1, 0, &bytes)) {
         fail(error, "attributes_create", GetLastError()); cleanup(); return false;
     }
     const bool attached = UpdateProcThreadAttribute(attributes_list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
@@ -186,6 +195,12 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
         const auto code = GetLastError();
         DeleteProcThreadAttributeList(attributes_list);
         fail(error, "attributes_attach", code); cleanup(); return false;
+    }
+    HANDLE inherited_writer = integration_writer.get();
+    if (integrated && !UpdateProcThreadAttribute(attributes_list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        &inherited_writer, sizeof(inherited_writer), nullptr, nullptr)) {
+        const auto code = GetLastError(); DeleteProcThreadAttributeList(attributes_list);
+        fail(error, "integration_handle_attach", code); cleanup(); return false;
     }
     impl_->job.reset(CreateJobObjectW(nullptr, nullptr));
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -210,7 +225,9 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
         const auto profile = std::filesystem::path(std::wstring(module.data(), module_length)).parent_path() / L"maintenance/terminal-profile.ps1";
         const auto profile_attributes = GetFileAttributesW(profile.c_str());
         if (profile_attributes != INVALID_FILE_ATTRIBUTES && !(profile_attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
-            command += L" -NoExit -ExecutionPolicy Bypass -File \"" + profile.wstring() + L"\"";
+            command += L" -NoExit -ExecutionPolicy Bypass -File \"" + profile.wstring() + L"\" -IntegrationNonce \""
+                + std::wstring(integration_nonce.begin(), integration_nonce.end()) + L"\" -IntegrationHandle "
+                + std::to_wstring(reinterpret_cast<std::uintptr_t>(inherited_writer));
     }
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
@@ -225,11 +242,12 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
         fail(error, "environment_create", code); cleanup(); return false;
     }
     PROCESS_INFORMATION child{};
-    const bool created = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+    const bool created = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, integrated ? TRUE : FALSE,
         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
         environment.data(), directory.c_str(), &startup.StartupInfo, &child) != FALSE;
     const auto create_error = GetLastError();
     DeleteProcThreadAttributeList(attributes_list);
+    integration_writer.reset(); // only the child retains the explicitly inherited writer
     if (!created) { fail(error, "shell_create", create_error); cleanup(); return false; }
     impl_->process.reset(child.hProcess);
     Handle initial_thread(child.hThread);
@@ -251,7 +269,7 @@ bool TerminalSession::start(const std::filesystem::path& directory, TerminalSize
     }
     return true;
 #else
-    (void)directory; (void)size;
+    (void)directory; (void)size; (void)integration_nonce;
     fail(error, "unsupported_platform"); return false;
 #endif
 }
@@ -286,9 +304,41 @@ std::optional<std::string> TerminalSession::take_output() {
     if (impl_->output.empty()) return {};
     auto bytes = std::move(impl_->output.front());
     impl_->output.pop_front();
+    // ConPTY often flushes a few VT bytes at a time. Fill the existing wire
+    // chunk from already buffered output instead of paying one network ACK
+    // round trip per console write; preserve order and the same queue bound.
+    if (!impl_->output.empty() && bytes.size() < kOutputChunkBytes) {
+        bytes.reserve((std::min)(impl_->output_bytes, kOutputChunkBytes));
+        while (!impl_->output.empty() && bytes.size() + impl_->output.front().size() <= kOutputChunkBytes) {
+            bytes.append(impl_->output.front());
+            impl_->output.pop_front();
+        }
+    }
     impl_->output_bytes -= bytes.size();
     impl_->changed.notify_all();
     return bytes;
+}
+std::optional<std::string> TerminalSession::take_integration() {
+#ifdef _WIN32
+    DWORD available = 0;
+    if (!impl_->integration_pipe.get() || !PeekNamedPipe(impl_->integration_pipe.get(), nullptr, 0, nullptr, &available, nullptr)
+        || !available) return {};
+    // Single reader: consume only already-buffered bytes, without waiting for
+    // the Shell or adding another worker. The OS pipe bounds backpressure.
+    std::string bytes((std::min)(static_cast<std::size_t>(available), kOutputChunkBytes), '\0');
+    DWORD count = 0;
+    if (!ReadFile(impl_->integration_pipe.get(), bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr) || !count) return {};
+    bytes.resize(count); return bytes;
+#else
+    return {};
+#endif
+}
+bool TerminalSession::integration_alive() const {
+#ifdef _WIN32
+    return impl_->integration_pipe.get() && PeekNamedPipe(impl_->integration_pipe.get(), nullptr, 0, nullptr, nullptr, nullptr);
+#else
+    return false;
+#endif
 }
 
 bool TerminalSession::running() const {
@@ -304,7 +354,9 @@ std::size_t TerminalSession::buffered_output_bytes() const {
     return impl_->output_bytes;
 }
 bool TerminalSession::output_finished() const {
-    return impl_->reader_done && !running() && buffered_output_bytes() == 0;
+    // ConPTY can keep its output handle open after the Shell exits. Waiting
+    // for pipe EOF before retiring the pseudoconsole would wait forever.
+    return !running() && buffered_output_bytes() == 0;
 }
 
 void TerminalSession::stop() {
@@ -330,6 +382,7 @@ void TerminalSession::stop() {
         impl_->reader.join();
     }
     impl_->output_pipe.reset();
+    impl_->integration_pipe.reset();
     impl_->process.reset();
     impl_->job.reset();
 #endif

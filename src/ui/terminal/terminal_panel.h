@@ -4,6 +4,7 @@
 #include <functional>
 namespace redclaw::ui {
 class WorkspacePipeServer;
+class TerminalCoordinator;
 class TerminalPanel final : public QWidget {
 public:
     TerminalPanel(WorkspacePipeServer& pipe, QWidget* parent = nullptr,
@@ -11,6 +12,7 @@ public:
     ~TerminalPanel() override;
     void set_workspace_blocked(bool blocked);
     void end_desktop(std::function<void()> finished);
+    TerminalCoordinator& coordinator();
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;

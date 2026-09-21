@@ -33,6 +33,7 @@
 - [DirectX 采集兼容性](architecture/directx-capture-compatibility-design.md)
 - [采集恢复与 Host 光标](architecture/capture-recovery-and-cursor.md)
 - [v0.1.3 文件、剪贴板、终端与自重启实施约定](architecture/remote-workspace-v013.md)
+- [本地工作台调用接口与脚本示例](architecture/workspace-control-v1.md)
 - [普通桌面输入](architecture/ordinary-desktop-remote-input-v1.md)
 - [远端 Agent 桥](architecture/remote-development-agent-bridge-v1.md)
 - [P2P Debug Bridge](architecture/p2p-debug-bridge-v1.md)

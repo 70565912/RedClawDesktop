@@ -123,7 +123,7 @@ void TransferWorker::publish() {
     if (value.finished()) {
         snapshot_.reset(); // source handles are closed; cleanup stays on the disk owner
         results_.finish(); value.results_path = results_.path();
-        if (clipboard_batch_created_ && !clipboard_files_seen_) {
+        if (clipboard_batch_created_ && !clipboard_files_seen_ && !config_.retain_clipboard_snapshot) {
             std::string error;
             const std::atomic_bool cleanup_cancelled{false};
             if (!ClipboardCopyStore(config_.results_directory).cleanup_batch(config_.clipboard_batch_id, cleanup_cancelled, {}, &error)
@@ -141,7 +141,11 @@ void TransferWorker::run() {
             if (config_.clipboard) {
                 std::string error;
                 snapshot_ = std::make_unique<ClipboardSnapshot>();
-                if (!snapshot_->capture(config_.directory, config_.clipboard_sequence, cancelled_, &error)) {
+                if (!(config_.clipboard_source.empty()
+                    ? (config_.clipboard_capture
+                        ? config_.clipboard_capture(*snapshot_, config_.directory, config_.clipboard_sequence, cancelled_, &error)
+                        : snapshot_->capture(config_.directory, config_.clipboard_sequence, cancelled_, &error))
+                    : snapshot_->create(config_.directory, config_.clipboard_source, cancelled_, &error))) {
                     fail(std::move(error)); return;
                 }
                 const auto scan = [this](const TransferScanProgress& totals) {

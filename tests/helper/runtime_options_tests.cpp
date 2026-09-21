@@ -28,12 +28,24 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     EXPECT_FALSE(options.allow_remote_input);
     EXPECT_FALSE(options.allow_remote_agent);
     EXPECT_FALSE(options.allow_remote_diagnostics);
+    EXPECT_FALSE(options.enable_workspace_control);
     EXPECT_FALSE(options.enable_ice_tcp);
     EXPECT_EQ(options.stream_video_max_width, 0U);
     EXPECT_FALSE(options.stream_qa_native_size);
     EXPECT_EQ(options.run_seconds, 0U);
     EXPECT_EQ(options.ice_udp_port, 55000U);
     EXPECT_EQ(options.dht_listen_port, 0U);
+}
+TEST(RuntimeOptions, WorkspaceControlRequiresExplicitEnableAndPipeNameValue) {
+    RuntimeOptions options; std::string error;
+    ASSERT_TRUE(parse({"--workspace-control-name", "RedClawDesktop.Test.Workspace"}, &options, &error)) << error;
+    EXPECT_FALSE(options.enable_workspace_control);
+    EXPECT_EQ(options.workspace_control_name, "RedClawDesktop.Test.Workspace");
+    options = RuntimeOptions{};
+    ASSERT_TRUE(parse({"--enable-workspace-control"}, &options, &error)) << error;
+    EXPECT_TRUE(options.enable_workspace_control);
+    options = RuntimeOptions{};
+    EXPECT_FALSE(parse({"--workspace-control-name"}, &options, &error));
 }
 TEST(RuntimeOptions, MaintenanceResumeStaysInGuiAndRequiresAContextArgument) {
     RuntimeOptions options; std::string error;

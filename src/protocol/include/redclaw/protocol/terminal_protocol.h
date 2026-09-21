@@ -5,7 +5,8 @@
 namespace redclaw::protocol {
 inline constexpr std::size_t kMaxTerminalChunkBytes = 16U * 1024U;
 enum class TerminalMessageTypeV1 {
-    kOpen, kReady, kInput, kOutput, kOutputAck, kResize, kState, kAvailability, kEnd, kEnded
+    kOpen, kReady, kInput, kOutput, kOutputAck, kResize, kState, kAvailability, kEnd, kEnded,
+    kExec, kExecState, kCancel
 };
 struct TerminalMessageV1 {
     int schema_version = 1;
@@ -22,6 +23,11 @@ struct TerminalMessageV1 {
     bool exited = false;
     std::string error_code;
     std::string bytes;
+    std::uint32_t capability_version = 0;
+    std::string operation_id, execution_state;
+    std::uint64_t output_position = 0;
+    bool prompt_ready = false, powershell_success = false, has_native_exit_code = false;
+    std::int32_t last_native_exit_code = 0;
 };
 [[nodiscard]] bool validate_terminal_message_v1(const TerminalMessageV1& message, std::string* error = nullptr);
 [[nodiscard]] std::string serialize_terminal_message_v1(const TerminalMessageV1& message);
