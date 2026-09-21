@@ -12,6 +12,7 @@ On 2026-09-20 the operator selected one v0.1.3 Developer Preview from current ma
 - Keep the Controller's system cursor unchanged. Let the remote canvas fill the workspace; Agent, terminal, navigation and files/clipboard use independent, owned floating task windows.
 - File transfer supports both directions, multiple files and recursive folders, including empty folders. The remote browser exposes current-user-accessible directories, not only Agent projects.
 - Intercept Ctrl+V only when the remote desktop canvas owns keyboard forwarding. Send the current local clipboard snapshot on demand: Unicode text, HTML/RTF, images and actual file/folder lists. Do not continuously synchronize clipboards. Copy semantics never delete the source.
+- After Ctrl+C or Ctrl+X in the remote canvas, forward Ctrl+V to the remote application while the local clipboard sequence remains unchanged. A new local copy selects local clipboard transfer again. The copy marker belongs to the current control activation and survives temporary local-focus/transfer suspensions.
 - The terminal is a complete interactive session in its floating window. It shares the remote desktop session lifecycle; hiding the task window does not end the Shell. Only the existing desktop-session shutdown sends terminal End.
 
 ## Transfer transaction and operation gate

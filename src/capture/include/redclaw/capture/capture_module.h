@@ -165,6 +165,21 @@ struct CaptureDisplayDescriptor {
 	std::uint32_t canvas_width,
 	std::uint32_t canvas_height);
 
+// Preserve selection intent across catalog/frame size differences and recovery.
+// Pixel bounds are derived from the actual source, never cached from a catalog.
+struct CaptureRegionSelection {
+    std::uint16_t left = 0;
+    std::uint16_t top = 0;
+    std::uint16_t right = 65535;
+    std::uint16_t bottom = 65535;
+    std::uint64_t revision = 1;
+
+    [[nodiscard]] CaptureRegion resolve(std::uint32_t width, std::uint32_t height) const {
+        return capture_region_from_normalized_bounds(
+            left, top, right, bottom, width, height, revision);
+    }
+};
+
 bool encode_navigation_thumbnail_jpeg(
 	const CapturedFrame& frame,
 	std::uint32_t max_edge,

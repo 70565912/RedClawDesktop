@@ -184,6 +184,7 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     active_ = true;
     pausing_ = false;
     suppressed_paste_key_ = false;
+    clipboard_shortcut_state_.reset();
     local_suspension_release_sent_ = false;
     clear_local_input_state();
     pending_input_acks_.clear();
@@ -766,6 +767,14 @@ void ControllerRemoteInputCapture::send_state_sync() {
     if (!active_) {
         return;
     }
+    // The snapshot includes transitions still in the event queue. Deliver those
+    // first, otherwise an empty snapshot can release Shift/Ctrl before its chord.
+    while (input_forwarding() && (!critical_events_.empty() || latest_mouse_move_)) {
+        flush_batch();
+    }
+    if (!active_) {
+        return;
+    }
     redclaw::protocol::StreamControlMessageV1 message;
     message.type = redclaw::protocol::StreamControlMessageTypeV1::kInputStateSync;
     message.input_sequence = ++input_sequence_;
@@ -929,9 +938,13 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
         && has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
         && has_any({VK_MENU, VK_LMENU, VK_RMENU})
         && has_any({VK_SHIFT, VK_LSHIFT, VK_RSHIFT});
-    if (key_down && virtual_key == 'V' && clipboard_paste_callback_
-        && has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
-        && !has_any({VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN})) {
+    const bool plain_control = has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
+        && !has_any({VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN});
+    if (key_down && plain_control && (virtual_key == 'C' || virtual_key == 'X')) {
+        clipboard_shortcut_state_.remote_copy(GetClipboardSequenceNumber());
+    }
+    if (key_down && virtual_key == 'V' && clipboard_paste_callback_ && plain_control
+        && clipboard_shortcut_state_.should_transfer_local_clipboard(GetClipboardSequenceNumber())) {
         suppressed_paste_key_ = true;
         const auto sequence = GetClipboardSequenceNumber();
         // Empty state sync releases held keys while preserving the explicit

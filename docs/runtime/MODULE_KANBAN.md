@@ -10,10 +10,11 @@ Validation routing follows the [automated-only release matrix](../testing/test-m
 
 ## M01 Capture
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 - `M01-T01` Windows Graphics Capture and Desktop Duplication backends — done.
 - `M01-T02` Multi-display product controls — planned.
+- `M01-T04` Initial full-desktop capture selection — done (local candidate); normalized selection resolves against actual frame dimensions, including resolution recovery and crop rollback. Two focused automatic cases, Debug build/publication, published startup and artifact equality passed. No live Host replacement or physical field requalification; see the development log.
 
 - `M01-T03` DDA recovery and Host cursor consistency — done; implementation, serial Debug/Release builds, 102 CTests, focused session/GPU/protocol tests and isolated full-directory upgrade scenarios passed. Local DDA/WGC/GDI capture, both pre-upgrade Debug and public v0.1.0/v0.1.1 mixed directions, DHT restart and a matched-scene performance sample are recorded. First-frame capture denial now visibly opens the paused workspace with control disabled. Released in the combined v0.1.3 package; local and published-package smoke passed; physical cursor/recovery and real peer rollout are optional developer evaluations, not release gates. See [capture behavior](../architecture/capture-recovery-and-cursor.md) and [independent upgrade](../testing/runtime-directory-upgrade.md).
 
@@ -34,10 +35,11 @@ Updated: 2026-09-20
 
 ## M05 Input
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 - `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done.
 - `M05-T02` Wider DPI/rotation/multi-display validation — in-progress.
+- `M05-T04` Remote chord ordering and remote clipboard shortcuts — done (local candidate); pending input precedes state snapshots, and remote copy/cut keeps subsequent paste remote until the local clipboard changes. Seventeen focused input/UI/navigation cases, Debug build/publication and startup passed. Running Controller preserved; physical keyboard/application consumption has not been requalified.
 - `M05-T03` Opt-in input-stage and native target delivery diagnostics — in-progress; Debug DHT build and seven focused suites passed. A physical temporary target visibly consumed a GUI click and QA-protocol digit; the peer aligned six received/sent batches, twelve injected events, zero rejected and an empty queue. The visible target response qualifies application consumption; separate peer readback is not required again. Physical-keyboard Hook capture is an optional developer evaluation; software-injected keys remain filtered and no manual follow-up is required. The target later disappeared and input was paused. Preserve these distinct transport, API and application evidence levels; the historical incident remains unresolved.
 
 ## M06 Session
