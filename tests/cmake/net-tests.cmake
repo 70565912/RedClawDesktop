@@ -4,6 +4,17 @@ target_link_libraries(redclaw_net_test_support PRIVATE redclaw_net)
 redclaw_apply_warnings(redclaw_net_test_support)
 
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_adaptive_media_sender_tests net/adaptive_media_sender_tests.cpp)
+target_link_libraries(redclaw_adaptive_media_sender_tests PRIVATE redclaw_net redclaw_session GTest::gtest_main)
+redclaw_apply_warnings(redclaw_adaptive_media_sender_tests)
+add_test(NAME redclaw_adaptive_media_sender_tests COMMAND redclaw_adaptive_media_sender_tests)
+if(WIN32)
+  add_executable(redclaw_adaptive_sender_decode_integration_tests integration/adaptive_sender_decode_integration_tests.cpp)
+  target_link_libraries(redclaw_adaptive_sender_decode_integration_tests PRIVATE redclaw_net redclaw_capture redclaw_render redclaw_helper GTest::gtest_main)
+  redclaw_apply_warnings(redclaw_adaptive_sender_decode_integration_tests)
+  add_test(NAME redclaw_adaptive_sender_decode_integration_tests COMMAND redclaw_adaptive_sender_decode_integration_tests)
+endif()
+
 add_executable(redclaw_ice_udp_mapping_tests net/ice_udp_mapping_tests.cpp)
 target_link_libraries(redclaw_ice_udp_mapping_tests PRIVATE redclaw_net GTest::gtest_main)
 redclaw_apply_warnings(redclaw_ice_udp_mapping_tests)

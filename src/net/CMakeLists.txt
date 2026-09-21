@@ -10,6 +10,7 @@ add_library(redclaw_net STATIC
   src/media_congestion_controller.cpp
   src/media_pacing_budget.cpp
   src/desktop_media_send_pacer.cpp
+  src/media_frame_trace.cpp
   src/receiver_stream_policy.cpp
 )
 

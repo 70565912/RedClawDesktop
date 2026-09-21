@@ -155,6 +155,12 @@ exit-code semantics, deduplication, wait/cancel, bounded output gaps and a
 64 MiB file/directory round trip with matching SHA256 and empty directories.
 Actual application paste remains optional and was not performed.
 
+That qualification and the independent candidate archive precede the merge of
+the Host media updates through `2d9fbca`. The archive retains its original
+manifest and hash. Merged-source build/regression results are recorded
+separately in the development log; source synchronization does not replace
+the archive or establish new media-performance evidence.
+
 Final-candidate mixed-version checks covered both directions against the
 previous Debug bundle. The new Controller observed common terminal/file/
 clipboard capabilities 1/1/2, used the legacy Shell and remote directory

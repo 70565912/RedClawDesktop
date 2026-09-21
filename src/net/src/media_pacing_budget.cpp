@@ -21,25 +21,28 @@ using transport_detail::kFragmentHeaderBytes;
 void MediaPacingBudget::update_rate(
     std::uint32_t pacing_bitrate_kbps,
     std::uint64_t now_steady_us) {
-    const bool initialize = last_refill_us_ == 0;
+    const bool initialize = !initialized_;
     if (!initialize) {
         refill(now_steady_us);
     }
     pacing_bitrate_kbps_ = pacing_bitrate_kbps;
     burst_bytes_ = std::clamp<double>(
-        static_cast<double>(pacing_bitrate_kbps_) * 1000.0 / 8.0 * 0.020,
+        static_cast<double>(kFragmentHeaderBytes + 16 * 1024)
+            + static_cast<double>(pacing_bitrate_kbps_) * lateness_.quantile(0.95) / 8000.0,
         static_cast<double>(kFragmentHeaderBytes + 16 * 1024),
-        64.0 * 1024.0);
+        static_cast<double>(std::max(window_limit_bytes_, kFragmentHeaderBytes + 16 * 1024)));
     if (initialize) {
+        initialized_ = true;
         last_refill_us_ = now_steady_us;
-        tokens_bytes_ = burst_bytes_;
+        tokens_bytes_ = static_cast<double>(kFragmentHeaderBytes + 16 * 1024);
     } else {
         tokens_bytes_ = std::min(tokens_bytes_, burst_bytes_);
     }
 }
 
 void MediaPacingBudget::refill(std::uint64_t now_steady_us) {
-    if (last_refill_us_ == 0) {
+    if (!initialized_) {
+        initialized_ = true;
         last_refill_us_ = now_steady_us;
         return;
     }
@@ -86,6 +89,32 @@ void MediaPacingBudget::reset() {
     last_refill_us_ = 0;
     tokens_bytes_ = 0.0;
     burst_bytes_ = 0.0;
+    initialized_ = false;
+    lateness_.reset();
+}
+
+void MediaPacingBudget::observe_wait(std::uint64_t requested_us, std::uint64_t elapsed_us) {
+    lateness_.add(static_cast<double>(elapsed_us > requested_us ? elapsed_us - requested_us : 0));
+    // Expand before refill: the late wakeup credit must not be clipped first.
+    burst_bytes_ = std::clamp<double>(kFragmentHeaderBytes + 16 * 1024
+            + static_cast<double>(pacing_bitrate_kbps_) * lateness_.quantile(0.95) / 8000.0,
+        static_cast<double>(kFragmentHeaderBytes + 16 * 1024),
+        static_cast<double>(std::max(window_limit_bytes_, kFragmentHeaderBytes + 16 * 1024)));
+}
+
+void MediaPacingBudget::suspend(std::uint64_t now_steady_us) {
+    last_refill_us_ = now_steady_us;
+    tokens_bytes_ = std::min(tokens_bytes_, static_cast<double>(kFragmentHeaderBytes + 16 * 1024));
+}
+
+void MediaPacingBudget::set_window_limit(std::size_t bytes) {
+    window_limit_bytes_ = bytes;
+    burst_bytes_ = std::min(burst_bytes_, static_cast<double>(std::max(bytes, kFragmentHeaderBytes + 16 * 1024)));
+    tokens_bytes_ = std::min(tokens_bytes_, burst_bytes_);
+}
+
+std::uint64_t MediaPacingBudget::lateness_us() const {
+    return static_cast<std::uint64_t>(lateness_.quantile(0.95));
 }
 
 MediaPacerFrameBudget resolve_media_pacer_frame_budget(

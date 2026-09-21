@@ -332,64 +332,47 @@ bool test_congestion_controller_avoids_double_loss_backoff_and_probes() {
     redclaw::net::MediaCongestionSample sample;
     sample.encoder_target_bitrate_kbps = 20000;
     sample.smoothed_rtt_ms = 180;
-    sample.rtt_fresh = true;
-    sample.transport.feedback_fresh = true;
+    sample.rtt_fresh = sample.media_channel_open = true;
+    sample.transport.feedback_fresh = sample.transport.delivery_rate_valid = true;
+    sample.transport.application_limited = false;
+    sample.transport.delivery_bitrate_kbps = 20000;
+    sample.transport.feedback_interval_us = 100000;
     sample.transport.feedback_sample_id = 1;
-
-    bool ok = true;
+    sample.demand.target_fps = 30;
     sample.now_steady_ms = 1000;
     auto decision = controller.update(sample);
-    ok = expect_true(
-        decision.pacing_bitrate_kbps == 20000 && !decision.backoff,
-        "stable high RTT without queue growth should preserve 20 Mbps") && ok;
-
-    sample.now_steady_ms = 1050;
+    bool ok = expect_true(decision.pacing_bitrate_kbps == 20000 && !decision.backoff,
+        "high base RTT without queue growth is not congestion");
+    sample.now_steady_ms = 1100;
     ++sample.transport.feedback_sample_id;
     sample.encoder_target_bitrate_kbps = 400;
     decision = controller.update(sample);
-    ok = expect_true(
-        decision.pacing_bitrate_kbps == 20000 && !decision.backoff,
-        "a lower average encoder target should not collapse healthy IDR burst pacing") && ok;
-    sample.encoder_target_bitrate_kbps = 20000;
-
-    sample.now_steady_ms = 1100;
-    ++sample.transport.feedback_sample_id;
+    ok = expect_true(decision.pacing_bitrate_kbps == 20000,
+        "encoder average bitrate is not a pacing ceiling") && ok;
     sample.transport.loss_per_mille = 10;
+    ++sample.transport.feedback_sample_id;
     decision = controller.update(sample);
-    ok = expect_true(
-        decision.isolated_loss && !decision.backoff
-            && decision.pacing_bitrate_kbps == 20000,
-        "isolated one-percent loss should only block probing") && ok;
-
-    sample.transport.loss_per_mille = 30;
-    for (std::uint64_t now_ms : {1200ULL, 1300ULL, 1400ULL}) {
-        sample.now_steady_ms = now_ms;
-        ++sample.transport.feedback_sample_id;
-        decision = controller.update(sample);
-    }
-    ok = expect_true(
-        decision.backoff && decision.pacing_bitrate_kbps == 17000,
-        "three consecutive loss windows should apply one 15 percent backoff") && ok;
-
+    ok = expect_true(decision.isolated_loss && !decision.backoff,
+        "isolated loss does not manufacture a capacity drop") && ok;
     sample.now_steady_ms = 1500;
     ++sample.transport.feedback_sample_id;
-    sample.transport.loss_per_mille = 0;
     sample.transport.queue_delay_ms = 200;
+    sample.transport.delivery_bitrate_kbps = 10000;
     decision = controller.update(sample);
-    ok = expect_true(
-        decision.pressure == redclaw::net::MediaNetworkPressure::kSevere
-            && decision.pacing_bitrate_kbps == 11900,
-        "a 200 ms queue increase should immediately back off 30 percent") && ok;
-
-    sample.transport.queue_delay_ms = 0;
-    for (std::uint64_t now_ms : {2000ULL, 3000ULL, 4001ULL}) {
-        sample.now_steady_ms = now_ms;
-        ++sample.transport.feedback_sample_id;
-        decision = controller.update(sample);
-    }
-    ok = expect_true(
-        decision.probe && decision.pacing_bitrate_kbps == 12852,
-        "two stable seconds should probe by the larger of eight percent or 100 Kbps") && ok;
+    const auto drained = decision.pacing_bitrate_kbps;
+    ok = expect_true(decision.backoff && drained < 10000,
+        "measured congestion drains below the demonstrated delivery rate") && ok;
+    ok = expect_true(!controller.update(sample).backoff,
+        "the same feedback cannot repeatedly back off") && ok;
+    sample.now_steady_ms = 3000;
+    ++sample.transport.feedback_sample_id;
+    sample.transport.queue_delay_ms = sample.transport.loss_per_mille = 0;
+    sample.transport.delivery_bitrate_kbps = drained;
+    sample.demand.pending_bytes = 512 * 1024;
+    sample.demand.token_limited = true;
+    decision = controller.update(sample);
+    ok = expect_true(decision.probe && decision.pacing_bitrate_kbps > drained,
+        "fresh delivery and queued demand can explore headroom independently of encoder bitrate") && ok;
     return ok;
 }
 
