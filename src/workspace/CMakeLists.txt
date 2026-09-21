@@ -1,5 +1,5 @@
 add_library(redclaw_workspace STATIC
-    src/terminal_session.cpp src/terminal_host.cpp src/terminal_controller.cpp
+    src/terminal_session.cpp src/terminal_host.cpp src/terminal_controller.cpp src/terminal_shell_integration.cpp
     src/local_workspace_pipe.cpp src/terminal_runtime_bridge.cpp
     src/transfer_file_receiver.cpp src/transfer_file_source.cpp src/transfer_batch_receiver.cpp
     src/transfer_source_manifest.cpp src/transfer_batch_sender.cpp src/transfer_operation_gate.cpp

@@ -3412,7 +3412,14 @@ int run_runtime_mode(
                 return redclaw::workspace::ClipboardInputEligibility{
                     ordinary && visible && channel_valid && remote_input_session.clipboard_paste_eligible(), remote_input_session.eligibility_revision()};
             },
-            [&](std::uint64_t revision, std::string* error) { return remote_input_session.paste_verified_clipboard(revision, error); }
+            [&](std::uint64_t revision, std::string* error) { return remote_input_session.paste_verified_clipboard(revision, error); },
+            {}, {},
+            [&] {
+                if (redclaw::capture::probe_capture_desktop(redclaw::capture::CaptureProbeDetail::kAccessOnly).access
+                    != redclaw::capture::CaptureDesktopAccess::kOrdinary) return false;
+                std::lock_guard lock(callback_mutex);
+                return stream_required_channels_ready && stream_control_channel_open && !remote_input_disconnect_pending;
+            }
         });
 
     auto make_source_activity_message = [&](

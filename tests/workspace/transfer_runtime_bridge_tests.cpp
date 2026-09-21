@@ -241,7 +241,7 @@ TEST_F(TransferRuntimeFixture, ClipboardCopiesNegotiateVersionTwoAndCleanupWaits
     EXPECT_EQ(local_events.back().workspace->error_code, "clipboard_peer_unsupported");
     EXPECT_FALSE(controller_gate.blocks_mutation()); EXPECT_TRUE(to_host.empty());
     host->peer_capability(1, "controller-epoch", 2); controller->peer_capability(1, "host-epoch", 9); step();
-    EXPECT_EQ(local_events.back().clipboard_version, 2U);
+    EXPECT_EQ(local_events.back().clipboard_version, kClipboardCapabilityVersion);
     controller->from_gui(command(Action::kBrowseClipboardCopies, TransferDirectionV1::kToHost, {}, "copies"));
     ASSERT_TRUE(until([&] { return seen(Action::kBrowseEnd, "copies"); }));
     unsigned count = 0;

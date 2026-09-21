@@ -61,6 +61,8 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 文件、剪贴板和终端按双方共同能力启用；旧端不支持的新功能保持不可用，不要求两端同时升级。传输期间暂停新的桌面/终端输入及 Agent 操作，画面和已有输出继续；取消或完成后恢复符合其他授权条件的操作。
 
+[本地工作台调用接口](docs/architecture/workspace-control-v1.md)让脚本复用当前 P2P 会话调用终端、文件和剪贴板。通过 `--enable-workspace-control` 显式开启当前用户管道；不增加公网监听端口。候选包附带 `maintenance/invoke-workspace-control.ps1`，与当前运行实例分别交付。
+
 便携 ZIP 不写入安装目录之外的系统服务配置。首次运行可能出现 Windows SmartScreen 提示，因为 Developer Preview 尚未进行代码签名。
 
 ## ICE UDP 端口与路由器设置

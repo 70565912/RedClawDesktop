@@ -36,6 +36,9 @@ struct WorkspaceControlV1 {
     bool paste_submitted = false; // Host's final clipboard result
     std::uint64_t created_at_ms = 0; // clipboard-copy listing only
     TransferConflictV1 conflict = TransferConflictV1::kKeepBoth;
+    std::uint32_t clipboard_mode = 0; // 0 legacy, 1 export, 2 publish, 3 paste only
+    std::string clipboard_source; // owner-local protobuf descriptor, never sent to peer
+    std::string snapshot_path; // owner-local verified result reference
 };
 [[nodiscard]] bool validate_workspace_control_v1(const WorkspaceControlV1&, std::string* error = nullptr);
 enum class TransferMessageTypeV1 { kEntry, kChunk, kCommit, kReceipt, kFinish, kFinished };

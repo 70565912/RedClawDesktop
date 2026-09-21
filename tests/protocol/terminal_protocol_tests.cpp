@@ -61,4 +61,16 @@ TEST(TerminalProtocol, MissingCapabilityIsDisabledAndUnknownFieldsRemainOptional
     EXPECT_EQ(parsed.value.terminal_version, 1U);
     EXPECT_EQ(parsed.value.capture_status_version, 0U);
 }
+TEST(TerminalProtocol, ExecutionReceiptRequiresOperationAndKnownState) {
+    TerminalMessageV1 receipt;
+    receipt.type = TerminalMessageTypeV1::kExecState; receipt.session_epoch = "session"; receipt.terminal_id = "shell";
+    receipt.operation_id = "operation"; receipt.execution_state = "succeeded";
+    receipt.powershell_success = true; receipt.has_native_exit_code = true; receipt.last_native_exit_code = 7;
+    const auto parsed = parse_terminal_message_v1(serialize_terminal_message_v1(receipt));
+    ASSERT_TRUE(parsed.ok); EXPECT_TRUE(parsed.value.powershell_success); EXPECT_EQ(parsed.value.last_native_exit_code, 7);
+    receipt.operation_id.clear(); EXPECT_FALSE(validate_terminal_message_v1(receipt));
+    receipt.operation_id = "operation"; receipt.execution_state = "not-a-state"; EXPECT_FALSE(validate_terminal_message_v1(receipt));
+    receipt.execution_state = "output"; receipt.sequence = 1; receipt.bytes = "merged output";
+    EXPECT_TRUE(parse_terminal_message_v1(serialize_terminal_message_v1(receipt)).ok);
+}
 }

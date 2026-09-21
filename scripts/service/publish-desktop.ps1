@@ -227,7 +227,7 @@ if ($terminalRequired) {
     & (Join-Path $scriptRoot 'prepare-terminal-runtime.ps1') -DeployDirectory (Join-Path $resolvedDest 'terminal-runtime') | Out-Null
     $maintenanceDirectory = Join-Path $resolvedDest 'maintenance'
     New-Item -ItemType Directory -Path $maintenanceDirectory -Force | Out-Null
-    foreach ($name in @('terminal-profile.ps1','start-runtime-maintenance.ps1','runtime-upgrade-common.ps1','invoke-runtime-directory-upgrade.ps1')) {
+    foreach ($name in @('terminal-profile.ps1','start-runtime-maintenance.ps1','runtime-upgrade-common.ps1','invoke-runtime-directory-upgrade.ps1','invoke-workspace-control.ps1')) {
         Copy-Item -LiteralPath (Join-Path $scriptRoot $name) -Destination (Join-Path $maintenanceDirectory $name)
     }
 }
