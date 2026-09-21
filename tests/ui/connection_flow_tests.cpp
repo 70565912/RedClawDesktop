@@ -39,7 +39,115 @@
 #include "ui/remote_input_capture.h"
 #include "ui/stun_server_policy.h"
 
+namespace redclaw::ui {
+// Exercise queue scheduling without installing hooks or touching the desktop.
+class ControllerRemoteInputCaptureTestPeer {
+public:
+  static void start(ControllerRemoteInputCapture& capture) {
+    capture.active_ = true;
+    capture.desktop_geometry_revision_ = 1;
+  }
+  static void enqueue(ControllerRemoteInputCapture& capture,
+                      redclaw::protocol::RemoteInputEventTypeV1 type, std::uint16_t scan) {
+    redclaw::protocol::RemoteInputEventV1 event;
+    event.type = type; event.scan_code = scan;
+    capture.enqueue_critical(event);
+  }
+  static void flush(ControllerRemoteInputCapture& capture) { capture.flush_batch(); }
+  static void synchronize(ControllerRemoteInputCapture& capture) { capture.send_state_sync(); }
+};
+}  // namespace redclaw::ui
+
 namespace {
+
+TEST(ControllerRemoteInputOrdering, ReleasedModifierSnapshotCannotOvertakeQueuedChord) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  using RemoteType = redclaw::protocol::RemoteInputEventTypeV1;
+  using Type = redclaw::input::InputEventType;
+  using MessageType = redclaw::protocol::StreamControlMessageTypeV1;
+  // Shift+/, Ctrl+C and Ctrl+V, with the periodic sync due before the flush.
+  for (const auto [modifier, key] : {std::pair{0x2a, 0x35}, {0x1d, 0x2e}, {0x1d, 0x2f}}) {
+    redclaw::input::InputPolicyGate gate;
+    redclaw::input::InMemoryInputInjectorBackend backend;
+    redclaw::input::RemoteInputSession host(gate, backend);
+    host.set_authorized(true);
+    ASSERT_TRUE(host.request_active(1000));
+    redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+    capture.set_send_message_callback([&](const auto& message, QString*) {
+      if (message.type == MessageType::kInputBatch) {
+        std::vector<redclaw::input::InputEvent> events;
+        for (const auto& remote : message.input_events) {
+          redclaw::input::InputEvent event;
+          event.type = remote.type == RemoteType::kKeyDown ? Type::kKeyDown : Type::kKeyUp;
+          event.scan_code = remote.scan_code;
+          events.push_back(event);
+        }
+        return host.enqueue_batch(message.input_sequence, std::move(events), 1100) && host.drain(1100);
+      }
+      return host.synchronize_state(message.input_sequence, message.pressed_scan_codes,
+                                    message.pressed_mouse_buttons, 1100);
+    });
+    Peer::start(capture);
+    Peer::enqueue(capture, RemoteType::kKeyDown, static_cast<std::uint16_t>(modifier));
+    Peer::flush(capture);
+    Peer::enqueue(capture, RemoteType::kKeyDown, static_cast<std::uint16_t>(key));
+    Peer::enqueue(capture, RemoteType::kKeyUp, static_cast<std::uint16_t>(key));
+    Peer::enqueue(capture, RemoteType::kKeyUp, static_cast<std::uint16_t>(modifier));
+    Peer::synchronize(capture); // Physical keys are now all up.
+    Peer::flush(capture);
+    const auto& injected = backend.injected_events();
+    ASSERT_EQ(injected.size(), 4U);
+    EXPECT_EQ(injected[0].scan_code, modifier);
+    EXPECT_EQ(injected[1].scan_code, key);
+    EXPECT_EQ(injected[1].type, Type::kKeyDown);
+    EXPECT_EQ(injected[2].scan_code, key);
+    EXPECT_EQ(injected[3].scan_code, modifier);
+    EXPECT_EQ(injected[3].type, Type::kKeyUp);
+  }
+}
+
+TEST(ControllerRemoteInputOrdering, SnapshotDrainsAllBatchesAndStopsOnSendFailure) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  using Type = redclaw::protocol::RemoteInputEventTypeV1;
+  using MessageType = redclaw::protocol::StreamControlMessageTypeV1;
+  for (const bool fail : {false, true}) {
+    redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+    std::size_t events = 0, snapshots = 0;
+    capture.set_send_message_callback([&](const auto& message, QString*) {
+      if (message.type == MessageType::kInputBatch) {
+        events += message.input_events.size();
+        return !fail;
+      }
+      if (message.type == MessageType::kInputStateSync) {
+        ++snapshots;
+        EXPECT_EQ(events, 120U);
+      }
+      return true;
+    });
+    Peer::start(capture);
+    for (int i = 0; i < 60; ++i) {
+      Peer::enqueue(capture, Type::kKeyDown, 0x2e);
+      Peer::enqueue(capture, Type::kKeyUp, 0x2e);
+    }
+    Peer::synchronize(capture);
+    EXPECT_EQ(snapshots, fail ? 0U : 1U);
+    EXPECT_EQ(capture.active(), !fail);
+    EXPECT_EQ(capture.queued_critical_event_count(), 0U);
+  }
+}
+
+TEST(ClipboardShortcutState, RemoteCopyKeepsRemotePasteUntilLocalClipboardChanges) {
+  redclaw::ui::ClipboardShortcutState state;
+  EXPECT_TRUE(state.should_transfer_local_clipboard(12));
+  state.remote_copy(12);
+  EXPECT_FALSE(state.should_transfer_local_clipboard(12));
+  EXPECT_FALSE(state.should_transfer_local_clipboard(12)); // Multiple remote pastes.
+  EXPECT_TRUE(state.should_transfer_local_clipboard(13)); // New local copy wins.
+  state.remote_copy(13);
+  EXPECT_FALSE(state.should_transfer_local_clipboard(13));
+  state.reset();
+  EXPECT_TRUE(state.should_transfer_local_clipboard(13));
+}
 
 using redclaw::ui::ConnectionFlowEvent;
 using redclaw::ui::ConnectionFlowModel;

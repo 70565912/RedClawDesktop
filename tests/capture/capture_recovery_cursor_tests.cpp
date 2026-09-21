@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "redclaw/capture/capture_module.h"
 #include "redclaw/capture/capture_recovery.h"
 #include "redclaw/capture/capture_cursor.h"
 #include "redclaw/capture/capture_stream_gate.h"
@@ -10,6 +11,36 @@
 #include "capture_backend.h"
 #endif
 using namespace redclaw::capture;
+
+TEST(CaptureRegionSelection, FullDesktopUsesActualFrameAcrossInitialSizeAndRecovery) {
+    CaptureRegionSelection selection;
+    // Catalog dimensions may precede a display mode/DPI change or first frame.
+    const auto catalog = selection.resolve(1280, 720);
+    EXPECT_EQ(catalog.width, 1280U);
+    const auto first_frame = selection.resolve(1920, 1080);
+    EXPECT_EQ(first_frame.x, 0U); EXPECT_EQ(first_frame.y, 0U);
+    EXPECT_EQ(first_frame.width, 1920U); EXPECT_EQ(first_frame.height, 1080U);
+    const auto recovered = selection.resolve(2560, 1440);
+    EXPECT_EQ(recovered.width, 2560U); EXPECT_EQ(recovered.height, 1440U);
+    EXPECT_EQ(recovered.revision, selection.revision);
+}
+
+TEST(CaptureRegionSelection, ExplicitCropKeepsProportionsAndRollbackKeepsSelection) {
+    const CaptureRegionSelection selection{.left = 32768, .top = 0, .right = 65535,
+                                            .bottom = 65535, .revision = 7};
+    const auto lower_resolution = selection.resolve(1280, 720);
+    EXPECT_EQ(lower_resolution.x, 640U); EXPECT_EQ(lower_resolution.width, 640U);
+    const auto higher_resolution = selection.resolve(2560, 1440);
+    EXPECT_EQ(higher_resolution.x, 1280U); EXPECT_EQ(higher_resolution.width, 1280U);
+    EXPECT_EQ(higher_resolution.height, 1440U); EXPECT_EQ(higher_resolution.revision, 7U);
+    auto active = selection;
+    const auto rollback = active;
+    active = CaptureRegionSelection{.revision = 8};
+    EXPECT_EQ(active.resolve(2560, 1440).width, 2560U);
+    active = rollback;
+    EXPECT_EQ(active.resolve(2560, 1440).x, 1280U);
+    EXPECT_EQ(active.resolve(2560, 1440).revision, 7U);
+}
 
 TEST(CaptureDesktopProbe, AccessOnlyKeepsTheSamePermissionChecksWithoutEnumeratingDisplays) {
     const auto full = probe_capture_desktop();

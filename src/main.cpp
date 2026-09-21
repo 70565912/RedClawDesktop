@@ -2893,14 +2893,14 @@ int run_runtime_mode(
     std::uint32_t stream_requested_viewport_height = 0;
     std::vector<redclaw::capture::CaptureDisplayDescriptor> stream_capture_displays;
     std::optional<redclaw::capture::CaptureDisplayDescriptor> stream_selected_display;
-    redclaw::capture::CaptureRegion stream_active_capture_region;
+    redclaw::capture::CaptureRegionSelection stream_active_capture_region;
     std::optional<redclaw::protocol::StreamControlMessageV1>
         stream_pending_capture_region_request;
     std::optional<redclaw::protocol::StreamControlMessageV1>
         stream_capture_region_apply_pending;
     std::optional<redclaw::capture::CaptureDisplayDescriptor>
         stream_capture_region_rollback_display;
-    redclaw::capture::CaptureRegion stream_capture_region_rollback_region;
+    redclaw::capture::CaptureRegionSelection stream_capture_region_rollback_region;
     std::uint64_t stream_capture_region_revision = 1;
     std::uint64_t stream_navigation_catalog_revision = 1;
     std::uint64_t stream_navigation_thumbnail_revision = 0;
@@ -3511,10 +3511,6 @@ int run_runtime_mode(
             stream_selected_display = primary != stream_capture_displays.end()
                 ? *primary
                 : stream_capture_displays.front();
-            stream_active_capture_region = redclaw::capture::normalize_capture_region(
-                {},
-                stream_selected_display->pixel_width,
-                stream_selected_display->pixel_height);
         } else {
             append_timeline(
                 redclaw::render::RuntimeStatusSeverity::kWarning,
@@ -3933,7 +3929,7 @@ int run_runtime_mode(
         redclaw::capture::CaptureRegion active_region;
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
-            active_region = stream_active_capture_region;
+            active_region = stream_active_capture_region.resolve(geometry.width, geometry.height);
         }
         if (needs_position
             && !redclaw::input::map_normalized_capture_region_point(
@@ -5748,11 +5744,8 @@ int run_runtime_mode(
                         [](const auto& display) { return display.primary; });
                     stream_selected_display = primary != stream_capture_displays.end()
                         ? *primary : stream_capture_displays.front();
-                    stream_active_capture_region = redclaw::capture::normalize_capture_region(
-                        redclaw::capture::CaptureRegion{
-                            .revision = stream_capture_region_revision + 1},
-                        stream_selected_display->pixel_width,
-                        stream_selected_display->pixel_height);
+                    stream_active_capture_region = redclaw::capture::CaptureRegionSelection{
+                        .revision = stream_capture_region_revision + 1};
                     stream_capture_region_revision = stream_active_capture_region.revision;
                     if (stream_capture_started) {
                         stream_capture_session.stop();
@@ -5796,14 +5789,12 @@ int run_runtime_mode(
                 std::string rejected_error;
                 (void)send_control_message(rejected, &rejected_error);
             } else {
-                const auto region = redclaw::capture::capture_region_from_normalized_bounds(
-                    region_request->region_left,
-                    region_request->region_top,
-                    region_request->region_right,
-                    region_request->region_bottom,
-                    requested_display->pixel_width,
-                    requested_display->pixel_height,
-                    region_request->capture_region_revision);
+                const redclaw::capture::CaptureRegionSelection region{
+                    .left = region_request->region_left,
+                    .top = region_request->region_top,
+                    .right = region_request->region_right,
+                    .bottom = region_request->region_bottom,
+                    .revision = region_request->capture_region_revision};
                 const bool display_changed = !stream_selected_display.has_value()
                     || stream_selected_display->id != requested_display->id;
                 if (display_changed) {
@@ -6039,11 +6030,7 @@ int run_runtime_mode(
         redclaw::capture::CaptureRegion active_region;
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
-            active_region = redclaw::capture::normalize_capture_region(
-                stream_active_capture_region,
-                captured_width,
-                captured_height);
-            stream_active_capture_region = active_region;
+            active_region = stream_active_capture_region.resolve(captured_width, captured_height);
             stream_capture_region_revision = active_region.revision;
             if (stream_capture_region_apply_pending.has_value()) {
                 applied_region = std::move(stream_capture_region_apply_pending);

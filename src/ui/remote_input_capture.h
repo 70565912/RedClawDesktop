@@ -20,6 +20,7 @@
 
 #include "redclaw/protocol/stream_control_protocol.h"
 #include "input_ack_timing.h"
+#include "clipboard_shortcut_state.h"
 
 class QTimer;
 class QWidget;
@@ -108,6 +109,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    friend class ControllerRemoteInputCaptureTestPeer;
     static constexpr std::size_t kCriticalQueueCapacity = 256;
     std::array<std::uint64_t, 7> sent_event_counts_{};
 
@@ -141,6 +143,7 @@ private:
     BlockedClickCallback blocked_click_callback_;
     std::function<void(std::uint32_t)> clipboard_paste_callback_;
     bool suppressed_paste_key_ = false;
+    ClipboardShortcutState clipboard_shortcut_state_;
     QaSendObserver qa_send_observer_;
     QaAckObserver qa_ack_observer_;
     QSize remote_frame_size_;
