@@ -2588,6 +2588,23 @@ private:
             return ReceivePacketResult::kFailed;
         }
 
+        if (packet->payload_limit_bytes != 0
+            && static_cast<std::size_t>(packet_->size) > packet->payload_limit_bytes) {
+            (void)consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
+            av_packet_unref(packet_);
+            ++diagnostics_.dropped_frame_count;
+            keyframe_requested_.store(true); // The rejected reference was never sent.
+            fail(EncoderExecutionFailureCategory::kOutputResourceLimit,
+                "encoded payload exceeds reserved sender memory (resource limited)", error_detail);
+            return ReceivePacketResult::kFailed;
+        }
+        if (packet->payload_limit_bytes != 0
+            && static_cast<std::size_t>(packet_->size) > packet->payload.capacity()) {
+            // Free before growth: vector's geometric reallocation could exceed
+            // the reserved single-frame bound, even with a legal output size.
+            std::vector<std::uint8_t>().swap(packet->payload);
+            packet->payload.reserve(static_cast<std::size_t>(packet_->size));
+        }
         packet->codec = profile_.codec;
         packet->keyframe = packet_contains_keyframe(profile_.codec, packet_);
         packet->timestamp_ms = consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
@@ -2725,6 +2742,19 @@ private:
             av_opt_set(context_->priv_data, "rc-lookahead", "0", 0);
         }
         const bool supports_nvenc_tuning = selected_encoder_name_ == "h264_nvenc" || selected_encoder_name_ == "hevc_nvenc";
+        if (supports_nvenc_tuning) {
+            // AV_PICTURE_TYPE_I alone permits a non-IDR intra frame in NVENC.
+            // Recovery requests must sever old references, independently of tuning.
+            std::int64_t forced_idr = 0;
+            if (context_->priv_data == nullptr
+                || av_opt_set_int(context_->priv_data, "forced-idr", 1, 0) < 0
+                || av_opt_get_int(context_->priv_data, "forced-idr", 0, &forced_idr) < 0
+                || forced_idr != 1) {
+                stop_runtime_context_only();
+                return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
+                    "NVENC forced IDR option could not be applied", error_detail);
+            }
+        }
         if (profile_.zero_latency_tuning && supports_nvenc_tuning && context_->priv_data != nullptr) {
             av_opt_set(context_->priv_data, "preset", "p1", 0);
             av_opt_set(context_->priv_data, "tune", "ull", 0);

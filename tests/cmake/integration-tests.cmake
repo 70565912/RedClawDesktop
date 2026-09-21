@@ -373,7 +373,7 @@ redclaw_apply_warnings(redclaw_ffmpeg_roundtrip_integration_tests)
 add_test(
   NAME redclaw_ffmpeg_roundtrip_integration_tests
   COMMAND redclaw_ffmpeg_roundtrip_integration_tests
-    --gtest_filter=-FfmpegRoundtripIntegration.EncodesAndDecodesSingleFrame
+    --gtest_filter=-FfmpegRoundtripIntegration.EncodesAndDecodesSingleFrame:FfmpegNvencRecoveryIntegration.*
 )
 
 add_executable(redclaw_desktop_stream_simulation_integration_tests

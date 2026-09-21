@@ -262,13 +262,13 @@ TEST(MediaTransportTiming, ConstantClockOffsetDoesNotCreateQueueInEitherDirectio
     }
 }
 
-TEST(MediaTransportTiming, ClockRateCharacterizationReproducesFalseQueueWithoutNetworkGrowth) {
-    // Characterization of the unchanged algorithm, NOT an assertion that skew
-    // has been fixed or measured on the connected machines. Virtual time only.
+TEST(MediaTransportTiming, LongSessionClockRateDoesNotCreateCongestionOrDisableRecovery) {
+    // The former lifetime minimum produced 287 ms false queue at +30 ppm.
+    // Virtual elapsed time, no sleep, desktop, network or peer required.
     constexpr std::uint64_t kSendBaseUs = 4000000000000ULL;
     constexpr std::uint64_t kReceiveBaseUs = 9000000000000ULL;
     constexpr std::uint64_t kDurationUs = 9600000000ULL; // 160 minutes.
-    for (const std::int64_t skew_ppm : {0, 30, -30}) {
+    for (const std::int64_t skew_ppm : {0, 30, -30, 100, -100}) {
         SCOPED_TRACE(skew_ppm);
         MediaTransportEstimator estimator;
         std::uint64_t sequence = 0;
@@ -290,27 +290,36 @@ TEST(MediaTransportTiming, ClockRateCharacterizationReproducesFalseQueueWithoutN
         EXPECT_TRUE(estimate.feedback_fresh);
         EXPECT_EQ(sample->queue_delay_ms, estimate.queue_delay_ms);
         EXPECT_DOUBLE_EQ(sample->relative_transit_us, static_cast<double>(skew_ppm) * 9600.0);
-        if (skew_ppm > 0) {
-            EXPECT_GE(estimate.queue_delay_ms, 287U);
-            EXPECT_LE(estimate.queue_delay_ms, 288U);
-            MediaCongestionController controller;
-            MediaCongestionSample congestion;
-            congestion.now_steady_ms = (kSendBaseUs + kDurationUs + 50000) / 1000;
-            congestion.encoder_target_bitrate_kbps = 20000;
-            congestion.transport = estimate;
-            congestion.rtt_fresh = true;
-            congestion.rtt_sample_id = 1;
-            congestion.smoothed_rtt_ms = 10;
-            const auto decision = controller.update(congestion);
-            EXPECT_TRUE(decision.backoff);
-            EXPECT_TRUE(decision.reduce_fps);
-            EXPECT_EQ(decision.pressure, MediaNetworkPressure::kSevere);
-        } else {
-            EXPECT_EQ(estimate.queue_delay_ms, 0U);
-        }
-        std::cout << "clock_characterization skew_ppm=" << skew_ppm
+        EXPECT_LT(estimate.queue_delay_ms, 20U);
+        EXPECT_TRUE(sample->clock_rate_ready);
+        EXPECT_NEAR(sample->clock_rate_ppm, static_cast<double>(skew_ppm), 10.0);
+        MediaCongestionController controller;
+        MediaCongestionSample congestion;
+        congestion.now_steady_ms = (kSendBaseUs + kDurationUs + 50000) / 1000;
+        congestion.encoder_target_bitrate_kbps = 20000;
+        congestion.rtt_fresh = true;
+        congestion.rtt_sample_id = 1;
+        congestion.smoothed_rtt_ms = 10;
+        congestion.demand = {.pending_bytes = 512 * 1024, .target_fps = 30, .token_limited = true};
+        congestion.local_backpressure = true;
+        const auto lower = controller.update(congestion);
+        ASSERT_TRUE(lower.backoff);
+        congestion.local_backpressure = false;
+        congestion.transport = estimate;
+        congestion.media_channel_open = true;
+        auto decision = controller.update(congestion);
+        EXPECT_FALSE(decision.backoff);
+        EXPECT_FALSE(decision.reduce_fps);
+        EXPECT_EQ(decision.pressure, MediaNetworkPressure::kStable);
+        congestion.now_steady_ms += 2100;
+        ++congestion.transport.feedback_sample_id;
+        ++congestion.rtt_sample_id;
+        decision = controller.update(congestion);
+        EXPECT_TRUE(decision.probe);
+        EXPECT_GT(decision.pacing_bitrate_kbps, lower.pacing_bitrate_kbps);
+        std::cout << "clock_compensation skew_ppm=" << skew_ppm
                   << " duration_s=9600 queue_ms=" << estimate.queue_delay_ms
-                  << " relative_us=" << sample->relative_transit_us << '\n';
+                  << " learned_ppm=" << sample->clock_rate_ppm << '\n';
     }
 }
 
@@ -332,6 +341,61 @@ TEST(MediaTransportTiming, GenuineDelayStepRemainsVisibleWithEitherClockRateSign
         EXPECT_GE(sample->queue_delay_ms, 249U);
         EXPECT_LE(sample->queue_delay_ms, 251U);
     }
+}
+
+TEST(MediaTransportTiming, LearnedClockDoesNotEraseSustainedQueueStepsOrKeepRecoveredQueue) {
+    for (const std::int64_t skew_ppm : {30, -30}) {
+        for (const std::uint64_t added_delay : {25000ULL, 80000ULL, 250000ULL}) {
+            SCOPED_TRACE(skew_ppm);
+            SCOPED_TRACE(added_delay);
+            MediaTransportEstimator estimator;
+            for (std::uint64_t second = 1; second <= 1200; ++second) {
+                const auto elapsed = second * 1000000;
+                const auto delay = second >= 300 && second < 900 ? added_delay : 0;
+                const auto receiver = static_cast<std::uint64_t>(9000000000LL
+                    + static_cast<std::int64_t>(elapsed + delay)
+                    + static_cast<std::int64_t>(elapsed) * skew_ppm / 1000000);
+                ASSERT_TRUE(acknowledge_timing_packet(estimator, second,
+                    1000000 + elapsed, receiver / 1000 * 1000, second < 600 ? 1 : 2));
+                if (second == 500 || second == 850) {
+                    const auto sample = estimator.timing_snapshot();
+                    ASSERT_TRUE(sample.has_value());
+                    EXPECT_GE(sample->queue_delay_ms, added_delay / 1000 - 5);
+                    EXPECT_NEAR(sample->clock_rate_ppm, static_cast<double>(skew_ppm), 15.0);
+                    if (added_delay == 250000) {
+                        MediaCongestionController controller;
+                        MediaCongestionSample congestion;
+                        congestion.encoder_target_bitrate_kbps = 20000;
+                        congestion.transport = estimator.snapshot(1050000 + elapsed, 10);
+                        EXPECT_TRUE(controller.update(congestion).reduce_fps);
+                    }
+                }
+            }
+            EXPECT_LT(estimator.timing_snapshot()->queue_delay_ms, 10U);
+            estimator.reset();
+            ASSERT_TRUE(acknowledge_timing_packet(estimator, 1, 1000000, 9000000));
+            EXPECT_FALSE(estimator.timing_snapshot()->clock_rate_ready);
+            EXPECT_DOUBLE_EQ(estimator.timing_snapshot()->clock_rate_ppm, 0.0);
+        }
+    }
+}
+
+TEST(MediaTransportTiming, QuantizedBurstyArrivalsDoNotTrainAKeyframeBurstAsClockDrift) {
+    MediaTransportEstimator estimator;
+    for (std::uint64_t tick = 1; tick <= 18000; ++tick) {
+        const std::uint64_t elapsed = tick * 100000;
+        // Millisecond timestamp granularity and periodic 40 ms packet delay.
+        const auto delay = tick % 10 == 0 ? 40000 : (tick % 3) * 1000;
+        const auto arrival = (9000000000 + elapsed + elapsed * 30 / 1000000 + delay)
+            / 1000 * 1000;
+        ASSERT_TRUE(acknowledge_timing_packet(estimator, tick,
+            1000000 + elapsed, arrival));
+    }
+    const auto sample = estimator.timing_snapshot();
+    ASSERT_TRUE(sample.has_value());
+    EXPECT_TRUE(sample->clock_rate_ready);
+    EXPECT_NEAR(sample->clock_rate_ppm, 30.0, 20.0);
+    EXPECT_LT(sample->queue_delay_ms, 40U);
 }
 
 TEST(MediaTransportTiming, PeriodicLogIsNumericSingleLineAndFitsRemoteSnapshotChunk) {
