@@ -1,5 +1,6 @@
 #include "redclaw/workspace/terminal_runtime_bridge.h"
 #include <charconv>
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 
@@ -24,7 +25,7 @@ void TerminalRuntimeBridge::connect_gui_from_environment() {
 }
 void TerminalRuntimeBridge::peer_capability(std::uint32_t version, std::string epoch) {
     std::lock_guard lock(inbox_mutex_);
-    peer_version_ = kTerminalCapabilityVersion && version >= 1 ? 1 : 0;
+    peer_version_ = std::min(kTerminalCapabilityVersion, version);
     peer_epoch_ = std::move(epoch);
 }
 void TerminalRuntimeBridge::channel_open(bool open) {
@@ -37,10 +38,11 @@ bool TerminalRuntimeBridge::receive(std::string_view frame) {
     if (!parsed.ok) return false;
     const bool from_host = parsed.value.type == TerminalMessageTypeV1::kReady
         || parsed.value.type == TerminalMessageTypeV1::kState || parsed.value.type == TerminalMessageTypeV1::kOutput
-        || parsed.value.type == TerminalMessageTypeV1::kEnded;
+        || parsed.value.type == TerminalMessageTypeV1::kEnded || parsed.value.type == TerminalMessageTypeV1::kExecState;
     if (parsed.value.type == TerminalMessageTypeV1::kAvailability || from_host == host_role_) return false;
     std::lock_guard lock(inbox_mutex_);
     if (!open_ || !peer_version_ || overflow_) return false;
+    if (parsed.value.type >= TerminalMessageTypeV1::kExec && peer_version_ < 2) return false;
     if (inbox_.size() >= 8) { overflow_ = true; inbox_.clear(); return false; }
     inbox_.push_back(std::move(parsed.value));
     return true;
@@ -69,8 +71,19 @@ void TerminalRuntimeBridge::from_gui(std::string_view frame) {
     if (message.session_epoch != epoch_) return;
     if (message.type != TerminalMessageTypeV1::kOpen && message.type != TerminalMessageTypeV1::kInput
         && message.type != TerminalMessageTypeV1::kResize && message.type != TerminalMessageTypeV1::kOutputAck
-        && message.type != TerminalMessageTypeV1::kEnd) return;
-    if (message.type != TerminalMessageTypeV1::kOutputAck && message.type != TerminalMessageTypeV1::kEnd && !input_allowed_) return;
+        && message.type != TerminalMessageTypeV1::kEnd && message.type != TerminalMessageTypeV1::kExec
+        && message.type != TerminalMessageTypeV1::kCancel) return;
+    { std::lock_guard lock(inbox_mutex_); if (message.type >= TerminalMessageTypeV1::kExec && peer_version_ < 2) return; }
+    if (message.type != TerminalMessageTypeV1::kOutputAck && message.type != TerminalMessageTypeV1::kEnd
+        && message.type != TerminalMessageTypeV1::kCancel && !input_allowed_) {
+        if (message.type == TerminalMessageTypeV1::kExec) {
+            auto rejected = message; rejected.type = TerminalMessageTypeV1::kExecState;
+            rejected.bytes.clear(); rejected.execution_state = "rejected";
+            rejected.error_code = "terminal_input_unavailable"; rejected.input_sequence = message.sequence - 1;
+            (void)gui_.send(protocol::serialize_terminal_message_v1(rejected));
+        }
+        return;
+    }
     if (!send_peer(message)) {
         // An unacknowledged keystroke is never queued for a later connection.
         active_ = false; notified_ = false;
@@ -112,7 +125,7 @@ void TerminalRuntimeBridge::pump(std::uint64_t now, bool ready, bool allowed, st
         next_desktop_probe_ms_ = now + 500;
     }
     input_allowed_ = active_ && !local_paused && (!host_role_ || desktop_ok_);
-    if (host_role_) host_.set_connection(active_, input_allowed_);
+    if (host_role_) { host_.set_capability(version); host_.set_connection(active_, input_allowed_); }
     // Polling drains stale local input even while the network is unavailable.
     gui_.poll([this](auto frame) { from_gui(frame); });
     if (!host_role_ && gui_.writable()
@@ -122,6 +135,7 @@ void TerminalRuntimeBridge::pump(std::uint64_t now, bool ready, bool allowed, st
         status.type = TerminalMessageTypeV1::kAvailability;
         status.session_epoch = epoch_; status.input_enabled = active_;
         status.local_input_paused = local_paused;
+        status.capability_version = version;
         if (!active_) status.error_code = overflow ? "terminal_receive_overflow"
             : (ready && !version ? "terminal_peer_unsupported" : "terminal_connection_unavailable");
         if (gui_.send(protocol::serialize_terminal_message_v1(status))) {
@@ -141,7 +155,7 @@ void TerminalRuntimeBridge::pump(std::uint64_t now, bool ready, bool allowed, st
         if (message.session_epoch != epoch_) continue;
         if (host_role_) {
             if (message.type == TerminalMessageTypeV1::kOpen || message.type == TerminalMessageTypeV1::kInput
-                || message.type == TerminalMessageTypeV1::kResize) {
+                || message.type == TerminalMessageTypeV1::kResize || message.type == TerminalMessageTypeV1::kExec) {
                 desktop_ok_ = desktop_allowed_ && desktop_allowed_();
                 host_.set_connection(active_, allowed && desktop_ok_);
             }

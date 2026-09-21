@@ -5,6 +5,7 @@
 #include <memory>
 
 namespace redclaw::ui {
+class TransferCoordinator;
 class FileTransferPanel final : public QWidget {
 public:
     using Send = std::function<bool(const protocol::StreamControlMessageV1&, QString*)>;
@@ -16,6 +17,7 @@ public:
     void cancel_clipboard_paste();
     void set_busy_callback(std::function<void(bool)> callback);
     [[nodiscard]] bool busy() const;
+    TransferCoordinator& coordinator();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

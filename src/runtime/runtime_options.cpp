@@ -500,6 +500,15 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             ++i;
             continue;
         }
+        if (arg == "--enable-workspace-control") {
+            options->enable_workspace_control = true;
+            continue;
+        }
+        if (arg == "--workspace-control-name") {
+            if (i + 1 >= args.size()) { *error = "missing value for --workspace-control-name"; return false; }
+            options->workspace_control_name = args[++i];
+            continue;
+        }
         if (arg == "--gui-maintenance-resume") {
             if (i + 1 >= args.size()) { *error = "missing value for --gui-maintenance-resume"; return false; }
             ++i;

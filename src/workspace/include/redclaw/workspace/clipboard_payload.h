@@ -22,6 +22,8 @@ public:
     ~ClipboardSnapshot();
     bool capture(const std::filesystem::path& spool_directory, std::uint32_t expected_sequence,
         const std::atomic_bool& cancelled, std::string* error);
+    bool create(const std::filesystem::path& spool_directory, std::string_view descriptor,
+        const std::atomic_bool& cancelled, std::string* error);
     [[nodiscard]] const std::filesystem::path& metadata_directory() const;
     [[nodiscard]] std::span<const ClipboardFileSelection> files() const;
 private:
@@ -42,4 +44,6 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+using ClipboardCapture = std::function<bool(ClipboardSnapshot&, const std::filesystem::path&, std::uint32_t,
+    const std::atomic_bool&, std::string*)>;
 }

@@ -314,6 +314,19 @@ message WorkspaceControlV1 {
   uint32 clipboard_sequence = 21;
   bool paste_submitted = 22;
   uint64 created_at_ms = 23;
+  // Capability 3. 0 retains the original copy-and-paste operation.
+  uint32 clipboard_mode = 24;
+  // Owner-local source descriptor and result reference; rejected from peers.
+  bytes clipboard_source = 25;
+  string snapshot_path = 26;
+}
+
+message ClipboardSourceV1 {
+  uint32 schema_version = 1;
+  message Format { uint32 kind = 1; bytes data = 2; string file = 3; }
+  repeated Format formats = 2;
+  repeated string files = 3;
+  string snapshot_directory = 4;
 }
 
 // Owner-local result journal, not transmitted to the peer.
@@ -396,6 +409,14 @@ message TerminalMessageV1 {
   uint64 input_sequence = 13;
   bool local_input_paused = 14;
   string client_session_id = 15;
+  uint32 capability_version = 16;
+  string operation_id = 17;
+  string execution_state = 18;
+  uint64 output_position = 19;
+  bool prompt_ready = 20;
+  bool powershell_success = 21;
+  bool has_native_exit_code = 22;
+  int32 last_native_exit_code = 23;
 }
 
 // Bulk data/receipts only. Priority cancellation and session gating must travel

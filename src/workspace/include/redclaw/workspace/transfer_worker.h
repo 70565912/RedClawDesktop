@@ -34,6 +34,9 @@ struct TransferWorkerConfig {
     std::uint32_t clipboard_sequence = 0;
     ClipboardCopyAction copy_action = ClipboardCopyAction::kNone;
     std::string clipboard_batch_id;
+    std::string clipboard_source;
+    bool retain_clipboard_snapshot = false;
+    ClipboardCapture clipboard_capture;
 };
 // One operation owns one disk thread. Network callbacks enqueue bounded frames;
 // the runtime owner drains output and samples progress. No file operation runs

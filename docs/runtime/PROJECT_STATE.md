@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 ## Current release
 
@@ -9,6 +9,8 @@ RedClawDesktop [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
 ## Verified local baseline
+
+X00-T21 delivers an independent Debug candidate for the opt-in current-user workspace API. GUI and scripts share terminal, transfer and clipboard coordination over the existing P2P connection. The main build, 23 automatic suites (323 cases, zero skips, including runtime options), 23 actual API checks, both mixed-version directions and an old-to-candidate Host rolling upgrade passed. The existing user runtime was preserved. Clipboard tests used injected adapters; no actual application paste or GitHub Release binary publication was performed. See the [API contract and examples](../architecture/workspace-control-v1.md) and [qualification summary](../logs/DEVLOG.md#2026-09-21--workspace-control-api-x00-t21).
 
 X00-T19 corrects UPnP external endpoint advertisement without changing wire schemas or requiring a peer upgrade. The Debug main build and five focused local cases passed, including native ICE/control-message delivery through a differently numbered mapped port; one test-only Winsock initialization omission needed an isolated recheck. Physical peer connection is a separate live result, not implied by this local pass. The operator authorized commit/push and local Host deployment; generated run reports retain exact artifact and runtime identities.
 
@@ -54,7 +56,9 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-The latest operator request is the X00-T19 UPnP candidate fix, authorized GitHub push and staged local Host restart. Do not repeat the earlier input tests or full automated matrix. The peer reportedly probed the router-assigned external port successfully while the exchanged candidate used the internal port; use the fixed Host's local run report for subsequent DHT/ICE/media/Agent liveness, and do not treat that earlier peer probe as completed post-fix desktop acceptance.
+The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
+
+The remaining engineering follow-up is periodic video-stall diagnosis (`X00-T20`). Local passive tracing reproduces half-second gaps at every tenth encoded frame, all large keyframes, before decoding; current GUI dispatch/presentation does not explain them. Continue with Host encoding versus sender pacing/transport attribution, using the existing local diagnostic receipts and endpoint-owned results. No repair, deployment or restart is implied by this diagnostic checkpoint. See the [development log](../logs/DEVLOG.md#2026-09-20--periodic-keyframe-delivery-stall-x00-t20).
 
 Last observed runtime state (2026-09-20 input test): this machine was the `88a3803` Debug Controller, video connected and remote input paused after the temporary target disappeared. The pending request for the operator to type a digit was withdrawn. This is a recorded checkpoint, not a fresh liveness claim. No subsequent deployment, peer restart or role change is implied by the test-process reorganization.
 

@@ -110,6 +110,8 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/desktop_navigation_panel.cpp
     ui/desktop_task_workspace.cpp
     ui/file_transfer_panel.cpp
+    ui/transfer_coordinator.cpp
+    ui/workspace_control_server.cpp
     ui/file_transfer_results_dialog.cpp
     ui/clipboard_copies_dialog.cpp
     ui/runtime_maintenance_context.cpp
@@ -126,7 +128,7 @@ if (REDCLAW_QT_GUI_ENABLED)
   )
   target_include_directories(redclaw_ui_connection_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(redclaw_ui_connection_flow
-    PUBLIC Qt6::Widgets redclaw_protocol redclaw_diag
+    PUBLIC Qt6::Widgets Qt6::Network redclaw_protocol redclaw_diag
     PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace
   )
   if(WIN32)

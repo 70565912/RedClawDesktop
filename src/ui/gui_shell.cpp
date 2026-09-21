@@ -8,6 +8,11 @@
 
 #if defined(REDCLAW_ENABLE_QT_GUI)
 #include "ui/file_transfer_panel.h"
+#include "ui/transfer_coordinator.h"
+#include "ui/workspace_control_server.h"
+#ifdef _WIN32
+#include "ui/terminal/terminal_coordinator.h"
+#endif
 #include "ui/runtime_maintenance_context.h"
 #include "ui/gui_latency_probe.h"
 #include "ui/gui_diagnostic_writer.h"
@@ -422,6 +427,8 @@ struct GuiAutoStartOptions {
   QString log_dir;
   QString run_id;
   QString agent_control_name = "RedClawDesktop.AgentControl.v1";
+  QString workspace_control_name = "RedClawDesktop.WorkspaceControl.v1";
+  bool enable_workspace_control = false;
   QString coordination_journal_path;
   QString coordination_git_sha;
   QString debug_control_name = "RedClawDesktop.DebugControl.v1";
@@ -734,6 +741,15 @@ bool parse_gui_auto_start_options(
     }
     if (arg == "--enable-agent-control") {
       options->enable_agent_control = true;
+      continue;
+    }
+    if (arg == "--enable-workspace-control") {
+      options->enable_workspace_control = true;
+      continue;
+    }
+    if (arg == "--workspace-control-name") {
+      if (!require_value(&i, &value)) return false;
+      options->workspace_control_name = value.trimmed();
       continue;
     }
     if (arg == "--allow-remote-agent") {
@@ -2861,6 +2877,26 @@ bool launch_gui_shell(
   auto* file_transfer_panel = new FileTransferPanel(
       [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); });
   task_workspace->add_task(DesktopTask::kFiles, QString::fromUtf8("文件/剪贴板"), file_transfer_panel, QSize(640, 420));
+#ifdef _WIN32
+  if (gui_auto_start.enable_workspace_control) {
+    auto* workspace_control = new WorkspaceControlServer(
+        [terminal_panel, file_transfer_panel](const QString& method, const QJsonObject& params, const QString& id) {
+          if (method.startsWith("terminal.")) return terminal_panel->coordinator().invoke(method, params, id);
+          if (method.startsWith("operation.")) {
+            auto result = terminal_panel->coordinator().invoke(method, params, id);
+            if (result.value("error").toString() != "operation_not_found" && result.value("error").toString() != "operation_not_running") return result;
+          }
+          auto result = file_transfer_panel->coordinator().invoke(method, params, id);
+          if (method == "status" || method == "capabilities") result["terminal"] = terminal_panel->coordinator().invoke("terminal.status", {});
+          return result;
+        }, &window);
+    const auto observe = [workspace_control](const QString& id, const QJsonObject& state) { workspace_control->observe(id, state); };
+    terminal_panel->coordinator().event = observe; file_transfer_panel->coordinator().event = observe;
+    QString error;
+    if (!workspace_control->start(gui_auto_start.workspace_control_name, &error))
+      qWarning("workspace_control_listen_failed");
+  }
+#endif
   auto* agent_panel_presentation = new AgentPanelPresentation(agent_panel, &window);
   session_layout->addWidget(agent_panel_presentation->open_button());
   agent_panel->set_collapse_callback([agent_panel_presentation, task_workspace, role_combo]() {

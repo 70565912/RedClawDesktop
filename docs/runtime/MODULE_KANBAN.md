@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the combined `v0.1.3` Developer Preview; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -75,7 +75,9 @@ Updated: 2026-09-20
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-20
+Updated: 2026-09-21
+
+- `X00-T21` Shared local workspace control API — done; opt-in owner-user IPC and PowerShell client share GUI terminal/transfer state, bounded results and negotiated terminal 2 / clipboard 3 semantics. Debug build, 22 automatic suites plus runtime-options coverage, real API/file round trips, both mixed-version directions and online Host rolling upgrade passed. Independent candidate only; running user instance preserved. Concurrent-load display-rate reduction remains recorded for follow-up. See [contract and examples](../architecture/workspace-control-v1.md).
 
 Physical follow-up for `X00-T16` (2026-09-20): rebuilt/published Debug from `88a3803`; all 11 focused suites passed after three sandbox-sensitive normal-user reruns, with one opt-in paint case skipped. Public-DHT/ICE real H.264/D3D11 playback and one approved Cursor task passed. A target visibly consumed a GUI click and QA-protocol digit. Physical-keyboard capture, application paste and human-assisted workspace round trips are optional developer evaluations, not automatic follow-ups or release conditions. Source-derived capability versions still are not observed negotiation evidence. No peer restart/deployment occurred, and no full remote file/clipboard/terminal matrix is required.
 
@@ -100,6 +102,8 @@ Physical follow-up for `X00-T16` (2026-09-20): rebuilt/published Debug from `88a
 - `X00-T17` Automated-only test sequence and release policy — done; seven areas reuse 31 CTest targets with deduplication, guarded test-only builds, bounded serial runs and JSON/JUnit/case receipts. Twelve manual/native cases are excluded at CTest registration; three desktop probe targets remain developer-invoked only. The final affected 24-suite build/run passed with zero failures/skips. Self-regression checks selection, manual exclusions and result/exit classification. No app publication, role change or peer action. See [test matrix](../testing/test-matrix.md).
 - `X00-T18` Optional future native-fixture automation — planned, non-blocking; a developer may later make additional clipboard/input scenarios unattended and then register them as automatic cases. Current physical-key/application/foreground evaluations are the developer's choice, not mandatory work, automatic skips or release conditions.
 - `X00-T19` Publish actual UPnP external UDP endpoint to ICE — done; successful mappings produce an additional standard srflx candidate for the matching host socket in trickle/SDP, preserving native routes and existing wire compatibility. Debug main build and five focused candidate/SDP/native-channel cases passed (one Winsock fixture initialization correction and single-case recheck). No full matrix or release-version qualification was repeated. Authorized local Host delivery and live connection evidence remain in local run reports, distinct from peer-reported port-probe success.
+
+- `X00-T20` Periodic desktop-frame stall investigation — in-progress; passive Controller tracing reproduces a delivery gap at every tenth encoded frame, all large keyframes, before local decoding. Local GUI scheduling/presentation does not explain the half-second stalls. The diagnostic baseline is recorded; Host encoding versus sender pacing/transport attribution and any repair remain unverified. See the [investigation checkpoint](../logs/DEVLOG.md#2026-09-20--periodic-keyframe-delivery-stall-x00-t20). No runtime code, connection settings or running process was changed for diagnosis.
 
 ## Release gate
 

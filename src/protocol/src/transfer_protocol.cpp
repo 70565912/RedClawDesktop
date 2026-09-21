@@ -23,11 +23,17 @@ bool validate_workspace_control_v1(const WorkspaceControlV1& m, std::string* err
         return reject(error, "workspace_unknown_value");
     const bool clipboard = m.purpose == WorkspaceTransferPurposeV1::kClipboard;
     const bool copy_action = m.purpose == WorkspaceTransferPurposeV1::kClipboardCleanup || m.purpose == WorkspaceTransferPurposeV1::kClipboardOpenCopy;
-    if (((clipboard || copy_action) && m.direction != TransferDirectionV1::kToHost)
+    if ((clipboard && !m.clipboard_mode && m.direction != TransferDirectionV1::kToHost)
         || (m.clipboard_sequence && (!clipboard || m.action != WorkspaceActionV1::kPrepare))
         || (m.paste_submitted && (!clipboard || m.action != WorkspaceActionV1::kFinished))
         || (clipboard && m.action == WorkspaceActionV1::kPrepare && !m.path.empty()))
         return reject(error, "workspace_invalid_clipboard_fields");
+    if (m.clipboard_mode > 5 || (m.clipboard_mode && !clipboard)
+        || (!m.clipboard_source.empty() && (!clipboard || (m.clipboard_mode != 2 && m.clipboard_mode != 5) || m.action != WorkspaceActionV1::kPrepare))
+        || m.clipboard_source.size() > 48U * 1024U
+        || (!m.snapshot_path.empty() && (!clipboard || m.action != WorkspaceActionV1::kFinished))
+        || m.snapshot_path.size() > 32760 || m.snapshot_path.find('\0') != std::string::npos)
+        return reject(error, "workspace_invalid_clipboard_mode");
     if (copy_action && m.action == WorkspaceActionV1::kPrepare
         && (m.path.size() != 32 || !std::all_of(m.path.begin(), m.path.end(), [](char ch) {
             return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');

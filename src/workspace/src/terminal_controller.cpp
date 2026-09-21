@@ -40,11 +40,20 @@ void TerminalController::set_surface_input_paused(bool paused) {
     show_state(); pump();
 }
 void TerminalController::disconnected() {
+    if (!execution_id_.empty()) {
+        auto message = command(TerminalMessageTypeV1::kExecState); message.operation_id = execution_id_;
+        message.execution_state = "unknown"; message.error_code = "terminal_connection_lost";
+        if (surface_.execution) surface_.execution(message);
+        execution_id_.clear();
+    }
+    prompt_ready_ = false;
     available_ = enabled_ = opened_ = false; discard_input(); show_state("terminal_connection_unavailable");
 }
 bool TerminalController::receive(const Message& message) {
     if (!protocol::validate_terminal_message_v1(message)) return false;
     if (message.type == TerminalMessageTypeV1::kAvailability) {
+        if (!message.input_enabled || (!epoch_.empty() && epoch_ != message.session_epoch)) disconnected();
+        capability_version_ = message.capability_version;
         if (epoch_ != message.session_epoch || available_ != message.input_enabled) {
             enabled_ = opened_ = false; discard_input();
         }
@@ -55,6 +64,17 @@ bool TerminalController::receive(const Message& message) {
         show_state(message.error_code); pump(); return true;
     }
     if (!available_ || message.session_epoch != epoch_) return false;
+    if (message.type == TerminalMessageTypeV1::kExecState) {
+        if (id_ != message.terminal_id || message.operation_id != execution_id_) return false;
+        if (surface_.execution) surface_.execution(message);
+        if (message.execution_state != "running" && message.execution_state != "output"
+            && message.execution_state != "cancelling") execution_id_.clear();
+        if (message.execution_state == "rejected") {
+            input_in_flight_ = 0; input_sequence_ = message.input_sequence;
+            input_generation_ = message.input_generation;
+        }
+        show_state(); return true;
+    }
     if (message.type == TerminalMessageTypeV1::kEnded) {
         if (!ending_ || message.client_session_id != client_session_id_
             || (!id_.empty() && message.terminal_id != id_)) return false;
@@ -75,8 +95,9 @@ bool TerminalController::receive(const Message& message) {
         if (!input_in_flight_) input_sequence_ = message.input_sequence;
         else if (message.input_sequence >= input_in_flight_) { input_in_flight_ = 0; input_sequence_ = message.input_sequence; }
         enabled_ = message.input_enabled && !message.exited && message.error_code.empty();
+        prompt_ready_ = message.prompt_ready;
         if (!enabled_) discard_input();
-        resize_pending_ = true;
+        if (message.type == TerminalMessageTypeV1::kReady) resize_pending_ = true;
         show_state(message.exited && message.error_code.empty() ? "terminal_process_exited" : message.error_code);
         pump(); return true;
     }
@@ -88,10 +109,26 @@ bool TerminalController::receive(const Message& message) {
 }
 bool TerminalController::input(std::string_view bytes) {
     if (!input_enabled() || bytes.empty()) return false;
+    if (!execution_id_.empty()) return bytes == "\x03" && cancel_execution();
+    prompt_ready_ = false;
     if (pending_input_.size() + bytes.size() > 64U * 1024U) {
         show_state("terminal_input_backpressure"); return false;
     }
     pending_input_.append(bytes); pump(); return true;
+}
+bool TerminalController::execute(std::string id, std::string_view bytes) {
+    if (capability_version_ < 2 || !input_enabled() || !prompt_ready() || bytes.empty()
+        || bytes.size() > protocol::kMaxTerminalChunkBytes) return false;
+    auto message = command(TerminalMessageTypeV1::kExec); message.operation_id = id;
+    message.sequence = input_sequence_ + 1; message.bytes = bytes;
+    if (!protocol::validate_terminal_message_v1(message) || !send_ || !send_(message)) return false;
+    execution_id_ = std::move(id); prompt_ready_ = false;
+    input_sequence_ = input_in_flight_ = message.sequence; show_state(); return true;
+}
+bool TerminalController::cancel_execution() {
+    if (execution_id_.empty() || !available_ || !send_) return false;
+    auto message = command(TerminalMessageTypeV1::kCancel); message.operation_id = execution_id_;
+    return send_(message);
 }
 void TerminalController::resize(std::uint32_t columns, std::uint32_t rows) {
     if (columns < 2 || columns > 32767 || rows < 2 || rows > 32767) return;
@@ -134,7 +171,7 @@ void TerminalController::pump() {
         pending_input_.erase(0, message.bytes.size());
         input_in_flight_ = message.sequence; input_sequence_ = message.sequence;
     }
-    if (resize_pending_) {
+    if (resize_pending_ && execution_id_.empty()) {
         auto message = command(TerminalMessageTypeV1::kResize); message.columns = columns_; message.rows = rows_;
         if (send_(message)) resize_pending_ = false;
     }

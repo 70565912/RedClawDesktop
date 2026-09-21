@@ -11,6 +11,7 @@ public:
         std::function<void(std::string_view)> reset;
         std::function<bool(std::string_view)> output;
         std::function<void(bool, std::string_view)> state;
+        std::function<void(const Message&)> execution;
     };
     TerminalController(std::function<bool(const Message&)> send, Surface surface);
     void request_open();
@@ -22,11 +23,17 @@ public:
     void disconnected();
     bool receive(const Message& message);
     bool input(std::string_view bytes);
+    bool execute(std::string id, std::string_view bytes);
+    bool cancel_execution();
+    [[nodiscard]] bool prompt_ready() const { return prompt_ready_ && pending_input_.empty() && !input_in_flight_ && execution_id_.empty(); }
+    [[nodiscard]] std::uint32_t capability_version() const { return capability_version_; }
+    [[nodiscard]] std::string_view execution_id() const { return execution_id_; }
     void resize(std::uint32_t columns, std::uint32_t rows);
     void surface_ready(bool ready);
     void output_parsed();
     void pump();
     [[nodiscard]] bool input_enabled() const;
+    [[nodiscard]] bool input_paused() const { return local_input_paused_ || surface_input_paused_; }
     [[nodiscard]] std::size_t pending_input_bytes() const;
     [[nodiscard]] std::string_view terminal_id() const;
 private:
@@ -47,5 +54,8 @@ private:
     bool ending_ = false, end_sent_ = false, end_acknowledged_ = false;
     bool end_wait_expired_ = false;
     bool end_required_ = false;
+    bool prompt_ready_ = false;
+    std::uint32_t capability_version_ = 0;
+    std::string execution_id_;
 };
 }

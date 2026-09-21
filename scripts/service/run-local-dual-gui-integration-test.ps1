@@ -17,6 +17,9 @@ param(
 
     [string]$ControllerRuntimeExe = '',
 
+    # Optional independent candidate used only for the owned Host restart.
+    [string]$HostRestartRuntimeExe = '',
+
     [ValidateRange(1024, 65535)]
     [int]$HostIceUdpPort = 55000,
 
@@ -53,6 +56,10 @@ param(
     [switch]$AgentFixtureProvider,
 
     [switch]$NativeSizeBaseline,
+
+    [switch]$EnableWorkspaceControl,
+
+    [switch]$ShowWindows,
 
     [ValidateRange(0, 5)]
     [int]$HostRestartCount = 0,
@@ -198,6 +205,9 @@ function Get-IntegrationArgumentList {
         '--debug-control-name', $ControlName
     )
 
+    if ($EnableWorkspaceControl -and $Role -eq 'controller') {
+        $arguments += @('--enable-workspace-control', '--workspace-control-name', ("{0}.Workspace" -f $ControlName))
+    }
     foreach ($server in $script:CrossLanIntegrationIceServers) {
         $arguments += @('--ice-server', $server)
     }
@@ -808,6 +818,9 @@ if ($ForceRequiredChannelClose -ne 'none' -and $SignalTransport -ne 'dht') {
 if ($HostRestartCount -gt 0 -and $SignalTransport -ne 'dht') {
     throw 'HostRestartCount requires SignalTransport dht.'
 }
+if ($HostRestartRuntimeExe -and $HostRestartCount -eq 0) {
+    throw 'HostRestartRuntimeExe requires HostRestartCount.'
+}
 
 $runId = Get-RunId
 $reportRootAbsolute = if ([System.IO.Path]::IsPathRooted($ReportRoot)) {
@@ -871,6 +884,7 @@ $runtimePath = (Resolve-Path -LiteralPath $RuntimeExe).Path
 $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $hostRuntimePath = if ($HostRuntimeExe) { (Resolve-Path -LiteralPath $HostRuntimeExe).Path } else { $runtimePath }
 $controllerRuntimePath = if ($ControllerRuntimeExe) { (Resolve-Path -LiteralPath $ControllerRuntimeExe).Path } else { $runtimePath }
+$hostRestartRuntimePath = if ($HostRestartRuntimeExe) { (Resolve-Path -LiteralPath $HostRestartRuntimeExe).Path } else { $hostRuntimePath }
 
 $hostProc = $null
 $controllerProc = $null
@@ -902,7 +916,7 @@ try {
     Write-Host '[local-dual-gui-test] starting Host GUI'
     $hostProc = Start-Process -FilePath $hostRuntimePath -ArgumentList $hostArgs `
         -RedirectStandardOutput $hostOutLog -RedirectStandardError $hostErrLog `
-        -PassThru -WindowStyle Normal
+        -PassThru -WindowStyle $(if ($ShowWindows) { 'Normal' } else { 'Hidden' })
 
     Write-Host "[local-dual-gui-test] waiting ${HostLeadSeconds}s for Host signaling readiness"
     $hostLeadDeadline = [DateTimeOffset]::UtcNow.AddSeconds($HostLeadSeconds)
@@ -922,7 +936,7 @@ try {
     Write-Host '[local-dual-gui-test] starting Controller GUI'
     $controllerProc = Start-Process -FilePath $controllerRuntimePath -ArgumentList $controllerArgs `
         -RedirectStandardOutput $controllerOutLog -RedirectStandardError $controllerErrLog `
-        -PassThru -WindowStyle Normal
+        -PassThru -WindowStyle $(if ($ShowWindows) { 'Normal' } else { 'Hidden' })
 
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($RunSeconds)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
@@ -1021,9 +1035,9 @@ try {
                     -Role host -RoleDirectory $restartDirectory `
                     -SignalDirectory $restartSignalDirectory `
                     -ControlName $hostControlName -CurrentRunId $restartRunId
-                $hostProc = Start-Process -FilePath $hostRuntimePath -ArgumentList $hostArgs `
+                $hostProc = Start-Process -FilePath $hostRestartRuntimePath -ArgumentList $hostArgs `
                     -RedirectStandardOutput $hostOutLog -RedirectStandardError $hostErrLog `
-                    -PassThru -WindowStyle Normal
+                    -PassThru -WindowStyle $(if ($ShowWindows) { 'Normal' } else { 'Hidden' })
                 Write-Host ("[local-dual-gui-test] started Host restart {0}/{1} old_pid={2} new_pid={3}" -f `
                     $restartIndex, $HostRestartCount, $oldHostPid, $hostProc.Id)
 
@@ -1140,6 +1154,7 @@ try {
                     restart_index = $restartIndex
                     old_host_pid = $oldHostPid
                     new_host_pid = $hostProc.Id
+                    runtime_sha256 = (Get-FileHash -LiteralPath $hostRestartRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
                     controller_gui_pid = $controllerProc.Id
                     controller_runtime_pid = $restartControllerRuntimePid
                     discovery_seconds = $(if ($null -eq $restartAdoptedAt) {
@@ -1239,6 +1254,7 @@ $result = [ordered]@{
     runtime_sha256 = $runtimeHash
     host_runtime_path = $hostRuntimePath
     host_runtime_sha256 = (Get-FileHash -LiteralPath $hostRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    host_restart_runtime_path = $hostRestartRuntimePath
     controller_runtime_path = $controllerRuntimePath
     controller_runtime_sha256 = (Get-FileHash -LiteralPath $controllerRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
     signal_transport = $SignalTransport

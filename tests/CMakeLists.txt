@@ -72,6 +72,25 @@ target_link_libraries(redclaw_transfer_runtime_integration_tests PRIVATE redclaw
 redclaw_apply_warnings(redclaw_transfer_runtime_integration_tests)
 add_test(NAME redclaw_transfer_runtime_integration_tests COMMAND redclaw_transfer_runtime_integration_tests)
 
+if(TARGET redclaw_ui_terminal)
+  add_executable(redclaw_workspace_control_integration_tests ui/workspace_control_tests.cpp workspace/workspace_clipboard_control_tests.cpp)
+  target_link_libraries(redclaw_workspace_control_integration_tests PRIVATE redclaw_ui_terminal redclaw_ui_connection_flow
+    redclaw_workspace Qt6::Network GTest::gtest)
+  redclaw_apply_warnings(redclaw_workspace_control_integration_tests)
+  add_test(NAME redclaw_workspace_control_integration_tests COMMAND redclaw_workspace_control_integration_tests)
+  set_tests_properties(redclaw_workspace_control_integration_tests PROPERTIES TIMEOUT 90)
+  add_custom_command(TARGET redclaw_workspace_control_integration_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:redclaw_workspace_control_integration_tests>/maintenance"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PROJECT_SOURCE_DIR}/scripts/service/terminal-profile.ps1"
+      "$<TARGET_FILE_DIR:redclaw_workspace_control_integration_tests>/maintenance/terminal-profile.ps1")
+  if(TARGET Qt6::qmake)
+    get_target_property(workspace_qmake Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(workspace_qt_bin "${workspace_qmake}" DIRECTORY)
+    add_custom_command(TARGET redclaw_workspace_control_integration_tests POST_BUILD
+      COMMAND "${workspace_qt_bin}/windeployqt.exe" --no-translations --no-compiler-runtime $<TARGET_FILE:redclaw_workspace_control_integration_tests>)
+  endif()
+endif()
+
 get_property(redclaw_tests_registered_names DIRECTORY PROPERTY TESTS)
 
 set(redclaw_tests_executable_targets "")

@@ -6,7 +6,7 @@
 
 namespace redclaw::workspace {
 #ifdef _WIN32
-inline constexpr std::uint32_t kTerminalCapabilityVersion = 1;
+inline constexpr std::uint32_t kTerminalCapabilityVersion = 2;
 #else
 inline constexpr std::uint32_t kTerminalCapabilityVersion = 0;
 #endif

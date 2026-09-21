@@ -27,7 +27,8 @@ function Get-LocalValidationPlan {
             'redclaw_transfer_file_receiver_tests', 'redclaw_transfer_operation_gate_tests',
             'redclaw_transfer_worker_integration_tests', 'redclaw_transfer_runtime_integration_tests',
             'redclaw_clipboard_paste_guard_tests', 'redclaw_clipboard_payload_integration_tests',
-            'redclaw_clipboard_copy_store_integration_tests', 'redclaw_terminal_session_integration_tests')
+            'redclaw_clipboard_copy_store_integration_tests', 'redclaw_terminal_session_integration_tests',
+            'redclaw_workspace_control_integration_tests')
         agent = @('redclaw_protocol_agent_protocol_tests', 'redclaw_agent_peer_session_tests',
             'redclaw_agent_remote_agent_broker_tests', 'redclaw_agent_coordination_tests',
             'redclaw_agent_provider_tests')
