@@ -730,8 +730,16 @@ struct DesktopMediaSendPacer::Impl {
                 active_capacity = 0;
                 if (generation == frame_generation && !telemetry.congested
                     && telemetry.frames_sent > frames_sent_before) {
-                    (frame.keyframe ? key_service : normal_service).add(
-                        static_cast<double>(steady_now_us() - started_us));
+                    const auto service_us = static_cast<double>(steady_now_us() - started_us);
+                    if (frame.keyframe) {
+                        key_service.add(service_us);
+                    } else if (!telemetry.frame_token_limited) {
+                        // A token-paced frame measures the selected network
+                        // rate, not local scheduling jitter. Learning that wait
+                        // as normal service would expand the FIFO precisely
+                        // while the sender needs latest-frame backpressure.
+                        normal_service.add(service_us);
+                    }
                 }
                 recycle(std::move(frame.payload));
                 refresh_queue();

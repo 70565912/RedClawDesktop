@@ -221,6 +221,59 @@ TEST(AdaptivePacing, KeyframeHistoryAndReceiverEchoDoNotBuildLatency) {
     EXPECT_LT(elapsed, 500ms);
 }
 
+TEST(AdaptivePacing, TokenLimitedServiceDoesNotExpandFrameQueue) {
+    using namespace std::chrono_literals;
+    DesktopMediaSendPacer pacer;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::atomic<std::uint64_t> sent{0};
+    ASSERT_TRUE(pacer.start(
+        [](std::span<const std::uint8_t>) {
+            return MediaPacerSendResult{.accepted = true};
+        },
+        [] { return MediaPacerTransportState{.open = true}; },
+        [](const SentMediaTransportPacket&) {},
+        [&](const MediaPacerFrameEvent& event) {
+            if (event.type == MediaPacerFrameEventType::kSent) ++sent;
+            ready.notify_all();
+        },
+        [&] { ready.notify_all(); }));
+    MediaCongestionDecision policy;
+    policy.decision_revision = 1;
+    policy.pacing_bitrate_kbps = 1500;
+    policy.in_flight_limit_bytes = 512 * 1024;
+    policy.feedback_horizon_us = 100000;
+    pacer.update_policy(policy, 10, 0);
+    const auto make_frame = [](std::uint64_t id, bool keyframe, std::size_t bytes) {
+        PacedEncodedVideoFrame frame;
+        frame.frame_id = id;
+        frame.rate_revision = 1;
+        frame.codec = 1;
+        frame.width = 640;
+        frame.height = 360;
+        frame.target_fps = 30;
+        frame.target_bitrate_kbps = 3806;
+        frame.keyframe = keyframe;
+        frame.payload.assign(bytes, static_cast<std::uint8_t>(id));
+        return frame;
+    };
+    ASSERT_TRUE(pacer.submit(make_frame(1, true, 1000)));
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 1s, [&] { return sent.load() == 1; }));
+    }
+    ASSERT_TRUE(pacer.submit(make_frame(2, false, 64 * 1024)));
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return sent.load() == 2; }));
+    }
+    const auto telemetry = pacer.telemetry();
+    pacer.stop();
+    EXPECT_TRUE(telemetry.frame_token_limited);
+    EXPECT_EQ(telemetry.queue_target_frames, 1U);
+    EXPECT_LE(telemetry.queue_target_us, 50000U);
+}
+
 TEST(AdaptiveController, NoDemandOrUnrelatedAcknowledgementCannotConfirmProbe) {
     MediaCongestionController controller;
     MediaCongestionSample s;
@@ -376,6 +429,54 @@ TEST(AdaptiveController, MediaEventsDoNotReplayAnOldRttOrLocalPressureObservatio
             EXPECT_EQ(decision.backoff_count, 1U);
         }
     }
+}
+
+TEST(AdaptiveController, UncertainForwardQueueCannotCascadeRateCollapse) {
+    MediaCongestionController controller;
+    MediaCongestionSample s;
+    s.encoder_target_bitrate_kbps = 8000;
+    s.media_channel_open = s.rtt_fresh = true;
+    s.smoothed_rtt_ms = 10;
+    s.demand = {.pending_bytes = 512 * 1024, .target_fps = 30, .token_limited = true};
+    s.transport.feedback_fresh = s.transport.delivery_rate_valid = true;
+    s.transport.application_limited = false;
+    s.transport.delivery_bitrate_kbps = 8000;
+    s.transport.feedback_interval_us = s.transport.feedback_round_trip_us = 100000;
+    s.now_steady_ms = 1000;
+    s.transport.feedback_sample_id = 1;
+    ASSERT_FALSE(controller.update(s).backoff);
+
+    s.transport.queue_delay_ms = 200;
+    s.transport.delivery_bitrate_kbps = 4000;
+    s.now_steady_ms += 200;
+    ++s.transport.feedback_sample_id;
+    EXPECT_FALSE(controller.update(s).backoff);
+    s.now_steady_ms += 200;
+    ++s.transport.feedback_sample_id;
+    const auto drained = controller.update(s);
+    ASSERT_TRUE(drained.backoff);
+    ASSERT_EQ(drained.backoff_count, 1U);
+    ASSERT_LT(drained.pacing_bitrate_kbps, 8000U);
+
+    for (unsigned i = 0; i < 12; ++i) {
+        s.now_steady_ms += 500;
+        ++s.transport.feedback_sample_id;
+        if (i >= 3) {
+            s.transport.delivery_rate_valid = false;
+            s.transport.delivery_bitrate_kbps = 0;
+        }
+        const auto repeated = controller.update(s);
+        EXPECT_FALSE(repeated.backoff);
+        EXPECT_EQ(repeated.backoff_count, 1U);
+        EXPECT_EQ(repeated.pacing_bitrate_kbps, drained.pacing_bitrate_kbps);
+    }
+
+    s.transport.queue_delay_ms = 0;
+    s.transport.delivery_rate_valid = true;
+    s.transport.delivery_bitrate_kbps = drained.pacing_bitrate_kbps;
+    s.now_steady_ms += 500;
+    ++s.transport.feedback_sample_id;
+    EXPECT_FALSE(controller.update(s).backoff);
 }
 
 }  // namespace

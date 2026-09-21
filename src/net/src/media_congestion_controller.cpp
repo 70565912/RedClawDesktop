@@ -65,9 +65,11 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
     const auto noise_us = static_cast<std::uint64_t>(queue_noise_.quantile(0.95));
     if (queue_allowance_us_ == 0) queue_allowance_us_ = std::max(frame_us, packet_us);
     const auto allowance = queue_allowance_us_;
-    const auto queue_us = std::max<std::uint64_t>(
-        t.feedback_fresh ? static_cast<std::uint64_t>(t.queue_delay_ms) * 1000ULL : 0,
-        sample.rtt_fresh ? static_cast<std::uint64_t>(sample.rtt_queue_delay_ms) * 1000ULL : 0);
+    const auto media_queue_us = t.feedback_fresh
+        ? static_cast<std::uint64_t>(t.queue_delay_ms) * 1000ULL : 0;
+    const auto rtt_queue_us = sample.rtt_fresh
+        ? static_cast<std::uint64_t>(sample.rtt_queue_delay_ms) * 1000ULL : 0;
+    const auto queue_us = std::max(media_queue_us, rtt_queue_us);
     const bool usable_rate = t.feedback_fresh && t.delivery_rate_valid && !t.application_limited;
     if (new_feedback && usable_rate) delivery_samples_.add(t.delivery_bitrate_kbps);
     const auto variation = std::max(0.0,
@@ -80,8 +82,16 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
         && t.delivery_bitrate_kbps + variation < confirmed_rate_kbps_;
     const bool pressure = sample.local_backpressure || queue_us > allowance || sustained_loss;
     const bool severe = sample.local_backpressure || queue_us > allowance * 2;
-    if (new_rtt) rtt_pressure_rounds_ = queue_us > allowance
+    if (new_feedback) {
+        media_queue_pressure_rounds_ = usable_rate && media_queue_us > allowance
+            ? std::min<std::uint32_t>(2, media_queue_pressure_rounds_ + 1) : 0;
+    }
+    if (new_rtt) rtt_pressure_rounds_ = rtt_queue_us > allowance
         ? std::min<std::uint32_t>(2, rtt_pressure_rounds_ + 1) : 0;
+    const bool delivery_pressure = usable_rate
+        && t.delivery_bitrate_kbps + variation < confirmed_rate_kbps_;
+    const bool confirmed_media_pressure = media_queue_pressure_rounds_ >= 2
+        && delivery_pressure;
     d.isolated_loss = new_feedback && t.loss_per_mille != 0 && !pressure;
 
     // One authority for ordinary and recovery probes. Only a complete tagged
@@ -109,10 +119,17 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
             next_probe_ms_ = sample.now_steady_ms + (horizon + t.feedback_jitter_us + 999) / 1000;
     }
 
+    // Receiver arrival timestamps can expose forward-path queuing, but one
+    // aggregated or clock-adjusting feedback batch is not enough to reduce the
+    // path rate. Require consecutive usable delivery samples, then apply at
+    // most one drain decision until the measured pressure has cleared.
     const bool new_pressure_evidence = sample.local_backpressure
-        || (new_feedback && (static_cast<std::uint64_t>(t.queue_delay_ms) * 1000 > allowance || sustained_loss))
+        || (new_feedback && (confirmed_media_pressure || sustained_loss))
         || (new_rtt && static_cast<std::uint64_t>(sample.rtt_queue_delay_ms) * 1000 > allowance);
-    if (pressure && new_pressure_evidence
+    if (!pressure) {
+        pressure_backoff_latched_ = false;
+    }
+    if (pressure && new_pressure_evidence && !pressure_backoff_latched_
         && (last_backoff_sample_ms_ == 0
             || sample.now_steady_ms >= last_backoff_sample_ms_ + (horizon + 999) / 1000)) {
         const double delivered = usable_rate
@@ -125,6 +142,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
         last_backoff_sample_ms_ = sample.now_steady_ms;
         next_probe_ms_ = sample.now_steady_ms + (horizon + queue_us + 999) / 1000;
         ++backoff_count_;
+        pressure_backoff_latched_ = true;
         d.backoff = true;
         d.reduce_fps = !sample.demand.resource_limited;
         d.reason = "measured_congestion_drain";
@@ -132,8 +150,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
     d.pressure = pressure ? (severe ? MediaNetworkPressure::kSevere : MediaNetworkPressure::kMild)
         : MediaNetworkPressure::kStable;
     d.reduce_fps = pressure && !sample.demand.resource_limited
-        && (sample.local_backpressure || (new_feedback
-                && (static_cast<std::uint64_t>(t.queue_delay_ms) * 1000 > allowance || sustained_loss))
+        && (sample.local_backpressure || sustained_loss || confirmed_media_pressure
             || (new_rtt && rtt_pressure_rounds_ >= 2));
     // Never normalize sustained congestion into a larger acceptable queue.
     if (new_feedback && !pressure && t.loss_per_mille == 0
@@ -220,11 +237,12 @@ void MediaCongestionController::reset() {
     queue_noise_.reset();
     next_probe_ms_ = queue_allowance_us_ = 0;
     confirmed_rate_kbps_ = bootstrap_rate_kbps_ = pacing_bitrate_kbps_ = 0;
-    consecutive_loss_windows_ = rtt_pressure_rounds_ = 0;
+    consecutive_loss_windows_ = rtt_pressure_rounds_ = media_queue_pressure_rounds_ = 0;
     probe_count_ = backoff_count_ = 0;
     last_transport_feedback_sample_id_ = last_rtt_sample_id_ = 0;
     recovery_probe_ = {};
     recovery_probe_started_ms_ = last_backoff_sample_ms_ = 0;
     recovery_probe_original_rate_ = 0;
+    pressure_backoff_latched_ = false;
 }
 }  // namespace redclaw::net

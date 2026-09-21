@@ -432,6 +432,7 @@ private:
     std::uint32_t confirmed_rate_kbps_ = 0;
     std::uint32_t bootstrap_rate_kbps_ = 0;
     std::uint32_t rtt_pressure_rounds_ = 0;
+    std::uint32_t media_queue_pressure_rounds_ = 0;
     std::uint32_t pacing_bitrate_kbps_ = 0;
     std::uint32_t consecutive_loss_windows_ = 0;
     std::uint64_t probe_count_ = 0;
@@ -442,6 +443,7 @@ private:
     std::uint64_t recovery_probe_started_ms_ = 0;
     std::uint32_t recovery_probe_original_rate_ = 0;
     std::uint64_t last_backoff_sample_ms_ = 0;
+    bool pressure_backoff_latched_ = false;
 };
 
 // Independent constraints use the same previous cadence, never sequential
