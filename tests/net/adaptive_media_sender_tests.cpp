@@ -3,8 +3,13 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
 #include <random>
+#include <thread>
 
 namespace {
 using namespace redclaw::net;
@@ -98,6 +103,122 @@ TEST(AdaptivePacing, RationalCadenceDoesNotAccumulateMillisecondRounding) {
         EXPECT_GT(cadence.due_ms(), 500000U);
         EXPECT_LE(cadence.due_ms(), 500000U + (1000 + fps - 1) / fps);
     }
+}
+
+TEST(AdaptivePacing, ProbeBoundaryDoesNotPauseOrdinaryMedia) {
+    using namespace std::chrono_literals;
+    DesktopMediaSendPacer pacer;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::optional<MediaPacerFrameEvent> terminal;
+    std::atomic<std::uint64_t> packets{0};
+    ASSERT_TRUE(pacer.start(
+        [](std::span<const std::uint8_t>) {
+            return MediaPacerSendResult{.accepted = true};
+        },
+        [] { return MediaPacerTransportState{.open = true}; },
+        [&](const SentMediaTransportPacket&) { ++packets; },
+        [&](const MediaPacerFrameEvent& event) {
+            if (event.type == MediaPacerFrameEventType::kKeyframeRequired) return;
+            {
+                std::lock_guard lock(mutex);
+                terminal = event;
+            }
+            ready.notify_one();
+        }));
+    MediaCongestionDecision policy;
+    policy.decision_revision = 1;
+    policy.pacing_bitrate_kbps = 12000;
+    policy.in_flight_limit_bytes = 512 * 1024;
+    policy.feedback_horizon_us = 100000;
+    policy.recovery_probe = {
+        .generation = 1,
+        .phase = MediaRecoveryProbePhase::kProbing,
+        .wire_budget_bytes = 2 * 16 * 1024,
+        .baseline_rate_kbps = 8000,
+        .recovery = false,
+    };
+    pacer.update_policy(policy, 20, 0);
+    PacedEncodedVideoFrame frame;
+    frame.frame_id = frame.rate_revision = frame.codec = 1;
+    frame.width = 640;
+    frame.height = 360;
+    frame.target_fps = 30;
+    frame.target_bitrate_kbps = 3806;
+    frame.keyframe = true;
+    frame.payload.assign(100000, 0x55);
+    ASSERT_TRUE(pacer.submit(std::move(frame)));
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return terminal.has_value(); }));
+    }
+    const auto telemetry = pacer.telemetry();
+    pacer.stop();
+    ASSERT_EQ(terminal->type, MediaPacerFrameEventType::kSent);
+    EXPECT_GT(packets.load(), 2U);
+    EXPECT_GT(telemetry.probe_end_sequence, 0U);
+    EXPECT_EQ(telemetry.deadline_drops, 0U);
+}
+
+TEST(AdaptivePacing, KeyframeHistoryAndReceiverEchoDoNotBuildLatency) {
+    using namespace std::chrono_literals;
+    DesktopMediaSendPacer pacer;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::atomic<std::uint64_t> sent{0};
+    std::atomic<bool> delay_first{true};
+    ASSERT_TRUE(pacer.start(
+        [&](std::span<const std::uint8_t>) {
+            if (delay_first.exchange(false)) std::this_thread::sleep_for(150ms);
+            return MediaPacerSendResult{.accepted = true};
+        },
+        [] { return MediaPacerTransportState{.open = true}; },
+        [](const SentMediaTransportPacket&) {},
+        [&](const MediaPacerFrameEvent& event) {
+            if (event.type == MediaPacerFrameEventType::kSent) ++sent;
+            ready.notify_all();
+        },
+        [&] { ready.notify_all(); }));
+    MediaCongestionDecision policy;
+    policy.decision_revision = 1;
+    policy.pacing_bitrate_kbps = 100000;
+    policy.in_flight_limit_bytes = 512 * 1024;
+    policy.feedback_horizon_us = 20000;
+    policy.receiver_frame_period_us = 250000;
+    pacer.update_policy(policy, 10, 0);
+    const auto make_frame = [](std::uint64_t id, bool keyframe) {
+        PacedEncodedVideoFrame frame;
+        frame.frame_id = id;
+        frame.rate_revision = 1;
+        frame.codec = 1;
+        frame.width = 640;
+        frame.height = 360;
+        frame.target_fps = 30;
+        frame.target_bitrate_kbps = 3806;
+        frame.keyframe = keyframe;
+        frame.payload.assign(1000, static_cast<std::uint8_t>(id));
+        return frame;
+    };
+    ASSERT_TRUE(pacer.submit(make_frame(1, true)));
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 1s, [&] { return sent.load() == 1; }));
+    }
+    EXPECT_EQ(pacer.telemetry().queue_target_frames, 1U);
+    const auto started = std::chrono::steady_clock::now();
+    for (std::uint64_t id = 2; id <= 5; ++id) {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 1s, [&] { return pacer.can_accept_frame(); }));
+        lock.unlock();
+        ASSERT_TRUE(pacer.submit(make_frame(id, false)));
+    }
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 1s, [&] { return sent.load() == 5; }));
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    pacer.stop();
+    EXPECT_LT(elapsed, 500ms);
 }
 
 TEST(AdaptiveController, NoDemandOrUnrelatedAcknowledgementCannotConfirmProbe) {

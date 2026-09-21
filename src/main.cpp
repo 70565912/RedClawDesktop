@@ -8721,11 +8721,11 @@ int run_runtime_mode(
                 congestion_sample.transport = transport_estimate;
                 congestion_sample.demand = admission_telemetry.demand();
                 congestion_sample.demand.target_fps = clamp_stream_target_fps(adaptive_control.target_fps);
-                if (receiver_stats_match_current_revision && receiver_decoded_delta > 0
-                    && receiver_stats.latest_complete_frame_id > receiver_stats.latest_displayable_frame_id + 1) {
-                    congestion_sample.demand.receiver_frame_period_us =
-                        adaptation_window_ms * 1000ULL / receiver_decoded_delta;
-                }
+                // Receiver decode capacity already changes the encoder target
+                // through select_stream_target_fps(). Feeding the observed
+                // decode period back into the sender cadence creates a closed
+                // loop where a temporary slowdown becomes its own rate limit.
+                congestion_sample.demand.receiver_frame_period_us = 0;
                 congestion_sample.recovery_budget_blocked = admission_telemetry.keyframe_required
                     && admission_telemetry.rejected_wire_bytes != 0;
                 congestion_sample.media_channel_open = media_transport_stats.open;
