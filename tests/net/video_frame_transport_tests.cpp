@@ -356,8 +356,14 @@ bool test_congestion_controller_avoids_double_loss_backoff_and_probes() {
         "isolated loss does not manufacture a capacity drop") && ok;
     sample.now_steady_ms = 1500;
     ++sample.transport.feedback_sample_id;
+    sample.transport.loss_per_mille = 0;
     sample.transport.queue_delay_ms = 200;
     sample.transport.delivery_bitrate_kbps = 10000;
+    decision = controller.update(sample);
+    ok = expect_true(!decision.backoff,
+        "one forward queue sample does not establish a path capacity drop") && ok;
+    sample.now_steady_ms = 1700;
+    ++sample.transport.feedback_sample_id;
     decision = controller.update(sample);
     const auto drained = decision.pacing_bitrate_kbps;
     ok = expect_true(decision.backoff && drained < 10000,
