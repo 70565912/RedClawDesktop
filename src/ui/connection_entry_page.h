@@ -13,6 +13,7 @@ class QToolButton;
 class QWheelEvent;
 
 namespace redclaw::ui {
+class ConnectionPasswordPanel;
 
 class PageScrollComboBox final : public QComboBox {
  public:
@@ -26,6 +27,7 @@ class ConnectionEntryPage final : public QWidget {
  public:
   explicit ConnectionEntryPage(QWidget* parent = nullptr);
 
+  ConnectionPasswordPanel* password_panel() const { return passwords_; }
   void set_local_code(const QString& code);
   void set_peer_code(const QString& code);
   void set_status(const QString& text, const QString& tone);
@@ -51,6 +53,8 @@ class ConnectionEntryPage final : public QWidget {
   void normalize_peer_code();
   void refresh_peer_validation();
 
+  ConnectionPasswordPanel* passwords_ = nullptr;
+  bool actions_enabled_ = true;
   QWidget* hero_ = nullptr;
   QWidget* primary_card_ = nullptr;
   QLabel* local_code_ = nullptr;

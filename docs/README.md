@@ -38,6 +38,7 @@
 - [远端 Agent 桥](architecture/remote-development-agent-bridge-v1.md)
 - [P2P Debug Bridge](architecture/p2p-debug-bridge-v1.md)
 - [无人值守与开机接入](architecture/unattended-boot-access-design.md)
+- [网络出口选择与异地联线概率分析](architecture/network-exit-selection-analysis.md)
 
 ## 测试与联调
 

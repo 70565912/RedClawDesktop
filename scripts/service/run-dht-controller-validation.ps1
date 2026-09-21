@@ -8,6 +8,9 @@ param(
 
     [string]$RuntimeExe = "",
 
+    [Parameter(Mandatory = $true)]
+    [string]$ConnectionCredentialFile,
+
     [string]$NetworkBindAddress = "",
 
     [string]$ReportRoot = "build\reports",
@@ -227,6 +230,7 @@ $bootstrapReadinessPath = Join-Path $reportDirectory "bootstrap-readiness.json"
 $arguments = @(
     "--cli",
     "--role", "controller",
+    "--connection-credential-file", (Resolve-Path -LiteralPath $ConnectionCredentialFile).Path,
     "--signal-transport", "dht",
     "--session-code", $SessionCode,
     "--signal-timeout-seconds", [string]$RunSeconds,

@@ -403,6 +403,7 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
         std::shared_ptr<rtc::DataChannel> channel;
         std::uint64_t generation = 0;
         bool open = false;
+        bool announced = false;
         bool send_blocked = false;
         std::size_t buffered_amount_low_threshold = kDataChannelBufferedAmountLowThresholdBytes;
     };
@@ -421,6 +422,49 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
     std::array<ChannelState, kDataChannelKindCount> data_channels_;
     bool initiates_offer_ = false;
     bool remote_description_ready_ = false;
+    std::unique_ptr<security::ConnectionAuthenticator> authentication_;
+    bool authentication_exposed_ = false;
+    std::string local_fingerprint_, remote_fingerprint_;
+    static std::uint64_t auth_now() {
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+    static std::string fingerprint(std::string_view sdp) {
+        const auto begin = sdp.find("a=fingerprint:");
+        if (begin == std::string_view::npos) return {};
+        return std::string(sdp.substr(begin + 14, sdp.find_first_of("\r\n", begin) - begin - 14));
+    }
+    bool application_ready_locked() const { return !authentication_ || authentication_exposed_; }
+    void send_authentication(std::unique_lock<std::mutex>& lock,
+        const std::vector<protocol::StreamControlMessageV1>& messages) {
+        const auto peer = peer_generation_;
+        const auto channel = data_channels_[data_channel_index(DataChannelKind::kControl)].channel;
+        lock.unlock();
+        bool sent = channel != nullptr;
+        for (const auto& message : messages) {
+            const auto bytes = protocol::serialize_stream_control_message_v1(message);
+            try { if (!channel || bytes.empty()) { sent = false; break; }
+                channel->send(reinterpret_cast<const rtc::byte*>(bytes.data()), bytes.size());
+            } catch (...) { sent = false; break; }
+        }
+        lock.lock();
+        if (peer != peer_generation_ || shutting_down_ || !authentication_) return;
+        if (!sent) { authentication_->tick(UINT64_MAX); return; }
+        if (authentication_->state() != security::ConnectionAuthState::kAccepted) return;
+        authentication_exposed_ = true;
+        constexpr std::array kinds{DataChannelKind::kMedia, DataChannelKind::kControl,
+            DataChannelKind::kAgent, DataChannelKind::kNavigation, DataChannelKind::kDebugBridge,
+            DataChannelKind::kTerminal, DataChannelKind::kTransfer};
+        for (std::size_t index = 0; index < data_channels_.size(); ++index) {
+            auto& state = data_channels_[index];
+            if (!state.open || state.announced) continue;
+            state.announced = true;
+            auto cb = data_channel_open_callback_;
+            lock.unlock(); if (cb) cb(kinds[index]); lock.lock();
+            if (peer != peer_generation_ || !authentication_exposed_) return;
+        }
+    }
+
     IceConnectionState state_ = IceConnectionState::kNew;
     IceGatheringState gathering_state_ = IceGatheringState::kNew;
     TransportDiagnostics diagnostics_;
@@ -535,7 +579,9 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
     }
     ChannelState channel_snapshot(DataChannelKind kind) const {
         std::lock_guard lock(mutex_);
-        return data_channels_[data_channel_index(kind)];
+        auto snapshot = data_channels_[data_channel_index(kind)];
+        snapshot.open = snapshot.open && application_ready_locked();
+        return snapshot;
     }
     bool peer_is_current(const PeerSnapshot& snapshot) const {
         std::lock_guard lock(mutex_);
@@ -611,17 +657,31 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
             auto& state = s.data_channels_[data_channel_index(*kind)];
             state.open = true; state.send_blocked = false;
             s.diagnostic_locked(TransportDiagnosticLayer::kDataChannel, 1, false, "open", kind, state.generation);
+            if (s.authentication_ && !s.authentication_exposed_) {
+                if (*kind == DataChannelKind::kControl) {
+                    const auto messages = s.authentication_->open(s.local_fingerprint_, s.remote_fingerprint_, auth_now());
+                    s.send_authentication(lock, messages);
+                }
+                return;
+            }
+            state.announced = true;
             auto cb = s.data_channel_open_callback_;
             lock.unlock();
             if (cb) cb(*kind);
         }));
         channel->onClosed(guarded(peer, kind, generation, [kind](Impl& s, auto& lock) {
             auto& state = s.data_channels_[data_channel_index(*kind)];
-            state.open = false; state.send_blocked = false;
+            const bool announced = state.announced;
+            state.open = false; state.announced = false; state.send_blocked = false;
+            const bool required = *kind == DataChannelKind::kControl || *kind == DataChannelKind::kMedia;
+            if (s.authentication_ && required) {
+                s.authentication_exposed_ = false;
+                if (s.authentication_->state() != security::ConnectionAuthState::kRejected) s.authentication_->reset();
+            }
             s.diagnostic_locked(TransportDiagnosticLayer::kDataChannel, 0, true, "native_close_cause_unknown", kind, state.generation);
             auto cb = s.data_channel_closed_callback_;
             lock.unlock();
-            if (cb) cb(*kind);
+            if ((announced || required) && cb) cb(*kind);
         }));
         channel->onError(guarded(peer, kind, generation, [kind](Impl& s, auto&, std::string) {
             const auto& state = s.data_channels_[data_channel_index(*kind)];
@@ -630,6 +690,7 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
         }));
         auto writable = guarded(peer, kind, generation, [kind](Impl& s, auto& lock) {
             s.data_channels_[data_channel_index(*kind)].send_blocked = false;
+            if (!s.application_ready_locked()) return;
             auto cb = s.data_channel_writable_callback_;
             lock.unlock();
             if (cb) cb(*kind);
@@ -637,6 +698,20 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
         channel->onBufferedAmountLow(writable);
         channel->onAvailable(std::move(writable));
         channel->onMessage(guarded(peer, kind, generation, [kind](Impl& s, auto& lock, rtc::message_variant data) {
+            if (s.authentication_ && !s.authentication_exposed_) {
+                if (*kind != DataChannelKind::kControl) return;
+                const auto* bytes = std::get_if<rtc::binary>(&data);
+                if (!bytes) return;
+                const auto parsed = protocol::parse_stream_control_message_v1(
+                    {reinterpret_cast<const char*>(bytes->data()), bytes->size()});
+                if (!parsed.ok) return;
+                if (parsed.value.type != protocol::StreamControlMessageTypeV1::kConnectionAuth
+                    && parsed.value.type != protocol::StreamControlMessageTypeV1::kHello
+                    && parsed.value.type != protocol::StreamControlMessageTypeV1::kCapabilities) return;
+                const auto messages = s.authentication_->receive(parsed.value, auth_now());
+                s.send_authentication(lock, messages);
+                return;
+            }
             auto text_cb = s.data_channel_message_callback_;
             auto binary_cb = s.data_channel_binary_message_callback_;
             lock.unlock();
@@ -752,6 +827,7 @@ public:
             }));
             peer->onLocalDescription(guarded(generation, {}, 0, [mapping = config.udp_port_mapping](Impl& s, auto& lock, rtc::Description description) {
                 const auto sdp = mapping ? with_mapped_udp_candidates(std::string(description), *mapping) : std::string(description);
+                s.local_fingerprint_ = fingerprint(sdp);
                 s.candidate_observations_locked(s.candidate_diagnostics_.set_description(true, sdp));
                 auto cb = s.description_callback_;
                 lock.unlock(); if (cb) cb(sdp, description.type() == rtc::Description::Type::Offer);
@@ -848,6 +924,7 @@ public:
     bool apply_remote_description(const std::string& sdp, bool offer, std::string* error, bool auto_answer) {
         if (sdp.empty()) { assign_error("remote sdp must be non-empty", error); return false; }
         return peer_operation([&](const PeerSnapshot& s) {
+            { std::lock_guard lock(mutex_); if (current_locked(s.generation, {}, 0)) remote_fingerprint_ = fingerprint(sdp); }
             s.peer->setRemoteDescription(rtc::Description(sdp, offer ? rtc::Description::Type::Offer : rtc::Description::Type::Answer));
             {
                 std::lock_guard lock(mutex_);
@@ -961,7 +1038,10 @@ public:
             std::lock_guard lock(mutex_);
             diagnostic_locked(TransportDiagnosticLayer::kLocalClose, static_cast<int>(state_), false, "deferred_callback_close");
             ++peer_generation_;
-            for (auto& state : data_channels_) { ++state.generation; state.open = false; state.send_blocked = false; }
+            authentication_exposed_ = false;
+            if (authentication_) authentication_->reset();
+            local_fingerprint_.clear(); remote_fingerprint_.clear();
+            for (auto& state : data_channels_) { ++state.generation; state.open = false; state.announced = false; state.send_blocked = false; }
             state_ = IceConnectionState::kClosed;
             remote_description_ready_ = false;
             candidate_diagnostics_.reset();
@@ -974,12 +1054,15 @@ public:
             if (peer_connection_) diagnostic_locked(TransportDiagnosticLayer::kLocalClose,
                 static_cast<int>(state_), false, shutting_down_ ? "owner_shutdown" : "explicit_peer_close");
             ++peer_generation_;
+            authentication_exposed_ = false;
+            if (authentication_) authentication_->reset();
+            local_fingerprint_.clear(); remote_fingerprint_.clear();
             peer = std::move(peer_connection_);
             for (std::size_t i = 0; i < data_channels_.size(); ++i) {
                 auto& state = data_channels_[i];
                 channels[i] = std::move(state.channel);
                 ++state.generation;
-                state.open = false; state.send_blocked = false;
+                state.open = false; state.announced = false; state.send_blocked = false;
             }
             state_ = IceConnectionState::kClosed;
             gathering_state_ = IceGatheringState::kNew;
@@ -1025,6 +1108,24 @@ IceConnectivityWrapper::IceConnectivityWrapper()
     : impl_(std::make_shared<Impl>()) {}
 
 IceConnectivityWrapper::~IceConnectivityWrapper() { (void)impl_->shutdown(); }
+
+bool IceConnectivityWrapper::requireConnectionAuthentication(security::ConnectionCredential credential) {
+    std::lock_guard lock(impl_->mutex_);
+    if (impl_->peer_connection_ || impl_->authentication_) return false;
+    auto auth = std::make_unique<security::ConnectionAuthenticator>(std::move(credential));
+    if (!auth->ready()) return false;
+    impl_->authentication_ = std::move(auth);
+    return true;
+}
+security::ConnectionAuthState IceConnectivityWrapper::authenticationState(std::string* error) {
+    std::lock_guard lock(impl_->mutex_);
+    if (!impl_->authentication_) { assign_error("connection_credentials_unavailable", error); return security::ConnectionAuthState::kPending; }
+    impl_->authentication_->tick(Impl::auth_now());
+    if (impl_->authentication_->state() == security::ConnectionAuthState::kRejected) impl_->authentication_exposed_ = false;
+    assign_error(impl_->authentication_->error(), error);
+    return impl_->authentication_->state();
+}
+
 
 bool IceConnectivityWrapper::reserveFixedUdpPort(
     std::uint16_t port,

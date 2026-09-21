@@ -215,7 +215,10 @@ TEST(AgentProviders, CodexUsesInitializedThreadAndTurnJsonlFlow) {
     auto provider = redclaw::agent::make_codex_app_server_provider(std::move(process));
     EventCollector collector;
     provider->set_event_sink([&](auto event) { collector.push(std::move(event)); });
-    EXPECT_TRUE(provider->probe().available);
+    const auto capability = provider->probe();
+    EXPECT_TRUE(capability.available);
+    EXPECT_FALSE(capability.supports_structured_approval);
+    EXPECT_FALSE(capability.requires_turn_approval);
     std::string error;
     ASSERT_TRUE(provider->start_task(request("task-codex"), &error)) << error;
     ASSERT_GE(raw_process->writes.size(), 1U);
@@ -227,7 +230,7 @@ TEST(AgentProviders, CodexUsesInitializedThreadAndTurnJsonlFlow) {
     EXPECT_NE(raw_process->writes[1].find("\"method\":\"initialized\""), std::string::npos);
     EXPECT_NE(raw_process->writes[2].find("\"method\":\"thread/start\""), std::string::npos);
     EXPECT_NE(raw_process->writes[2].find("workspace-write"), std::string::npos);
-    EXPECT_NE(raw_process->writes[2].find("\"approvalPolicy\":\"untrusted\""),
+    EXPECT_NE(raw_process->writes[2].find("\"approvalPolicy\":\"never\""),
         std::string::npos);
     EXPECT_EQ(raw_process->writes[2].find("unless-trusted"), std::string::npos);
 
@@ -235,12 +238,58 @@ TEST(AgentProviders, CodexUsesInitializedThreadAndTurnJsonlFlow) {
     ASSERT_TRUE(raw_process->wait_for_writes(4));
     ASSERT_GE(raw_process->writes.size(), 4U);
     EXPECT_NE(raw_process->writes[3].find("\"method\":\"turn/start\""), std::string::npos);
+    EXPECT_NE(raw_process->writes[3].find("\"approvalPolicy\":\"never\""), std::string::npos);
     raw_process->emit_stdout(
         R"({"method":"item/agentMessage/delta","params":{"delta":"progress"}})");
     raw_process->emit_stdout(
         R"({"method":"turn/completed","params":{"turn":{"id":"turn-1"}}})");
     EXPECT_TRUE(collector.wait_for_kind("turn_completed"));
     provider->shutdown();
+}
+
+TEST(AgentProviders, CodexDeclinesUnexpectedApprovalsWithoutWaitingForUser) {
+    for (const bool write_succeeds : {true, false}) {
+        SCOPED_TRACE(write_succeeds);
+        auto process = std::make_unique<FakeAgentProcess>();
+        auto* raw_process = process.get();
+        EventCollector collector;
+        auto provider = redclaw::agent::make_codex_app_server_provider(std::move(process));
+        provider->set_event_sink([&](auto event) { collector.push(std::move(event)); });
+        std::string error;
+        ASSERT_TRUE(provider->start_task(request("no-approval"), &error)) << error;
+        raw_process->emit_stdout(R"({"id":1,"result":{}})");
+        ASSERT_TRUE(raw_process->wait_for_writes(3));
+        raw_process->emit_stdout(R"({"id":2,"result":{"thread":{"id":"noninteractive"}}})");
+        ASSERT_TRUE(raw_process->wait_for_writes(4));
+        raw_process->write_succeeds = write_succeeds;
+        raw_process->emit_stdout(R"({"id":"command-1","method":"item/commandExecution/requestApproval","params":{"command":"test"}})");
+        ASSERT_TRUE(collector.wait_for_kind("provider_approval_rejected"));
+        ASSERT_TRUE(raw_process->wait_for_writes(5));
+        EXPECT_NE(raw_process->writes.back().find("\"id\":\"command-1\""), std::string::npos);
+        EXPECT_NE(raw_process->writes.back().find("\"decision\":\"decline\""), std::string::npos);
+        if (write_succeeds) {
+            raw_process->emit_stdout(R"({"id":73,"method":"item/fileChange/requestApproval","params":{}})");
+            ASSERT_TRUE(collector.wait_for_kind("provider_approval_rejected", 2));
+            EXPECT_NE(raw_process->writes.back().find("\"id\":73"), std::string::npos);
+            EXPECT_NE(raw_process->writes.back().find("\"decision\":\"decline\""), std::string::npos);
+            raw_process->emit_stdout(R"({"method":"turn/completed","params":{}})");
+            ASSERT_TRUE(collector.wait_for_kind("turn_completed"));
+        } else {
+            std::lock_guard lock(collector.mutex);
+            ASSERT_TRUE(collector.events.back().terminal);
+            EXPECT_EQ(collector.events.back().error_code, "approval_reply_failed");
+        }
+        EXPECT_FALSE(provider->respond_to_approval("no-approval", "old-approval",
+            redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error));
+        raw_process->write_succeeds = true;
+        ASSERT_TRUE(provider->start_turn("no-approval", "next instruction", &error)) << error;
+        EXPECT_NE(raw_process->writes.back().find("\"approvalPolicy\":\"never\""), std::string::npos);
+        provider->shutdown();
+        for (const auto& event : collector.events) {
+            EXPECT_FALSE(event.approval_request);
+            EXPECT_NE(event.state, redclaw::protocol::AgentTaskStateV1::kAwaitingApproval);
+        }
+    }
 }
 
 TEST(AgentProviders, CodexDisplaysNestedAssistantContentAndToolDetails) {
@@ -340,10 +389,12 @@ TEST(AgentProviders, CodexKeepsCommandOutputAndReleasesFailedTurnForRetry) {
     raw_process->emit_stdout(R"({"id":5,"result":{}})");
     ASSERT_TRUE(raw_process->wait_for_writes(8));
     EXPECT_NE(raw_process->writes.back().find("thread/resume"), std::string::npos);
+    EXPECT_NE(raw_process->writes.back().find("\"approvalPolicy\":\"never\""), std::string::npos);
+    EXPECT_NE(raw_process->writes.back().find("workspace-write"), std::string::npos);
     provider->shutdown();
 }
 
-TEST(AgentProviders, CursorRequiresReadinessAndPerTurnApproval) {
+TEST(AgentProviders, CursorStartsReadyTaskWithoutApproval) {
     auto process = std::make_unique<FakeAgentProcess>();
     auto* raw_process = process.get();
     auto provider = redclaw::agent::make_cursor_agent_provider(std::move(process));
@@ -351,18 +402,10 @@ TEST(AgentProviders, CursorRequiresReadinessAndPerTurnApproval) {
     provider->set_event_sink([&](auto event) { collector.push(std::move(event)); });
     const auto capability = provider->probe();
     ASSERT_TRUE(capability.available);
-    EXPECT_TRUE(capability.requires_turn_approval);
+    EXPECT_FALSE(capability.requires_turn_approval);
+    EXPECT_FALSE(capability.supports_structured_approval);
     std::string error;
     ASSERT_TRUE(provider->start_task(request("task-cursor", "grok-4"), &error)) << error;
-    ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval"));
-    std::string approval_id;
-    {
-        std::lock_guard lock(collector.mutex);
-        approval_id = collector.events.back().request_id;
-    }
-    ASSERT_TRUE(provider->respond_to_approval(
-        "task-cursor", approval_id,
-        redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error)) << error;
     EXPECT_EQ(raw_process->started_executable, "cursor-agent");
     EXPECT_NE(std::find(raw_process->started_arguments.begin(), raw_process->started_arguments.end(),
                         "stream-json"), raw_process->started_arguments.end());
@@ -389,15 +432,6 @@ TEST(AgentProviders, CursorDisplaysNestedAssistantContentToolDetailsAndFinalResu
     ASSERT_TRUE(provider->probe().available);
     std::string error;
     ASSERT_TRUE(provider->start_task(request("task-cursor-nested", "grok-4"), &error)) << error;
-    ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval"));
-    std::string approval_id;
-    {
-        std::lock_guard lock(collector.mutex);
-        approval_id = collector.events.back().request_id;
-    }
-    ASSERT_TRUE(provider->respond_to_approval(
-        "task-cursor-nested", approval_id,
-        redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error)) << error;
     raw_process->emit_stdout(
         R"({"type":"system","subtype":"init","session_id":"cursor-nested"})");
     raw_process->emit_stdout(
@@ -426,63 +460,47 @@ TEST(AgentProviders, CursorDisplaysNestedAssistantContentToolDetailsAndFinalResu
     provider->shutdown();
 }
 
-TEST(AgentProviders, CursorRetriesUnstartedTaskWithFreshApprovalThenResumesItsChat) {
-    for (const bool interrupted : {false, true}) {
-        SCOPED_TRACE(interrupted ? "interrupted before approval" : "rejected or timed out");
-        auto process = std::make_unique<FakeAgentProcess>();
-        auto* raw_process = process.get();
-        EventCollector collector;
-        auto provider = redclaw::agent::make_cursor_agent_provider(std::move(process));
-        provider->set_event_sink([&](auto event) { collector.push(std::move(event)); });
-        const auto approval_id = [&] {
-            std::lock_guard lock(collector.mutex);
-            for (auto it = collector.events.rbegin(); it != collector.events.rend(); ++it) {
-                if (it->approval_request) return it->request_id;
-            }
-            return std::string{};
-        };
-        std::string error;
-        ASSERT_TRUE(provider->start_task(request("retry", "grok-4"), &error)) << error;
-        ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval"));
-        const auto first_approval = approval_id();
-        if (interrupted) {
-            ASSERT_TRUE(provider->interrupt("retry", &error)) << error;
-        } else {
-            ASSERT_TRUE(provider->respond_to_approval("retry", first_approval,
-                redclaw::protocol::AgentApprovalDecisionV1::kReject, &error)) << error;
-            // The broker also attempts an interrupt when approval expires.
-            (void)provider->interrupt("retry", nullptr);
-        }
-        EXPECT_TRUE(raw_process->started_executable.empty());
-        ASSERT_TRUE(provider->start_turn("retry", "second instruction", &error)) << error;
-        ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval", 2));
-        const auto retry_approval = approval_id();
-        EXPECT_NE(retry_approval, first_approval);
-        EXPECT_TRUE(raw_process->started_executable.empty());
-        EXPECT_FALSE(provider->respond_to_approval("retry", first_approval,
-            redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error));
-        ASSERT_TRUE(provider->respond_to_approval("retry", retry_approval,
-            redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error)) << error;
-        EXPECT_EQ(raw_process->started_directory, request("retry").working_directory);
-        EXPECT_EQ(raw_process->started_arguments.back(), "second instruction");
-        EXPECT_NE(std::find(raw_process->started_arguments.begin(), raw_process->started_arguments.end(),
-            "grok-4"), raw_process->started_arguments.end());
-        EXPECT_EQ(std::find(raw_process->started_arguments.begin(), raw_process->started_arguments.end(),
-            "--resume"), raw_process->started_arguments.end());
-        raw_process->emit_stdout(R"({"type":"assistant","session_id":"retry-chat","text":"done"})");
-        raw_process->emit_exit(0);
-        ASSERT_TRUE(collector.wait_for_kind("turn_completed"));
-        ASSERT_TRUE(provider->start_turn("retry", "third instruction", &error)) << error;
-        ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval", 3));
-        ASSERT_TRUE(provider->respond_to_approval("retry", approval_id(),
-            redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error)) << error;
-        const auto& arguments = raw_process->started_arguments;
-        const auto resume = std::find(arguments.begin(), arguments.end(), "--resume");
-        ASSERT_NE(resume, arguments.end());
-        ASSERT_NE(resume + 1, arguments.end());
-        EXPECT_EQ(*(resume + 1), "retry-chat");
-        EXPECT_EQ(arguments.back(), "third instruction");
-        provider->shutdown();
+TEST(AgentProviders, CursorRetriesFailedLaunchAndResumesChatWithoutApproval) {
+    auto process = std::make_unique<FakeAgentProcess>();
+    auto* raw_process = process.get();
+    EventCollector collector;
+    auto provider = redclaw::agent::make_cursor_agent_provider(std::move(process));
+    provider->set_event_sink([&](auto event) { collector.push(std::move(event)); });
+    std::string error;
+    raw_process->start_succeeds = false;
+    EXPECT_FALSE(provider->start_task(request("retry", "grok-4"), &error));
+    raw_process->start_succeeds = true;
+    ASSERT_TRUE(provider->start_turn("retry", "second instruction", &error)) << error;
+    EXPECT_EQ(raw_process->started_directory, request("retry").working_directory);
+    EXPECT_EQ(raw_process->started_arguments.back(), "second instruction");
+    EXPECT_NE(std::find(raw_process->started_arguments.begin(), raw_process->started_arguments.end(),
+        "grok-4"), raw_process->started_arguments.end());
+    EXPECT_EQ(std::find(raw_process->started_arguments.begin(), raw_process->started_arguments.end(),
+        "--resume"), raw_process->started_arguments.end());
+    EXPECT_FALSE(provider->start_task(request("overlap", "grok-4"), &error));
+    raw_process->emit_stdout(R"({"type":"assistant","session_id":"retry-chat","text":"done"})");
+    raw_process->emit_exit(0);
+    ASSERT_TRUE(collector.wait_for_kind("turn_completed"));
+    ASSERT_TRUE(provider->start_turn("retry", "third instruction", &error)) << error;
+    const auto& arguments = raw_process->started_arguments;
+    const auto resume = std::find(arguments.begin(), arguments.end(), "--resume");
+    ASSERT_NE(resume, arguments.end());
+    ASSERT_NE(resume + 1, arguments.end());
+    EXPECT_EQ(*(resume + 1), "retry-chat");
+    EXPECT_EQ(arguments.back(), "third instruction");
+    ASSERT_TRUE(provider->interrupt("retry", &error)) << error;
+    ASSERT_TRUE(collector.wait_for_kind("turn_interrupted"));
+    EXPECT_FALSE(raw_process->running);
+    ASSERT_TRUE(provider->start_turn("retry", "after interrupt", &error)) << error;
+    EXPECT_EQ(raw_process->started_arguments.back(), "after interrupt");
+    EXPECT_FALSE(provider->respond_to_approval("retry", "old-approval",
+        redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error));
+    raw_process->emit_exit(0);
+    ASSERT_TRUE(collector.wait_for_kind("turn_completed", 2));
+    provider->shutdown();
+    for (const auto& event : collector.events) {
+        EXPECT_FALSE(event.approval_request);
+        EXPECT_NE(event.state, redclaw::protocol::AgentTaskStateV1::kAwaitingApproval);
     }
 }
 
@@ -496,14 +514,6 @@ TEST(AgentProviders, CursorDoesNotStartUnknownOrPreviouslyLaunchedTaskWithoutCha
     EXPECT_FALSE(provider->start_turn("unknown", "instruction", &error));
     EXPECT_TRUE(raw_process->started_executable.empty());
     ASSERT_TRUE(provider->start_task(request("no-chat", "grok-4"), &error)) << error;
-    ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval"));
-    std::string approval_id;
-    {
-        std::lock_guard lock(collector.mutex);
-        approval_id = collector.events.back().request_id;
-    }
-    ASSERT_TRUE(provider->respond_to_approval("no-chat", approval_id,
-        redclaw::protocol::AgentApprovalDecisionV1::kAccept, &error)) << error;
     raw_process->emit_exit(1);
     ASSERT_TRUE(collector.wait_for_kind("provider_exit"));
     EXPECT_FALSE(provider->start_turn("no-chat", "must not silently lose history", &error));
@@ -537,17 +547,6 @@ TEST(AgentProviders, ProviderParsersRejectMalformedJsonWithoutThrowing) {
         std::string error;
         ASSERT_TRUE(provider->start_task(
             request("task-cursor-invalid-json", "grok-4"), &error)) << error;
-        ASSERT_TRUE(collector.wait_for_kind("cursor_turn_preapproval"));
-        std::string approval_id;
-        {
-            std::lock_guard lock(collector.mutex);
-            approval_id = collector.events.back().request_id;
-        }
-        ASSERT_TRUE(provider->respond_to_approval(
-            "task-cursor-invalid-json",
-            approval_id,
-            redclaw::protocol::AgentApprovalDecisionV1::kAccept,
-            &error)) << error;
         raw_process->emit_stdout("{");
         ASSERT_TRUE(collector.wait_for_kind("provider_protocol_error"));
         provider->shutdown();

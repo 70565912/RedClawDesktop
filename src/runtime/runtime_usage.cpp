@@ -7,6 +7,7 @@ void print_usage() {
         << "Usage: redclaw_desktop [options]\n"
         << "Options:\n"
         << "  --role <host|controller>   Runtime role mode\n"
+    << "  --connection-credential-file <path> Current-user DPAPI credential; no plaintext password arguments\n"
     << "  --runtime-config <path>    Runtime deployment profile file (key=value)\n"
     << "  --target-host <value>      Signaling host when --signal-transport tcp (controller mode)\n"
     << "  --target-port <port>       Signaling TCP port (host listen / controller connect)\n"

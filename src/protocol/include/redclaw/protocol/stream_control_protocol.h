@@ -50,6 +50,7 @@ enum class StreamControlMessageTypeV1 {
     kCaptureRegionApplied,
     kCaptureRegionRejected,
     kWorkspace,
+    kConnectionAuth,
 };
 
 enum class RemoteLogModeV1 {
@@ -176,6 +177,9 @@ struct StreamControlMessageV1 {
     std::uint32_t terminal_version = 0;
     std::uint32_t file_transfer_version = 0;
     std::uint32_t clipboard_version = 0;
+    std::uint32_t connection_auth_version = 0;
+    std::string auth_step;
+    std::string auth_data;
     std::optional<WorkspaceControlV1> workspace;
     // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
     std::uint32_t capture_status = 0;

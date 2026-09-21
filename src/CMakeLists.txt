@@ -117,6 +117,7 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/runtime_maintenance_context.cpp
     ui/agent_settings_dialog.cpp
     ui/connection_entry_page.cpp
+    ui/connection_password_panel.cpp
     ui/connection_flow_model.cpp
     ui/connection_progress_page.cpp
     ui/playback_control_hint_overlay.cpp
@@ -129,7 +130,7 @@ if (REDCLAW_QT_GUI_ENABLED)
   target_include_directories(redclaw_ui_connection_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(redclaw_ui_connection_flow
     PUBLIC Qt6::Widgets Qt6::Network redclaw_protocol redclaw_diag
-    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace
+    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace redclaw_security
   )
   if(WIN32)
     target_link_libraries(redclaw_ui_connection_flow PRIVATE dwmapi advapi32)

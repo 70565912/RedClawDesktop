@@ -178,6 +178,7 @@ function Get-IntegrationArgumentList {
     $arguments = @(
         '--gui-auto-start',
         '--gui-role', $Role,
+        '--connection-credential-file', (Join-Path $RoleDirectory 'connection-credential.dpapi'),
         '--session-code', $SessionCode,
         '--signal-transport', $SignalTransport,
         '--signal-timeout-seconds', '0',
@@ -913,6 +914,14 @@ try {
     $hostArgs = Get-IntegrationArgumentList `
         -Role host -RoleDirectory $hostDirectory -SignalDirectory $hostSignalDirectory `
         -ControlName $hostControlName -CurrentRunId $runId
+    $connectionPassword = [Security.SecureString]::new()
+    foreach ($character in [guid]::NewGuid().ToString('N').ToCharArray()) { $connectionPassword.AppendChar($character) }
+    try {
+        & (Join-Path $PSScriptRoot 'new-connection-credential.ps1') -Role host -Password $connectionPassword `
+            -OutputPath (Join-Path $hostDirectory 'connection-credential.dpapi') | Out-Null
+        & (Join-Path $PSScriptRoot 'new-connection-credential.ps1') -Role controller -Password $connectionPassword `
+            -OutputPath (Join-Path $controllerDirectory 'connection-credential.dpapi') | Out-Null
+    } finally { $connectionPassword.Dispose() }
     Write-Host '[local-dual-gui-test] starting Host GUI'
     $hostProc = Start-Process -FilePath $hostRuntimePath -ArgumentList $hostArgs `
         -RedirectStandardOutput $hostOutLog -RedirectStandardError $hostErrLog `

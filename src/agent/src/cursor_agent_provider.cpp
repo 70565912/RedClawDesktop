@@ -167,7 +167,7 @@ public:
             .version = version_,
             .models = models_,
             .supports_structured_approval = false,
-            .requires_turn_approval = true,
+            .requires_turn_approval = false,
             .unavailable_reason = unavailable_reason_,
         };
     }
@@ -178,7 +178,7 @@ public:
     }
 
     bool start_task(const AgentProviderTaskRequest& request, std::string* error) override {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_);
         if (pending_events_.failed()) {
             assign_error("Agent event queue exhausted; synchronization required", error);
             return false;
@@ -192,7 +192,7 @@ public:
             assign_error("requested Cursor model was not advertised by cursor-agent", error);
             return false;
         }
-        if (!active_task_id_.empty() || pending_.has_value()) {
+        if (!active_task_id_.empty()) {
             assign_error("Cursor provider already owns an active turn", error);
             return false;
         }
@@ -200,23 +200,11 @@ public:
             .model = request.model,
             .working_directory = request.working_directory,
         };
-        pending_ = PendingTurn{
-            .request = request,
-            .approval_request_id = "cursor-turn-" + std::to_string(next_approval_id_++),
-        };
-        emit_locked({
-            .task_id = request.task_id,
-            .request_id = pending_->approval_request_id,
-            .event_kind = "cursor_turn_preapproval",
-            .text = "Cursor Agent requests approval for the entire turn",
-            .state = redclaw::protocol::AgentTaskStateV1::kAwaitingApproval,
-            .approval_request = true,
-        });
-        return true;
+        return launch_turn_locked(request, {}, lock, error);
     }
 
     bool resume_task(const AgentProviderTaskRequest& request, std::string* error) override {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_);
         if (pending_events_.failed()) {
             assign_error("Agent event queue exhausted; synchronization required", error);
             return false;
@@ -235,24 +223,11 @@ public:
             assign_error("Cursor chat id is not registered for this RedClaw task", error);
             return false;
         }
-        if (!active_task_id_.empty() || pending_.has_value()) {
+        if (!active_task_id_.empty()) {
             assign_error("Cursor provider already owns an active turn", error);
             return false;
         }
-        pending_ = PendingTurn{
-            .request = request,
-            .approval_request_id = "cursor-turn-" + std::to_string(next_approval_id_++),
-            .resume_chat_id = session->second.chat_id,
-        };
-        emit_locked({
-            .task_id = request.task_id,
-            .request_id = pending_->approval_request_id,
-            .event_kind = "cursor_turn_preapproval",
-            .text = "Cursor Agent requests approval for the entire resumed turn",
-            .state = redclaw::protocol::AgentTaskStateV1::kAwaitingApproval,
-            .approval_request = true,
-        });
-        return true;
+        return launch_turn_locked(request, session->second.chat_id, lock, error);
     }
 
     bool start_turn(
@@ -276,9 +251,8 @@ public:
             };
             launched = found->second.launched;
         }
-        // A rejected, expired or interrupted first approval never launches the
-        // CLI, so it has no chat ID to resume. Keep its registered workspace and
-        // model, and require fresh approval for the new instruction.
+        // A failed process launch has no chat ID to resume. Retry with its
+        // registered workspace and model, without discarding launched history.
         return launched ? resume_task(request, error) : start_task(request, error);
     }
 
@@ -290,11 +264,10 @@ public:
     bool interrupt(const std::string& task_id, std::string* error) override {
         {
             std::lock_guard lock(mutex_);
-            if (task_id != active_task_id_ && (!pending_ || pending_->request.task_id != task_id)) {
+            if (task_id != active_task_id_) {
                 assign_error("Cursor task is not active", error);
                 return false;
             }
-            pending_.reset();
         }
         process_->stop();
         {
@@ -311,59 +284,12 @@ public:
     }
 
     bool respond_to_approval(
-        const std::string& task_id,
-        const std::string& request_id,
-        redclaw::protocol::AgentApprovalDecisionV1 decision,
+        const std::string&,
+        const std::string&,
+        redclaw::protocol::AgentApprovalDecisionV1,
         std::string* error) override {
-        PendingTurn turn;
-        {
-            std::lock_guard lock(mutex_);
-            if (!pending_ || pending_->request.task_id != task_id
-                || pending_->approval_request_id != request_id) {
-                assign_error("Cursor turn approval is stale", error);
-                return false;
-            }
-            turn = std::move(*pending_);
-            pending_.reset();
-            if (decision != redclaw::protocol::AgentApprovalDecisionV1::kAccept) {
-                emit_locked({
-                    .task_id = task_id,
-                    .event_kind = "turn_rejected",
-                    .state = redclaw::protocol::AgentTaskStateV1::kPaused,
-                });
-                return true;
-            }
-            active_task_id_ = task_id;
-            auto& session = task_sessions_.at(task_id);
-            session.model = turn.request.model;
-            session.working_directory = turn.request.working_directory;
-            session.launched = true;
-            assistant_output_emitted_.clear();
-        }
-        std::vector<std::string> arguments{
-            "--print", "--output-format", "stream-json", "--stream-partial-output",
-            "--trust", "--force",
-        };
-        if (!turn.request.model.empty()) {
-            arguments.push_back("--model");
-            arguments.push_back(turn.request.model);
-        }
-        if (!turn.resume_chat_id.empty()) {
-            arguments.push_back("--resume");
-            arguments.push_back(turn.resume_chat_id);
-        }
-        arguments.push_back(turn.request.instruction);
-        const auto generation = ++process_generation_;
-        if (!process_->start(
-                "cursor-agent", arguments, turn.request.working_directory,
-                [this, generation](std::string line) { pending_events_.push_process({ProviderProcessEvent::Kind::kStdout, std::move(line), 0, generation}); },
-                [this, generation](std::string line) { pending_events_.push_process({ProviderProcessEvent::Kind::kStderr, std::move(line), 0, generation}); },
-                [this, generation](int exit_code) { pending_events_.push_process({ProviderProcessEvent::Kind::kExit, {}, exit_code, generation}); }, error)) {
-            std::lock_guard lock(mutex_);
-            active_task_id_.clear();
-            return false;
-        }
-        return true;
+        assign_error("Cursor Agent runs without interactive approvals", error);
+        return false;
     }
 
     void shutdown() override {
@@ -390,11 +316,40 @@ private:
         bool launched = false;
     };
 
-    struct PendingTurn {
-        AgentProviderTaskRequest request;
-        std::string approval_request_id;
-        std::string resume_chat_id;
-    };
+    bool launch_turn_locked(
+        const AgentProviderTaskRequest& request,
+        const std::string& resume_chat_id,
+        std::unique_lock<std::mutex>& lock,
+        std::string* error) {
+        active_task_id_ = request.task_id;
+        auto& session = task_sessions_.at(request.task_id);
+        session.model = request.model;
+        session.working_directory = request.working_directory;
+        assistant_output_emitted_.clear();
+        std::vector<std::string> arguments{
+            "--print", "--output-format", "stream-json", "--stream-partial-output",
+            "--trust", "--force", "--model", request.model,
+        };
+        if (!resume_chat_id.empty()) {
+            arguments.push_back("--resume");
+            arguments.push_back(resume_chat_id);
+        }
+        arguments.push_back(request.instruction);
+        const auto generation = ++process_generation_;
+        lock.unlock();
+        const bool started = process_->start(
+            "cursor-agent", arguments, request.working_directory,
+            [this, generation](std::string line) { pending_events_.push_process({ProviderProcessEvent::Kind::kStdout, std::move(line), 0, generation}); },
+            [this, generation](std::string line) { pending_events_.push_process({ProviderProcessEvent::Kind::kStderr, std::move(line), 0, generation}); },
+            [this, generation](int exit_code) { pending_events_.push_process({ProviderProcessEvent::Kind::kExit, {}, exit_code, generation}); }, error);
+        lock.lock();
+        if (started) {
+            task_sessions_.at(request.task_id).launched = true;
+        } else {
+            active_task_id_.clear();
+        }
+        return started;
+    }
 
     AgentProviderProbe probe_locked() {
         if (!probe_complete_) {
@@ -407,7 +362,7 @@ private:
             .version = version_,
             .models = models_,
             .supports_structured_approval = false,
-            .requires_turn_approval = true,
+            .requires_turn_approval = false,
             .unavailable_reason = unavailable_reason_,
         };
     }
@@ -645,14 +600,12 @@ private:
     ProviderDispatchQueue pending_events_;
     std::atomic<std::uint64_t> process_generation_{0};
     AgentProviderEventSink sink_;
-    std::optional<PendingTurn> pending_;
     std::unordered_map<std::string, TaskSession> task_sessions_;
     std::string assistant_output_emitted_;
     std::string active_task_id_;
     std::string version_;
     std::vector<std::string> models_;
     std::string unavailable_reason_;
-    std::uint64_t next_approval_id_ = 1;
     bool probe_complete_ = false;
     bool available_ = false;
     redclaw::protocol::AgentProviderReadinessV1 readiness_ =

@@ -75,6 +75,8 @@ The portable archive does not install a Windows service. Windows SmartScreen may
 
 Direct connectivity depends on NAT, CGNAT, firewall, and ISP policy. Configure TURN when direct traversal is unavailable. The current version has not been tested across every network combination.
 
+The current build supports System default routing and explicit adapter binding. A normal Windows HTTP/HTTPS system proxy affects only WinHTTP-based centralized HTTP signaling; it does not carry public-DHT or ICE UDP. The planned per-role exit selection and the supporting evidence are documented in the [network exit analysis](docs/architecture/network-exit-selection-analysis.md).
+
 ## GitHub cloud validation boundary
 
 GitHub Actions uses a newly provisioned Windows virtual machine for each job. Dependencies already installed in a developer's local vcpkg tree are not available in that VM. The unit workflow installs its own Qt, FFmpeg, and other dependencies during CMake configuration. Matching vcpkg revisions and dependency manifests reuse a hosted binary cache; a missing cache or a dependency change still requires one longer build.
@@ -114,3 +116,5 @@ The next phase expands cross-site and TURN coverage, hardens unattended install 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer documentation index](docs/README.md). Report security issues privately according to [SECURITY.md](SECURITY.md).
 
 RedClawDesktop is licensed under [Apache License 2.0](LICENSE). Distributed third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `third_party/licenses/`.
+
+In the current development candidate, connection passwords are mandatory (published v0.1.3 assets do not include this capability): save and confirm a local password before Host waits; enter the Host machine code and peer password on Client. Successful authentication automatically connects and remembers the peer password using current-user Windows DPAPI. Older peers without authentication must upgrade. See the [connection password contract](docs/architecture/connection-password-v1.md).
