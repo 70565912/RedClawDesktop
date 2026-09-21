@@ -389,6 +389,7 @@ struct MediaRecoveryProbe {
     std::uint64_t generation = 0;
     MediaRecoveryProbePhase phase = MediaRecoveryProbePhase::kNone;
     std::size_t wire_budget_bytes = 0;
+    std::uint32_t baseline_rate_kbps = 0;
     bool recovery = true;
 };
 

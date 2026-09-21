@@ -50,6 +50,8 @@ struct DesktopMediaSendPacer::Impl {
     std::uint64_t reservation_generation = 0;
     std::uint64_t reservation_recovery_generation = 0;
     std::uint64_t next_frame_us = 0;
+    std::uint64_t frame_cadence_remainder = 0;
+    std::uint32_t frame_cadence_fps = 0;
     bool application_limited = true;
     MediaSampleWindow normal_service;
     MediaSampleWindow key_service;
@@ -94,8 +96,10 @@ struct DesktopMediaSendPacer::Impl {
         for (const auto& frame : pending) telemetry.pending_bytes += frame.payload.size();
         telemetry.retained_bytes = retained_bytes();
         const auto period = telemetry.target_fps == 0 ? 0ULL : 1000000ULL / telemetry.target_fps;
-        const auto service = static_cast<std::uint64_t>(std::max(
-            normal_service.quantile(0.95), key_service.quantile(0.95)));
+        // Keyframes are rare dependency anchors. Learning their complete send
+        // duration as the normal FIFO depth turns an occasional keyframe wait
+        // into persistent display latency for every following P-frame.
+        const auto service = static_cast<std::uint64_t>(normal_service.quantile(0.95));
         const auto jitter = budget.lateness_us();
         telemetry.queue_target_us = std::max(period, service + jitter);
         if (telemetry.congested) {
@@ -362,12 +366,9 @@ struct DesktopMediaSendPacer::Impl {
                         deadline_us = std::min(hard_deadline_us, now_us + remaining_us);
                         deadline_ms = (deadline_us - started_us) / 1000;
                     }
-                    if (probe_generation != 0 && recovery_probe.generation == probe_generation
-                        && recovery_probe.recovery
-                        && recovery_probe.phase == MediaRecoveryProbePhase::kCancelled) {
-                        deadline_us = now_us;
-                        deadline_reason = "recovery_probe_unconfirmed";
-                    }
+                    // Probe completion only changes the rate used for later
+                    // packets. A failed capacity probe must not invalidate an
+                    // otherwise sendable recovery frame at the confirmed rate.
                 }
                 if (now_us >= deadline_us) {
                     trace.outcome = 2;
@@ -421,10 +422,18 @@ struct DesktopMediaSendPacer::Impl {
                 }
                 now_us = steady_now_us();
                 if (now_us >= deadline_us) continue;
-                if (recovery_probe.phase == MediaRecoveryProbePhase::kProbing)
-                    probe_generation = recovery_probe.generation;
-                else
-                    probe_generation = 0;
+                const auto probe_limit = recovery_probe.wire_budget_bytes == 0
+                    ? 4U * 16U * 1024U : recovery_probe.wire_budget_bytes;
+                const bool probe_packet = recovery_probe.phase == MediaRecoveryProbePhase::kProbing
+                    && telemetry.probe_end_sequence == 0
+                    && telemetry.probe_wire_bytes + wire_bytes <= probe_limit;
+                probe_generation = probe_packet ? recovery_probe.generation : 0;
+                const auto effective_rate_kbps = probe_packet
+                    ? telemetry.pacing_bitrate_kbps
+                    : (recovery_probe.phase == MediaRecoveryProbePhase::kProbing
+                            && recovery_probe.baseline_rate_kbps != 0
+                        ? recovery_probe.baseline_rate_kbps : telemetry.pacing_bitrate_kbps);
+                budget.update_rate(effective_rate_kbps, now_us);
                 const std::uint64_t delay_us = budget.delay_until_available_us(
                     wire_bytes,
                     now_us);
@@ -433,18 +442,7 @@ struct DesktopMediaSendPacer::Impl {
                 const bool buffered_available = transport_state.open
                     && transport_state.buffered_amount + wire_bytes
                         <= telemetry.buffered_limit_bytes;
-                const auto probe_limit = recovery_probe.wire_budget_bytes == 0
-                    ? 4U * 16U * 1024U : recovery_probe.wire_budget_bytes;
-                if (probe_generation != 0 && recovery_probe.phase == MediaRecoveryProbePhase::kProbing
-                    && telemetry.probe_wire_bytes + wire_bytes > probe_limit
-                    && telemetry.probe_end_sequence == 0)
-                    telemetry.probe_end_sequence = next_transport_sequence;
-                const bool probe_available = probe_generation == 0
-                    || (recovery_probe.generation == probe_generation
-                        && recovery_probe.phase == MediaRecoveryProbePhase::kConfirmed)
-                    || (telemetry.probe_end_sequence == 0
-                        && telemetry.probe_wire_bytes + wire_bytes <= probe_limit);
-                if (delay_us == 0 && in_flight_available && buffered_available && probe_available
+                if (delay_us == 0 && in_flight_available && buffered_available
                     && budget.consume(wire_bytes, now_us)) {
                     transport_sequence = ++next_transport_sequence;
                     telemetry.in_flight_bytes += wire_bytes;
@@ -485,7 +483,7 @@ struct DesktopMediaSendPacer::Impl {
                     });
                 const auto wake_us = steady_now_us();
                 const auto elapsed = wake_us - wait_begin_us;
-                if (transport_state.open && in_flight_available && buffered_available && probe_available) {
+                if (transport_state.open && in_flight_available && buffered_available) {
                     budget.observe_wait(wait_us, elapsed);
                     telemetry.frame_token_limited = true;
                     telemetry.token_wait_total_us += elapsed;
@@ -503,7 +501,6 @@ struct DesktopMediaSendPacer::Impl {
                     if (!transport_state.open) trace.channel_wait_us += elapsed;
                     else if (!in_flight_available) trace.in_flight_wait_us += elapsed;
                     else if (!buffered_available) trace.buffered_wait_us += elapsed;
-                    else if (!probe_available) trace.probe_wait_us += elapsed;
                     else trace.token_wait_us += elapsed;
                 }
             }
@@ -700,12 +697,27 @@ struct DesktopMediaSendPacer::Impl {
                 frames_sent_before = telemetry.frames_sent;
                 active_recovery_frame = frame.recovery_frame;
                 frame_generation = generation;
-                // Network packet pacing does not authorize an unlimited burst
-                // of complete frames into the existing two-slot decoder bridge.
-                const auto period = policy.decision_revision == 0 ? 0ULL : policy.receiver_frame_period_us != 0
-                    ? policy.receiver_frame_period_us
-                    : (frame.target_fps == 0 ? 0ULL : 1000000ULL / frame.target_fps);
-                next_frame_us = steady_now_us() + period;
+                // Advance a cumulative frame clock. A late wake keeps its
+                // fractional remainder, while a long send permits at most one
+                // immediate catch-up frame instead of replaying the backlog.
+                const auto fps = frame.target_fps;
+                const auto slot_us = steady_now_us();
+                if (fps == 0) {
+                    next_frame_us = 0;
+                    frame_cadence_remainder = 0;
+                    frame_cadence_fps = 0;
+                } else {
+                    const auto period = std::max<std::uint64_t>(1, 1000000ULL / fps);
+                    if (frame_cadence_fps != fps || next_frame_us == 0
+                        || slot_us > next_frame_us + 2 * period) {
+                        next_frame_us = slot_us;
+                        frame_cadence_remainder = 0;
+                        frame_cadence_fps = fps;
+                    }
+                    const auto numerator = 1000000ULL + frame_cadence_remainder;
+                    next_frame_us += numerator / fps;
+                    frame_cadence_remainder = numerator % fps;
+                }
             }
             cv.notify_all();
             notify_capacity();
@@ -789,6 +801,8 @@ void DesktopMediaSendPacer::reset(bool reset_transport_sequence) {
     ++impl_->generation;
     impl_->clear_pending();
     impl_->next_frame_us = 0;
+    impl_->frame_cadence_remainder = 0;
+    impl_->frame_cadence_fps = 0;
     ++impl_->writable_revision;
     impl_->cv.notify_all();
     if (impl_->worker.get_id() != std::this_thread::get_id()) {

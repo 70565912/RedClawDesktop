@@ -180,6 +180,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
             ++recovery_probe_.generation;
             recovery_probe_.phase = MediaRecoveryProbePhase::kProbing;
             recovery_probe_.wire_budget_bytes = probe_bytes;
+            recovery_probe_.baseline_rate_kbps = recovery_probe_original_rate_;
             recovery_probe_.recovery = recovery_needed;
             recovery_probe_started_ms_ = sample.now_steady_ms;
             ++probe_count_;
