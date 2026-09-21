@@ -96,6 +96,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
 
     // One authority for ordinary and recovery probes. Only a complete tagged
     // media train confirms capacity; a ping or an arbitrary ACK cannot.
+    bool probe_cancelled_for_pressure = false;
     if (recovery_probe_.phase == MediaRecoveryProbePhase::kProbing) {
         const bool completed = new_feedback && sample.demand.probe_end_sequence != 0
             && t.latest_acknowledged_sequence >= sample.demand.probe_end_sequence
@@ -113,6 +114,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
         } else if (completed || expired || pressure || !sample.media_channel_open) {
             pacing_bitrate_kbps_ = recovery_probe_original_rate_;
             recovery_probe_.phase = MediaRecoveryProbePhase::kCancelled;
+            probe_cancelled_for_pressure = pressure;
             d.reason = completed ? "media_probe_no_capacity_gain" : "media_probe_cancelled";
         }
         if (recovery_probe_.phase != MediaRecoveryProbePhase::kProbing)
@@ -125,15 +127,25 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
     // most one drain decision until the measured pressure has cleared.
     const bool new_pressure_evidence = sample.local_backpressure
         || (new_feedback && (confirmed_media_pressure || sustained_loss))
-        || (new_rtt && static_cast<std::uint64_t>(sample.rtt_queue_delay_ms) * 1000 > allowance);
+        || (new_rtt && rtt_pressure_rounds_ >= 2);
     if (!pressure) {
         pressure_backoff_latched_ = false;
     }
     if (pressure && new_pressure_evidence && !pressure_backoff_latched_
+        && (!probe_cancelled_for_pressure || sample.local_backpressure || sustained_loss)
         && (last_backoff_sample_ms_ == 0
             || sample.now_steady_ms >= last_backoff_sample_ms_ + (horizon + 999) / 1000)) {
+        // A single low delivery batch may be a keyframe burst or ACK gap.
+        // Drain from the robust recent delivery floor; a real path reduction
+        // moves that floor after sustained samples, while an outlier cannot
+        // collapse the sender by an order of magnitude.
+        const auto robust_delivery = delivery_samples_.size() < 3
+            ? static_cast<double>(t.delivery_bitrate_kbps)
+            : delivery_samples_.quantile(0.5);
         const double delivered = usable_rate
-            ? std::min<double>(pacing_bitrate_kbps_, t.delivery_bitrate_kbps) : pacing_bitrate_kbps_;
+            ? std::min<double>(pacing_bitrate_kbps_,
+                std::max<double>(t.delivery_bitrate_kbps, robust_delivery))
+            : pacing_bitrate_kbps_;
         // Drain measured excess queue instead of applying a fixed percentage.
         const double drain_us = static_cast<double>(std::max(queue_us, allowance));
         pacing_bitrate_kbps_ = rate_kbps(delivered * static_cast<double>(horizon)

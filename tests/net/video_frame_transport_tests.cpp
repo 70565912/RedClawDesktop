@@ -403,11 +403,15 @@ bool test_congestion_controller_ignores_stale_transport_pressure() {
     sample.rtt_queue_delay_ms = 220;
     sample.rtt_sample_id = 1;
     sample.rtt_fresh = true;
+    const auto first_local_pressure = controller.update(sample);
+    sample.now_steady_ms = 1300;
+    ++sample.rtt_sample_id;
     const auto local_pressure = controller.update(sample);
     ok = expect_true(
-        local_pressure.backoff
+        !first_local_pressure.backoff
+            && local_pressure.backoff
             && local_pressure.pressure == redclaw::net::MediaNetworkPressure::kSevere,
-        "fresh Host-owned RTT queue growth should still trigger backoff without receiver feedback") && ok;
+        "sustained Host-owned RTT queue growth should trigger backoff without receiver feedback") && ok;
     return ok;
 }
 
