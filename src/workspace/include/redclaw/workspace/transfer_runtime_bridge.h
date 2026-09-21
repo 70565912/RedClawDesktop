@@ -12,7 +12,7 @@ inline constexpr std::uint32_t kFileTransferCapabilityVersion = 1;
 #else
 inline constexpr std::uint32_t kFileTransferCapabilityVersion = 0;
 #endif
-inline constexpr std::uint32_t kClipboardCapabilityVersion = kFileTransferCapabilityVersion ? 2 : 0;
+inline constexpr std::uint32_t kClipboardCapabilityVersion = kFileTransferCapabilityVersion ? 3 : 0;
 // Coordinates one file batch on the existing Control v1 envelope. Callbacks
 // only enqueue bounded data; all transitions, control sends, and gate updates
 // belong to the runtime owner. Disk work belongs exclusively to TransferWorker.
@@ -48,6 +48,7 @@ private:
     void update_availability();
     void browse(const Control& request);
     void pump_browser();
+    void pump_local_clipboard();
     bool matches(const Control& message) const;
     bool source() const;
     bool clipboard() const { return purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboard; }
@@ -61,14 +62,20 @@ private:
     BulkSend bulk_send_;
     std::function<bool()> ensure_;
     std::unique_ptr<TransferWorker> worker_;
+    std::unique_ptr<TransferWorker> local_clipboard_source_;
+    std::optional<std::string> local_clipboard_data_, local_clipboard_receipt_;
     ClipboardHostPaste clipboard_paste_;
+    ClipboardCapture clipboard_capture_;
     std::unique_ptr<DirectoryBrowser> browser_;
     std::string browse_operation_;
     std::optional<Control> pending_browse_, browse_reply_;
+    bool browser_local_ = false;
     protocol::TransferDirectionV1 direction_ = protocol::TransferDirectionV1::kToHost;
     protocol::WorkspaceTransferPurposeV1 purpose_ = protocol::WorkspaceTransferPurposeV1::kFiles;
     std::uint32_t clipboard_sequence_ = 0, clipboard_version_ = 0;
     std::string clipboard_batch_id_;
+    std::uint32_t clipboard_mode_ = 0;
+    std::string clipboard_source_;
     bool clipboard_ready_ = false, paste_submitted_ = false, paste_requested_ = false;
     protocol::TransferConflictV1 conflict_ = protocol::TransferConflictV1::kKeepBoth;
     std::deque<Control> outgoing_;

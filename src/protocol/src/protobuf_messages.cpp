@@ -213,6 +213,8 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
         nested->set_results_path(data.results_path);
         nested->set_purpose(static_cast<std::uint32_t>(data.purpose));
         nested->set_clipboard_sequence(data.clipboard_sequence); nested->set_paste_submitted(data.paste_submitted);
+        nested->set_clipboard_mode(data.clipboard_mode); nested->set_clipboard_source(data.clipboard_source);
+        nested->set_snapshot_path(data.snapshot_path);
         nested->set_created_at_ms(data.created_at_ms);
         nested->set_active(data.active); nested->set_operation_revision(data.operation_revision);
     }
@@ -331,6 +333,8 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
         data.results_path = nested.results_path();
         data.purpose = static_cast<WorkspaceTransferPurposeV1>(nested.purpose());
         data.clipboard_sequence = nested.clipboard_sequence(); data.paste_submitted = nested.paste_submitted();
+        data.clipboard_mode = nested.clipboard_mode(); data.clipboard_source = nested.clipboard_source();
+        data.snapshot_path = nested.snapshot_path();
         data.created_at_ms = nested.created_at_ms();
         data.skipped_entries = nested.skipped_entries();
         data.active = nested.active(); data.operation_revision = nested.operation_revision();

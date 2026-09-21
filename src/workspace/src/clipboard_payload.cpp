@@ -111,6 +111,77 @@ ClipboardSnapshot::ClipboardSnapshot() : impl_(std::make_unique<Impl>()) {}
 ClipboardSnapshot::~ClipboardSnapshot() = default;
 const std::filesystem::path& ClipboardSnapshot::metadata_directory() const { return impl_->metadata; }
 std::span<const ClipboardFileSelection> ClipboardSnapshot::files() const { return impl_->files; }
+bool ClipboardSnapshot::create(const std::filesystem::path& spool, std::string_view descriptor,
+    const std::atomic_bool& cancelled, std::string* error) {
+    protocol::wire::ClipboardSourceV1 input;
+    if (!input.ParseFromArray(descriptor.data(), static_cast<int>(descriptor.size())) || input.schema_version() != 1
+        || input.formats_size() > 6 || input.files_size() > 1024) return fail(error, "clipboard_source_invalid");
+    const auto path = [](const std::string& text) { return std::filesystem::path(std::u8string(
+        reinterpret_cast<const char8_t*>(text.data()), text.size())); };
+    if (!input.snapshot_directory().empty()) {
+        if (input.formats_size() || input.files_size()) return fail(error, "clipboard_source_ambiguous");
+        const auto directory = path(input.snapshot_directory());
+        PreparedClipboardPayload checked;
+        if (!directory.is_absolute() || !checked.load(directory, cancelled, error)) return false;
+        // Reference an explicit verified snapshot; never take ownership of it.
+        impl_->metadata = directory / "metadata";
+        std::error_code ec;
+        const auto files = directory / "files";
+        if (std::filesystem::exists(files, ec)) impl_->files.push_back({files, "files"});
+        return true;
+    }
+    if (!input.formats_size() && !input.files_size()) return fail(error, "clipboard_source_empty");
+    std::array<unsigned char, 16> random{};
+    if (!spool.is_absolute() || RAND_bytes(random.data(), static_cast<int>(random.size())) != 1)
+        return fail(error, "clipboard_source_invalid");
+    std::string name = "redclaw-clipboard-"; constexpr char hex[] = "0123456789abcdef";
+    for (const auto byte : random) { name += hex[byte >> 4]; name += hex[byte & 15]; }
+    std::error_code ec; const auto root = spool / name;
+    if (!std::filesystem::create_directory(root, ec)) return fail(error, "clipboard_snapshot_create_failed");
+    impl_->root = root; impl_->metadata = root / "metadata";
+    if (!std::filesystem::create_directory(impl_->metadata, ec)) return fail(error, "clipboard_snapshot_create_failed");
+    TransferFileReceiver writer;
+    if (!writer.begin_batch(impl_->metadata, name, error)) return false;
+    protocol::wire::ClipboardPayloadManifestV1 manifest; manifest.set_schema_version(1);
+    std::set<std::uint32_t> kinds;
+    for (const auto& format : input.formats()) {
+        if (format.kind() < 1 || format.kind() > 6 || !kinds.insert(format.kind()).second
+            || (!format.file().empty() && !format.data().empty())) return fail(error, "clipboard_source_format_invalid");
+        std::string hash; std::uint64_t size = format.data().size();
+        if (format.file().empty()) {
+            if (!size || !write_snapshot_file(writer, format_file(format.kind()),
+                {reinterpret_cast<const std::uint8_t*>(format.data().data()), format.data().size()}, cancelled, &hash, error)) return false;
+        } else {
+            TransferFileSource source;
+            if (!source.open(path(format.file()), error)) return false;
+            size = source.size();
+            if (!size || writer.begin_file(format_file(format.kind()), size, TransferConflict::kKeepBoth).result != TransferEntryResult::kReceiving)
+                return fail(error, "clipboard_snapshot_file_create_failed");
+            for (;;) {
+                if (cancelled.load()) return fail(error, "clipboard_cancelled");
+                const auto read = source.read();
+                if (read.state == TransferReadState::kFailed) return fail(error, "clipboard_source_read_failed");
+                if (read.state == TransferReadState::kComplete) { hash = read.sha256; break; }
+                if (!writer.write(read.offset, read.bytes, error)) return false;
+            }
+            if (writer.commit(hash).result != TransferEntryResult::kCommitted) return fail(error, "clipboard_snapshot_commit_failed");
+        }
+        auto* format_info = manifest.add_formats();
+        format_info->set_kind(format.kind()); format_info->set_size(size); format_info->set_sha256(hash);
+    }
+    for (const auto& file : input.files()) {
+        const auto source = path(file);
+        const auto relative = "files/" + std::to_string(impl_->files.size()) + "/" + utf8(source.filename());
+        std::filesystem::path checked;
+        if (!source.is_absolute() || !validate_transfer_relative_path(relative, &checked, error))
+            return fail(error, "clipboard_file_path_invalid");
+        impl_->files.push_back({source, relative});
+    }
+    manifest.set_file_roots(static_cast<std::uint32_t>(impl_->files.size()));
+    const auto metadata = manifest.SerializeAsString(); std::string hash;
+    return write_snapshot_file(writer, "manifest.pb", {reinterpret_cast<const std::uint8_t*>(metadata.data()), metadata.size()},
+        cancelled, &hash, error) && writer.end_batch(error);
+}
 bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_t expected_sequence,
     const std::atomic_bool& cancelled, std::string* error) {
 #ifdef _WIN32

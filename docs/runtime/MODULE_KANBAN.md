@@ -79,6 +79,8 @@ Updated: 2026-09-20
 
 Updated: 2026-09-21
 
+- `X00-T21` Shared local workspace control API — done; opt-in owner-user IPC and PowerShell client share GUI terminal/transfer state, bounded results and negotiated terminal 2 / clipboard 3 semantics. Debug build, 22 automatic suites plus runtime-options coverage, real API/file round trips, both mixed-version directions and online Host rolling upgrade passed. Source integration with the five Host-side commits through `2d9fbca` also passed its Debug main build and nine focused regression suites. Independent candidate retains its earlier identity; running user instance preserved. Concurrent-load display-rate reduction remains recorded for follow-up. See [contract and examples](../architecture/workspace-control-v1.md).
+
 Physical follow-up for `X00-T16` (2026-09-20): rebuilt/published Debug from `88a3803`; all 11 focused suites passed after three sandbox-sensitive normal-user reruns, with one opt-in paint case skipped. Public-DHT/ICE real H.264/D3D11 playback and one approved Cursor task passed. A target visibly consumed a GUI click and QA-protocol digit. Physical-keyboard capture, application paste and human-assisted workspace round trips are optional developer evaluations, not automatic follow-ups or release conditions. Source-derived capability versions still are not observed negotiation evidence. No peer restart/deployment occurred, and no full remote file/clipboard/terminal matrix is required.
 
 - `X00-T01` Real local dual-GUI desktop stream with three channels — done.

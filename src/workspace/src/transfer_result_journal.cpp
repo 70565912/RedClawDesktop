@@ -127,6 +127,7 @@ TransferResultPage read_transfer_result_page(const std::filesystem::path& path, 
     auto position = cursor ? cursor : kMagic.size();
     if (position < kMagic.size() || position > size) { result.error = "transfer_results_invalid_cursor"; return result; }
     result.begin = result.end = position;
+    std::size_t page_bytes = 0;
     for (std::size_t count = 0; count < kTransferResultPageEntries; ++count) {
         if ((!previous && position == size) || (previous && position == kMagic.size())) break;
         std::array<unsigned char, 4> marker{}, tail{};
@@ -136,6 +137,7 @@ TransferResultPage read_transfer_result_page(const std::filesystem::path& path, 
             result.error = "transfer_results_truncated"; break;
         }
         const auto length = decode_length(marker);
+        if (!result.entries.empty() && page_bytes + length > 32768) break;
         const auto available = previous ? position - kMagic.size() : size - position;
         if (!length || length > kMaxRecordBytes || static_cast<std::uint64_t>(length) + 8 > available) {
             result.error = "transfer_results_invalid_length"; break;
@@ -153,6 +155,7 @@ TransferResultPage read_transfer_result_page(const std::filesystem::path& path, 
         TransferResultEntry entry{record.relative_path(), record.size(), record.directory(), record.skipped()};
         if (!valid(entry)) { result.error = "transfer_results_invalid_entry"; break; }
         result.entries.push_back(std::move(entry));
+        page_bytes += length;
         position = previous ? begin : begin + length + 8;
         if (previous) result.begin = position; else result.end = position;
     }

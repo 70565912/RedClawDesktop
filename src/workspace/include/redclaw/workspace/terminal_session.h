@@ -27,11 +27,13 @@ public:
     TerminalSession& operator=(const TerminalSession&) = delete;
 
     bool start(const std::filesystem::path& working_directory, TerminalSize size,
-               std::string* error);
+               std::string* error, std::string_view integration_nonce = {});
     bool write(std::string_view utf8);
     bool resize(TerminalSize size);
     void discard_pending_input();
     [[nodiscard]] std::optional<std::string> take_output();
+    [[nodiscard]] std::optional<std::string> take_integration();
+    [[nodiscard]] bool integration_alive() const;
     [[nodiscard]] bool running() const;
     [[nodiscard]] std::size_t buffered_output_bytes() const;
     [[nodiscard]] bool output_finished() const;

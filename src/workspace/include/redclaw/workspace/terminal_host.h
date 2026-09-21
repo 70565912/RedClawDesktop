@@ -1,6 +1,8 @@
 #pragma once
 #include "redclaw/protocol/terminal_protocol.h"
 #include "redclaw/workspace/terminal_session.h"
+#include "redclaw/workspace/terminal_shell_integration.h"
+#include <deque>
 #include <functional>
 
 namespace redclaw::workspace {
@@ -15,6 +17,7 @@ public:
     // Rebinding is only for a new transport epoch of this same desktop session.
     void rebind_epoch(std::string epoch);
     void set_connection(bool channel_open, bool input_eligible);
+    void set_capability(std::uint32_t version) { capability_ = version; }
     bool receive(const protocol::TerminalMessageV1& message, std::string* error = nullptr);
     void pump();
     void end_session();
@@ -23,8 +26,17 @@ public:
     [[nodiscard]] std::string_view terminal_id() const;
 private:
     void send_state(protocol::TerminalMessageTypeV1 type);
+    void shell_event(const TerminalShellIntegration::Event& event);
+    void execution_result(std::string state, std::string error = {});
     Sender sender_;
     TerminalSession terminal_;
+    TerminalShellIntegration integration_;
+    std::deque<protocol::TerminalMessageV1> execution_events_;
+    std::optional<TerminalShellIntegration::Event> completion_;
+    std::string execution_id_;
+    std::uint32_t capability_ = 1;
+    bool prompt_ready_ = false, cancel_requested_ = false;
+    std::uint64_t output_position_ = 0;
     std::string epoch_, terminal_id_, error_code_;
     std::filesystem::path working_directory_;
     std::optional<protocol::TerminalMessageV1> pending_output_;
