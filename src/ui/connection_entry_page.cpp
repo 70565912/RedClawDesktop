@@ -42,6 +42,26 @@ void PageScrollComboBox::wheelEvent(QWheelEvent* event) {
 
 ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   setObjectName("preConnectionPage");
+  setStyleSheet(R"(
+    QLineEdit[connectionField="true"] {
+      lineedit-password-character: 42;
+      background-color: #0c1a2d;
+      color: #f8fafc;
+      border: 2px solid #3b82f6;
+      border-radius: 12px;
+      padding: 8px 12px;
+      font: 600 13pt "Consolas";
+    }
+    QLineEdit[connectionField="true"]:focus {
+      border-color: #7dd3fc;
+      background-color: #10213a;
+    }
+    QLineEdit[connectionField="true"]:disabled {
+      background-color: #08101d;
+      color: #64748b;
+      border: 1px solid #243244;
+    }
+  )");
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   auto* root = new QVBoxLayout(this);
   root->setContentsMargins(6, 6, 6, 6);
@@ -96,6 +116,7 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   peer_title->setObjectName("statusCardTitle");
   peer_code_ = new QLineEdit(primary_group);
   peer_code_->setObjectName("peerCodeInput");
+  peer_code_->setProperty("connectionField", true);
   peer_code_->setFixedHeight(52);
   peer_code_->setPlaceholderText("Enter the 8-character code");
   peer_code_->setClearButtonEnabled(true);
@@ -125,39 +146,42 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   code_grid->setColumnStretch(1, 1);
   card_layout->addLayout(code_grid);
   passwords_ = new ConnectionPasswordPanel(primary_group);
-  card_layout->addWidget(passwords_);
+  local_column_layout->addWidget(new QLabel("Local password", local_column));
+  local_column_layout->addWidget(passwords_->local_editor());
+  peer_column_layout->addWidget(new QLabel("Peer password", peer_column));
+  peer_column_layout->addWidget(passwords_->peer_editor());
 
 
   allow_remote_control_ = new QCheckBox(
-      "Allow the connected device to control this computer's keyboard and mouse",
+      "Host: allow keyboard and mouse control",
       primary_group);
   allow_remote_control_->setObjectName("allowRemoteControlCheckbox");
   allow_remote_control_->setChecked(false);
   allow_remote_control_->setToolTip(
       "Applies only when this device waits as Host. Administrator windows, UAC, and Ctrl+Alt+Del are not included.");
-  card_layout->addWidget(allow_remote_control_);
+
   allow_remote_agent_ = new QCheckBox(
-      "When waiting as Host: allow the peer to use local development Agents",
+      "Host: allow development Agents",
       primary_group);
   allow_remote_agent_->setObjectName("allowRemoteAgentCheckbox");
   allow_remote_agent_->setChecked(false);
   allow_remote_agent_->setToolTip(
       "Only locally registered project IDs are exposed; remote paths are never accepted.");
-  card_layout->addWidget(allow_remote_agent_);
+
   allow_controller_agent_ = new QCheckBox(
-      "When connecting as Controller: allow the peer to use local development Agents",
+      "Controller: allow development Agents",
       primary_group);
   allow_controller_agent_->setObjectName("allowControllerAgentCheckbox");
   allow_controller_agent_->setChecked(false);
-  card_layout->addWidget(allow_controller_agent_);
+
   agent_settings_ = new QPushButton("Development Agent settings", primary_group);
   agent_settings_->setObjectName("agentSettingsButton");
   agent_settings_->setToolTip(
       "Manage local Agent login readiness and registered projects before starting either role.");
-  card_layout->addWidget(agent_settings_, 0, Qt::AlignLeft);
 
-  auto* action_row = new QHBoxLayout();
-  action_row->setSpacing(10);
+
+
+
   wait_ = new QPushButton("Wait for connection", primary_group);
   wait_->setObjectName("primaryAction");
   wait_->setMinimumHeight(42);
@@ -166,9 +190,9 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   connect_->setObjectName("connectAction");
   connect_->setMinimumHeight(42);
   connect_->setEnabled(false);
-  action_row->addWidget(wait_, 1);
-  action_row->addWidget(connect_, 1);
-  card_layout->addLayout(action_row);
+  local_column_layout->addWidget(wait_);
+  peer_column_layout->addWidget(connect_);
+
 
   status_ = new QLabel("Preparing your local code…", primary_group);
   status_->setObjectName("statusBanner");
@@ -182,7 +206,7 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   network_toggle_->setChecked(false);
   network_toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   network_toggle_->setArrowType(Qt::RightArrow);
-  network_toggle_->setText("Connection settings");
+  network_toggle_->setText("More settings");
   network_toggle_->setMaximumHeight(26);
   network_box_ = new QGroupBox(this);
   network_box_->setObjectName("secondaryCard");
@@ -190,14 +214,20 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
   network_settings_layout_->setContentsMargins(10, 8, 10, 18);
   network_settings_layout_->setHorizontalSpacing(10);
   network_settings_layout_->setVerticalSpacing(4);
+  network_settings_layout_->addRow(allow_remote_control_);
+  network_settings_layout_->addRow(allow_remote_agent_);
+  network_settings_layout_->addRow(allow_controller_agent_);
+  network_settings_layout_->addRow(agent_settings_);
   network_box_->hide();
   QObject::connect(network_toggle_, &QToolButton::toggled, this, [this](bool expanded) {
     network_box_->setVisible(expanded);
     network_toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-    network_toggle_->setText(expanded ? "Hide connection settings" : "Connection settings");
+    network_toggle_->setText("More settings");
   });
   root->addWidget(network_toggle_);
   root->addWidget(network_box_);
+  passwords_->set_tab_order(copy, wait_, peer_code_, connect_);
+  QWidget::setTabOrder(connect_, network_toggle_);
 
   QObject::connect(copy, &QPushButton::clicked, this, [this]() {
     if (QClipboard* clipboard = QApplication::clipboard()) {
@@ -210,6 +240,7 @@ ConnectionEntryPage::ConnectionEntryPage(QWidget* parent) : QWidget(parent) {
     passwords_->set_peer_code(peer_code());
     refresh_peer_validation();
   });
+  passwords_->status_changed = [this](const QString& text) { set_status(text, "info"); };
   passwords_->readiness_changed = [this] { set_actions_enabled(actions_enabled_); };
 }
 

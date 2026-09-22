@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-09-21
+Updated: 2026-09-22
 
 ## Current release
 
@@ -9,6 +9,8 @@ RedClawDesktop [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
 ## Verified local baseline
+
+X00-T24 streamlines the connection homepage into two columns with single-entry password saves, independent Show/Hide controls and a collapsed More settings panel. Native page tests cover both supported window sizes and high DPI. On operator request, the local Debug Host was subsequently rebuilt and started with its existing DPAPI-protected credential; startup reached `dht_waiting / offer_ready` with DHT reachable. Source synchronization includes upstream `6b6e930` (independent playback window and physical-pixel input) and `18b80b4` (Debug-default local workspace control). See [current task status](MODULE_KANBAN.md) and [validation log](../logs/DEVLOG.md).
 
 X00-T23 adds mandatory connection passwords to the current Debug candidate. Both peers must implement authentication v1; existing passwordless releases are explicitly rejected, without a same-version requirement. Local desktop, wrong-password recovery, actual mixed-binary rejection and privacy qualification passed; see [DEVLOG](../logs/DEVLOG.md) and [connection setup](../architecture/connection-password-v1.md). Running user instances and public release assets were not replaced.
 

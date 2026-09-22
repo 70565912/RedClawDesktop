@@ -1931,24 +1931,6 @@ bool launch_gui_shell(
       padding: 8px 10px;
       selection-background-color: #2563eb;
     }
-    QLineEdit#peerCodeInput {
-      min-height: 32px;
-      background-color: #0c1a2d;
-      color: #f8fafc;
-      border: 2px solid #3b82f6;
-      border-radius: 12px;
-      padding: 8px 12px;
-      font: 600 13pt "Consolas";
-    }
-    QLineEdit#peerCodeInput:focus {
-      border-color: #7dd3fc;
-      background-color: #10213a;
-    }
-    QLineEdit#peerCodeInput:disabled {
-      background-color: #08101d;
-      color: #64748b;
-      border: 1px solid #243244;
-    }
     QFrame#localCodeCard {
       background-color: #08101d;
       border: 1px solid #2a3a51;
