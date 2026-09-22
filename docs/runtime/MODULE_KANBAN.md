@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-21
+Updated: 2026-09-22
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the combined `v0.1.3` Developer Preview; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -78,7 +78,9 @@ Updated: 2026-09-20
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-21
+Updated: 2026-09-22
+
+- `X00-T24` Compact connection homepage and password input — done; two aligned columns, single-entry asynchronous save, independent Show/Hide with asterisk masking, dirty-password waiting gate and default-collapsed permissions/Agent/network settings. Native Windows connection UI/flow tests passed at both standard and high DPI (19 cases each); 800×600 and 900×680 fixture screenshots captured. Initial Debug candidate published separately; subsequently started the local Host under operator authorization. Synchronized through upstream `6b6e930`; merged Debug build and 49 focused UI/runtime/input cases passed. Source delivery preserves that running Host and existing public release assets. See [connection instructions](../architecture/connection-password-v1.md) and [validation details](../logs/DEVLOG.md).
 
 - `X00-T23` Mandatory connection password — done locally; DPAPI credentials, SCRAM-based all-channel admission, automatic rejection/acceptance, timeout/cooldown and retry recovery implemented. Debug build/publication, 104 focused cases, real local dual-GUI desktop, actual old-binary rejection in both directions, same-Host online bad-then-good recovery and credential privacy checks passed. Existing running instances and release assets unchanged; physical peer qualification remains separate. See [connection password contract](../architecture/connection-password-v1.md) and [evidence](../logs/DEVLOG.md).
 
