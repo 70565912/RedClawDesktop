@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-09-22 — Playback window is independent of the main window
+
+- The playback window titled `RedClaw` is created without a `QWidget` parent. Parenting it to `RedClaw Desktop` with `Qt::Window` made it a Windows owned window, so it stayed above the main window and disappeared whenever that window was minimized. The two top-level windows can now be activated separately. Closing the playback window still returns to the main window and does not quit the process. The main window still deletes the playback window when the GUI shuts down.
+
+## 2026-09-22 — Host replacement must keep a session-independent rollback
+
+- Replacing a live Host while its session is the only recovery path stopped the peer and did not bring it back. The Controller then stayed at `connected=false` with `remote_revision=0` and `fetch_hits=0`: the Host was not publishing, rather than publishing but failing ICE. Restarting only the Controller does not publish a Host session.
+- The remote terminal, workspace control and file transfer all ride that Host session. A rebuild scheduled after the stop also lacked the interactive desktop and the original compiler environment, and re-splitting the saved command line can make the new process exit immediately.
+- Rule, now in [AGENTS.md](../../AGENTS.md) and the [remote result contract](../../.agents/skills/remote-agent-result-contract/SKILL.md): finish the new build first, arm a task that does not depend on the current session and can relaunch the previous program if the new one does not publish, and only then stop the old Host. Treat the replacement as done only after a new Host session record is visible. If that rollback cannot be armed, leave the old Host running and report the replacement blocked.
+
 ## 2026-09-21 — Mandatory connection password (X00-T23)
 
 - Completed local implementation: independent SCRAM-SHA-256-based authentication gates every desktop/workspace channel. Host requires a confirmed password; Client supplies the Host password, connects automatically only on success, remembers successful credentials by machine code and supports changing/forgetting them. Waiting/connected sessions lock password editing. Passwords preserve case and whitespace; there is no complexity rule or passwordless fallback. UI password derivation runs in a worker so saving does not block its event loop.

@@ -172,6 +172,14 @@ TEST(PlaybackWindowLifecycle, ClosingPlaybackRestoresClosedMainWindowWithoutQuit
   main_window.show();
   playback_window.show();
   QApplication::processEvents();
+  EXPECT_EQ(playback_window.parentWidget(), nullptr);
+  main_window.showMinimized();
+  QApplication::processEvents();
+  EXPECT_TRUE(playback_window.isVisible());
+  EXPECT_FALSE(playback_window.isMinimized());
+  main_window.showNormal();
+  QApplication::processEvents();
+
   ASSERT_TRUE(main_window.close());
   ASSERT_FALSE(main_window.isVisible());
   ASSERT_TRUE(playback_window.isVisible());

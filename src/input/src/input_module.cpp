@@ -44,6 +44,48 @@ bool default_secure_desktop_active_probe() {
 #endif
 }
 
+#if defined(_WIN32)
+// DXGI desktop coordinates are physical pixels. SendInput absolute positions
+// use the calling thread's DPI context, and this process is otherwise unaware,
+// so an unaware GetSystemMetrics virtual screen is smaller than the capture.
+class PhysicalDesktopInputScope {
+public:
+    PhysicalDesktopInputScope() {
+        const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        if (user32 == nullptr) {
+            return;
+        }
+        set_context_ = reinterpret_cast<SetThreadDpiAwarenessContextFn>(
+            GetProcAddress(user32, "SetThreadDpiAwarenessContext"));
+        if (set_context_ == nullptr) {
+            return;
+        }
+        previous_ = set_context_(per_monitor_aware_v2());
+        active_ = previous_ != nullptr;
+    }
+
+    ~PhysicalDesktopInputScope() {
+        if (active_) {
+            set_context_(previous_);
+        }
+    }
+
+    PhysicalDesktopInputScope(const PhysicalDesktopInputScope&) = delete;
+    PhysicalDesktopInputScope& operator=(const PhysicalDesktopInputScope&) = delete;
+
+private:
+    using SetThreadDpiAwarenessContextFn = DPI_AWARENESS_CONTEXT (WINAPI*)(DPI_AWARENESS_CONTEXT);
+
+    static DPI_AWARENESS_CONTEXT per_monitor_aware_v2() {
+        return reinterpret_cast<DPI_AWARENESS_CONTEXT>(static_cast<INT_PTR>(-4));
+    }
+
+    SetThreadDpiAwarenessContextFn set_context_ = nullptr;
+    DPI_AWARENESS_CONTEXT previous_ = nullptr;
+    bool active_ = false;
+};
+#endif
+
 }  // namespace
 
 bool IInputInjectorBackend::inject_batch(const std::vector<InputEvent>& events) {
@@ -268,6 +310,9 @@ bool WindowsSendInputInjectorBackend::inject_batch(const std::vector<InputEvent>
     if (events.empty()) {
         return true;
     }
+    // Keep this scope alive through both SendInput calls. The normalized
+    // coordinates are only meaningful in the same DPI context that produced them.
+    [[maybe_unused]] const PhysicalDesktopInputScope physical_desktop;
     std::vector<INPUT> inputs;
     inputs.reserve(events.size());
     for (const auto& event : events) {
