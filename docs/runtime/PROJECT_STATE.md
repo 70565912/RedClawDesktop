@@ -4,7 +4,7 @@ Updated: 2026-09-22
 
 ## Current release
 
-RedClawDesktop v0.1.4 is the current Windows x64 Developer Preview prepared from this main. It supersedes [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3). Connection passwords are mandatory, so passwordless releases including v0.1.3 are rejected. The playback window is independent of the main window, and Host injection uses physical capture pixels. Version metadata, bilingual README and [release notes](../releases/v0.1.4.md) are aligned. Exact ZIP identity is recorded after the publisher uploads the package. v0.1.3 remains the 2026-09-20 package from `d7b022e`.
+RedClawDesktop [v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) is the current Windows x64 Developer Preview, published on 2026-09-22 from `4032409`. It supersedes [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3). Connection passwords are mandatory, so passwordless releases including v0.1.3 are rejected. The playback window is independent of the main window, and Host injection uses physical capture pixels. The public tag and both uploaded assets were verified; the 335-file ZIP is 348,129,471 bytes and its SHA256 is `363344bf8851b828b15cdd0ce1562e2b4a1dcc0f3462c91992a60290feec6469`, matching the GitHub asset digest. Local extracted-package startup passed. v0.1.3 remains the 2026-09-20 package.
 
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
@@ -74,7 +74,7 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-Current `main` includes the X00-T24 connection homepage and `6b6e930`: the playback window is independent of `RedClaw Desktop`, and Host injection maps input in the capture desktop's physical pixels. The wire protocol is unchanged. Published v0.1.3 assets are unchanged. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
+Current `main` includes the X00-T24 connection homepage and `6b6e930`: the playback window is independent of `RedClaw Desktop`, and Host injection maps input in the capture desktop's physical pixels. The wire protocol is unchanged. [v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) is the published package from `4032409`. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
 
 The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
 
