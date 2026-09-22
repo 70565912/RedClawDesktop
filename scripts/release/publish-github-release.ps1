@@ -35,11 +35,20 @@ function Invoke-CapturedCommand {
         [Parameter(Mandatory = $true)][string[]]$ArgumentList
     )
 
-    $output = & $FilePath @ArgumentList 2>&1
-    $exitCode = $LASTEXITCODE
+    # Windows PowerShell treats native stderr as a terminating error when
+    # ErrorActionPreference is Stop. A missing release is an expected probe.
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $FilePath @ArgumentList 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    $text = @(foreach ($line in @($output)) { "$line" }) -join [Environment]::NewLine
     return [pscustomobject]@{
         ExitCode = $exitCode
-        Output = ($output | Out-String).Trim()
+        Output = $text.Trim()
     }
 }
 

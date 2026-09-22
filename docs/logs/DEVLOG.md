@@ -2,7 +2,7 @@
 
 ## 2026-09-22 — Prepare v0.1.4 Developer Preview
 
-- Version metadata is 0.1.4 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.4.md) point at this preview. The README image is the current connection homepage: two code columns, masked password fields, and collapsed More settings. v0.1.3 and older passwordless releases are rejected. The publisher builds Release and checks the ZIP before creating the tag. Asset hashes are recorded after that upload. No signed installer is included.
+- Version metadata is 0.1.4 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.4.md) point at this preview. The README image is the current connection homepage: two code columns, masked password fields, and collapsed More settings. v0.1.3 and older passwordless releases are rejected. The publisher builds Release and checks the ZIP before creating the tag. On Windows PowerShell, probing a missing GitHub release no longer aborts the publisher. Asset hashes are recorded after that upload. No signed installer is included.
 
 ## 2026-09-22 — Source synchronization and connection UI delivery (X00-T24)
 
