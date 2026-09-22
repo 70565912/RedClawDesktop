@@ -28,7 +28,11 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     EXPECT_FALSE(options.allow_remote_input);
     EXPECT_FALSE(options.allow_remote_agent);
     EXPECT_FALSE(options.allow_remote_diagnostics);
+#ifdef NDEBUG
     EXPECT_FALSE(options.enable_workspace_control);
+#else
+    EXPECT_TRUE(options.enable_workspace_control);
+#endif
     EXPECT_FALSE(options.enable_ice_tcp);
     EXPECT_EQ(options.stream_video_max_width, 0U);
     EXPECT_FALSE(options.stream_qa_native_size);
@@ -36,10 +40,14 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     EXPECT_EQ(options.ice_udp_port, 55000U);
     EXPECT_EQ(options.dht_listen_port, 0U);
 }
-TEST(RuntimeOptions, WorkspaceControlRequiresExplicitEnableAndPipeNameValue) {
+TEST(RuntimeOptions, WorkspaceControlUsesBuildDefaultAndRequiresPipeNameValue) {
     RuntimeOptions options; std::string error;
     ASSERT_TRUE(parse({"--workspace-control-name", "RedClawDesktop.Test.Workspace"}, &options, &error)) << error;
+#ifdef NDEBUG
     EXPECT_FALSE(options.enable_workspace_control);
+#else
+    EXPECT_TRUE(options.enable_workspace_control);
+#endif
     EXPECT_EQ(options.workspace_control_name, "RedClawDesktop.Test.Workspace");
     options = RuntimeOptions{};
     ASSERT_TRUE(parse({"--enable-workspace-control"}, &options, &error)) << error;

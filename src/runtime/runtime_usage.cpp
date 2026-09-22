@@ -53,7 +53,7 @@ void print_usage() {
         << "  --input-diagnostics        Debug-only bounded input delivery evidence; requires stream smoke\n"
         << "  --debug-control-name <value>  Override local debug control endpoint name\n"
         << "  --enable-agent-control     Enable current-user typed normal-Agent control\n"
-        << "  --enable-workspace-control Enable current-user terminal/file/clipboard API\n"
+        << "  --enable-workspace-control Enable current-user terminal/file/clipboard API (default in Debug)\n"
         << "  --workspace-control-name   Local workspace pipe name (GUI only)\n"
         << "  --agent-control-name <value>  Override local normal-Agent control endpoint\n"
         << "  --coordination-journal-path <path>  Override owner-local coordination journal\n"

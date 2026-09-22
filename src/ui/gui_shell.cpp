@@ -1,4 +1,5 @@
 #include "gui_shell.h"
+#include "runtime/runtime_options.h"
 #include "playback/capture_playback_state.h"
 #include "playback/playback_frame_progress.h"
 #if defined(_WIN32) && defined(REDCLAW_ENABLE_QT_GUI)
@@ -430,7 +431,7 @@ struct GuiAutoStartOptions {
   QString run_id;
   QString agent_control_name = "RedClawDesktop.AgentControl.v1";
   QString workspace_control_name = "RedClawDesktop.WorkspaceControl.v1";
-  bool enable_workspace_control = false;
+  bool enable_workspace_control = runtime::kWorkspaceControlEnabledByDefault;
   QString coordination_journal_path;
   QString coordination_git_sha;
   QString debug_control_name = "RedClawDesktop.DebugControl.v1";

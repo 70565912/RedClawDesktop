@@ -3,9 +3,9 @@
 Implementation contract for X00-T21; current task status is on the
 [module kanban](../runtime/MODULE_KANBAN.md).
 
-The Controller optionally listens on the current-user named pipe
-`RedClawDesktop.WorkspaceControl.v1`. Start the candidate GUI with
-`--enable-workspace-control`; use `--workspace-control-name <name>` for an
+The Controller listens on the current-user named pipe
+`RedClawDesktop.WorkspaceControl.v1` by default in Debug builds. Release builds
+require `--enable-workspace-control`; use `--workspace-control-name <name>` for an
 isolated instance. There is no HTTP service or additional public port.
 The listener checks the connecting process's user identity. The existing
 GUI/runtime pipes still check the expected process IDs in both directions.

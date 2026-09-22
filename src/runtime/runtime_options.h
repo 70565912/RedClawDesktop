@@ -4,6 +4,12 @@
 #include <vector>
 
 namespace redclaw::runtime {
+#ifdef NDEBUG
+inline constexpr bool kWorkspaceControlEnabledByDefault = false;
+#else
+inline constexpr bool kWorkspaceControlEnabledByDefault = true;
+#endif
+
 // Startup configuration only; owns no session or thread state.
 // Preserve profile/CLI precedence and GUI pass-through flags.
 enum class RuntimeRole {
@@ -61,7 +67,7 @@ struct RuntimeOptions {
     bool enable_debug_control = false;
     std::string debug_control_name = "RedClawDesktop.DebugControl.v1";
     bool enable_agent_control = false;
-    bool enable_workspace_control = false;
+    bool enable_workspace_control = kWorkspaceControlEnabledByDefault;
     std::string workspace_control_name = "RedClawDesktop.WorkspaceControl.v1";
     std::string agent_control_name = "RedClawDesktop.AgentControl.v1";
     std::string coordination_journal_path;
