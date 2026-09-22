@@ -61,7 +61,7 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 File, clipboard and terminal features use common negotiated capabilities. Unsupported features stay unavailable with older peers; both sides need not upgrade together. Transfers pause new desktop/terminal input and Agent operations while video and existing output continue. Completion or cancellation restores only operations still eligible under their other authorization gates.
 
-The [local workspace control API](docs/architecture/workspace-control-v1.md) lets scripts use the current P2P session for terminal, file and clipboard operations. Enable the current-user pipe with `--enable-workspace-control`; no public listener is added. Candidate bundles include `maintenance/invoke-workspace-control.ps1` and are delivered separately from the running instance.
+The [local workspace control API](docs/architecture/workspace-control-v1.md) lets scripts use the current P2P session for terminal, file and clipboard operations. Debug builds enable the current-user pipe by default; Release builds require `--enable-workspace-control`. No public listener is added. Candidate bundles include `maintenance/invoke-workspace-control.ps1` and are delivered separately from the running instance.
 
 The portable archive does not install a Windows service. Windows SmartScreen may warn because this Developer Preview is not code-signed.
 
