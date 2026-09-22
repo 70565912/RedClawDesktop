@@ -4,10 +4,10 @@
 
 **A Windows P2P remote desktop and remote Agent workspace for developers**
 
-[简体中文](README.md) · [Download v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
+[简体中文](README.md) · [Download v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.3-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,9 +16,9 @@
 
 RedClawDesktop connects a developer to their own Windows workstation by device code. One GUI combines the live desktop, explicitly authorized keyboard and mouse input, and interaction with AI coding Agents running on the Host. Online DHT rendezvous and ICE/STUN/TURN negotiation are used to establish a direct P2P connection whenever possible.
 
-> `v0.1.3` is a Windows x64 Developer Preview combining capture recovery, Host cursor handling, and a file/clipboard/terminal workspace. It has no signed installer and does not claim coverage of every cross-site NAT and TURN combination. See the [release notes](docs/releases/v0.1.3.md).
+> `v0.1.4` is a Windows x64 Developer Preview. It keeps the v0.1.3 desktop and workspace and requires a connection password. The playback window is a separate top-level window. It has no signed installer and does not claim coverage of every cross-site NAT and TURN combination. See the [release notes](docs/releases/v0.1.4.md).
 
-![RedClawDesktop Controller showing the live desktop stream and Agent panel](docs/assets/redclaw-controller-desktop-stream.png)
+![RedClawDesktop connection page with device codes and connection passwords](docs/assets/redclaw-connection-homepage.png)
 
 ## Why RedClawDesktop
 
@@ -30,8 +30,9 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 ## Current capabilities
 
-| Capability | v0.1.3 status |
+| Capability | v0.1.4 status |
 | --- | --- |
+| Connection password | Required; passwordless v0.1.3 and earlier releases are rejected |
 | Windows Host and Controller GUI | Available |
 | Device code and public-DHT rendezvous | Available |
 | ICE/STUN direct connection and configurable TURN | Available; network coverage is still expanding |
@@ -48,16 +49,17 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 ## Quick start
 
-1. Download `RedClawDesktop-windows-x64-v0.1.3.zip` and `SHA256SUMS.txt` from the [v0.1.3 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3).
+1. Download `RedClawDesktop-windows-x64-v0.1.4.zip` and `SHA256SUMS.txt` from the [v0.1.4 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4).
 2. Verify the archive:
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.3.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.4.zip -Algorithm SHA256
    ```
 
-3. Extract it into a new directory and run `redclaw_desktop.exe`. Supported Host and Controller versions negotiate their common capabilities; connecting does not require identical versions or binaries.
-4. Select **Host** on the controlled PC and wait. Select **Controller** on the controlling PC, enter the Host device code, and connect.
-5. Once video is visible, enable remote input explicitly. Agent features also require a configured provider and registered projects on the Host.
+3. Extract it into a new directory and run `redclaw_desktop.exe`. Host and Controller builds that implement connection authentication negotiate their common capabilities; connecting does not require identical versions or binaries.
+4. On the controlled PC, enter the local connection password, click Save, choose **Host**, and wait. On the controlling PC, choose **Controller** and enter the Host machine code and that password. A correct password connects automatically. A wrong password does not open video or the workspace.
+5. The password is stored with the current Windows user's DPAPI. The Client remembers a successful password by machine code and can change or forget it. v0.1.3 and earlier passwordless releases must upgrade. See the [connection password contract](docs/architecture/connection-password-v1.md).
+6. Once video is visible, enable remote input explicitly. Agent features also require a configured provider and registered projects on the Host.
 
 File, clipboard and terminal features use common negotiated capabilities. Unsupported features stay unavailable with older peers; both sides need not upgrade together. Transfers pause new desktop/terminal input and Agent operations while video and existing output continue. Completion or cancellation restores only operations still eligible under their other authorization gates.
 
@@ -107,7 +109,7 @@ The standard entry point builds the project and stages a runnable tree under `re
 
 ## Project status
 
-`v0.1.3` retains the real desktop and Control/Media/Agent baseline and adds negotiated remote workspace capabilities. Automated acceptance is separate from optional manual development evaluation; local endpoint evidence is not proof of all cross-site networks. Strict performance targets remain engineering observations dependent on hardware, drivers, resolution, and network conditions.
+`v0.1.4` retains the real desktop and Control/Media/Agent baseline and requires a connection password. Automated acceptance is separate from optional manual development evaluation; local endpoint evidence is not proof of all cross-site networks. Strict performance targets remain engineering observations dependent on hardware, drivers, resolution, and network conditions.
 
 The next phase expands cross-site and TURN coverage, hardens unattended install and upgrade, adds code signing, and continues reducing GUI scheduling cost during large Agent output. See [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 
@@ -116,5 +118,3 @@ The next phase expands cross-site and TURN coverage, hardens unattended install 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer documentation index](docs/README.md). Report security issues privately according to [SECURITY.md](SECURITY.md).
 
 RedClawDesktop is licensed under [Apache License 2.0](LICENSE). Distributed third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `third_party/licenses/`.
-
-In the current development candidate, connection passwords are mandatory (published v0.1.3 assets do not include this capability): enter a local password once and click Save before Host waits; enter the Host machine code and peer password on Client. Successful authentication automatically connects and remembers the peer password using current-user Windows DPAPI. Older peers without authentication must upgrade. See the [connection password contract](docs/architecture/connection-password-v1.md).

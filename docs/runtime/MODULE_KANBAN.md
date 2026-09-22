@@ -2,7 +2,7 @@
 
 Updated: 2026-09-22
 
-This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the combined `v0.1.3` Developer Preview; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
+This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.4` Developer Preview. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
 Status values: `done`, `in-progress`, `planned`.
 

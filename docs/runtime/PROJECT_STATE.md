@@ -4,7 +4,7 @@ Updated: 2026-09-22
 
 ## Current release
 
-RedClawDesktop [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) is the current Windows x64 Developer Preview, published on 2026-09-20 from `d7b022e`. It combines the unpublished v0.1.2 capture/recovery candidate with file/folder transfer, on-demand clipboard, embedded PowerShell terminal and independent maintenance. Version metadata, bilingual README and [release notes](../releases/v0.1.3.md) are aligned. The public tag and both uploaded assets were verified; the ZIP SHA256 matches local packaging, and the [published-package Windows smoke](https://github.com/70565912/RedClawDesktop/actions/runs/35495853502) passed.
+RedClawDesktop v0.1.4 is the current Windows x64 Developer Preview prepared from this main. It supersedes [v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3). Connection passwords are mandatory, so passwordless releases including v0.1.3 are rejected. The playback window is independent of the main window, and Host injection uses physical capture pixels. Version metadata, bilingual README and [release notes](../releases/v0.1.4.md) are aligned. Exact ZIP identity is recorded after the publisher uploads the package. v0.1.3 remains the 2026-09-20 package from `d7b022e`.
 
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
