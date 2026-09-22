@@ -190,12 +190,21 @@ function Copy-ReleaseRuntime {
         -Destination $licenseDestination -Recurse -Force
 }
 
+function Get-RelativeStagingPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseDirectory,
+        [Parameter(Mandatory = $true)][string]$FullName
+    )
+    # Path.GetRelativePath is unavailable on Windows PowerShell 5 / .NET Framework.
+    $base = (Resolve-Path -LiteralPath $BaseDirectory).Path.TrimEnd('\') + '\'
+    $relative = [Uri]::UnescapeDataString(([Uri]$base).MakeRelativeUri([Uri]$FullName).ToString())
+    return $relative.Replace('\', '/')
+}
+
 function Get-StagedRelativeFiles {
     return @(
         Get-ChildItem -LiteralPath $stagingDirectory -Recurse -File |
-            ForEach-Object {
-                [System.IO.Path]::GetRelativePath($stagingDirectory, $_.FullName).Replace('\', '/')
-            } |
+            ForEach-Object { Get-RelativeStagingPath -BaseDirectory $stagingDirectory -FullName $_.FullName } |
             Sort-Object
     )
 }
