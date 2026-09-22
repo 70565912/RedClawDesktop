@@ -68,11 +68,13 @@ Use the [automated test matrix](../testing/test-matrix.md): unattended local tes
 
 ## Operator boundary
 
-For cross-machine Agent collaboration, use the [remote Agent result contract](../../.agents/skills/remote-agent-result-contract/SKILL.md). The Controller specifies the authorized objective and acceptance results; the endpoint Agent owns local permission decisions, method selection, execution and verification, returning redacted outcomes only. Keep raw endpoint context local and preserve genuine safety/authorization boundaries; an unrelated stage failure must not block independently authorized work.
+For cross-machine Agent collaboration, use the [remote Agent result contract](../../.agents/skills/remote-agent-result-contract/SKILL.md). The Controller specifies the authorized objective and acceptance results; the endpoint Agent owns local permission decisions, method selection, execution and verification, returning redacted outcomes only. Keep raw endpoint context local and preserve genuine safety/authorization boundaries; an unrelated stage failure must not block independently authorized work. Replacing a live Host requires a finished build and a rollback task that does not depend on the current session and can relaunch the previous program. Stop the old Host only after a new session record is visible. `connected=false` with `remote_revision=0` and `fetch_hits=0` means the Host is not publishing.
 
 The repository is not a communication or signaling exchange. Cross-machine coordination uses the established Control/Agent channels when connected and explicit operator actions during recovery. Runtime signaling, encrypted blobs, local paths, credentials, and evidence archives remain outside Git.
 
 ## Resume point
+
+Current `main` includes the X00-T24 connection homepage and `6b6e930`: the playback window is independent of `RedClaw Desktop`, and Host injection maps input in the capture desktop's physical pixels. The wire protocol is unchanged. Published v0.1.3 assets are unchanged. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
 
 The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
 

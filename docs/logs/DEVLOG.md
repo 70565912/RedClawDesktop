@@ -8,6 +8,11 @@
 - Merged-source validation: `build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish` passed, followed by guarded builds of the UI, runtime-options and remote-input test targets. Native Windows `ConnectionEntryPage.*:ConnectionFlowModel.*:PlaybackWindowLifecycle.*` passed 20 cases; `RuntimeOptions.*` passed 15; remote-input session/geometry tests passed 14 (49 total, zero skips). Evidence: `build/reports/github-sync-20260922/`. Existing main.cpp getenv deprecation warnings remain. The previously documented broader LocalControlOutput/Protobuf failure was not requalified; physical DPI/input and remote-session acceptance were not repeated.
 - Delivery scope is source and documentation on GitHub main. The published v0.1.3 downloadable assets remain unchanged; no new release package or running-Host replacement is part of this source publication.
 
+## 2026-09-22 — Host input uses the capture desktop's physical pixels
+
+- Host `SendInput` absolute positions follow the calling thread's DPI context. The process is otherwise DPI-unaware, so `GetSystemMetrics` virtual-screen size is smaller than DXGI/WGC physical capture pixels and the cursor does not track the displayed frame one-to-one. Each injection batch now sets per-monitor DPI awareness v2 on that thread for both `SendInput` calls, then restores the previous context. Controller coordinates stay normalized `0..65535`. No wire schema or capability change; updating the Host is sufficient.
+- This is a static contract correction. The peer Host was not replaced with this binary, and physical cursor tracking on that machine was not requalified.
+
 ## 2026-09-22 — Playback window is independent of the main window
 
 - The playback window titled `RedClaw` is created without a `QWidget` parent. Parenting it to `RedClaw Desktop` with `Qt::Window` made it a Windows owned window, so it stayed above the main window and disappeared whenever that window was minimized. The two top-level windows can now be activated separately. Closing the playback window still returns to the main window and does not quit the process. The main window still deletes the playback window when the GUI shuts down.

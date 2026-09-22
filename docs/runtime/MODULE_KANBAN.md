@@ -34,10 +34,10 @@ Updated: 2026-09-21
 
 ## M05 Input
 
-Updated: 2026-09-21
+Updated: 2026-09-22
 
 - `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done.
-- `M05-T02` Wider DPI/rotation/multi-display validation — in-progress.
+- `M05-T02` Wider DPI/rotation/multi-display validation — in-progress. Host injection now uses per-monitor DPI awareness v2 for each `SendInput` batch so absolute positions match physical capture pixels; the wire protocol is unchanged and a Host update is sufficient. Rotation and multi-display field tracking are not requalified, and the peer Host was not replaced with this binary. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md).
 - `M05-T04` Remote chord ordering and remote clipboard shortcuts — done (local candidate); pending input precedes state snapshots, and remote copy/cut keeps subsequent paste remote until the local clipboard changes. Seventeen focused input/UI/navigation cases, Debug build/publication and startup passed. Running Controller preserved; physical keyboard/application consumption has not been requalified.
 - `M05-T03` Opt-in input-stage and native target delivery diagnostics — in-progress; Debug DHT build and seven focused suites passed. A physical temporary target visibly consumed a GUI click and QA-protocol digit; the peer aligned six received/sent batches, twelve injected events, zero rejected and an empty queue. The visible target response qualifies application consumption; separate peer readback is not required again. Physical-keyboard Hook capture is an optional developer evaluation; software-injected keys remain filtered and no manual follow-up is required. The target later disappeared and input was paused. Preserve these distinct transport, API and application evidence levels; the historical incident remains unresolved.
 
@@ -66,9 +66,9 @@ Updated: 2026-09-20
 
 ## M10 UI
 
-Updated: 2026-09-20
+Updated: 2026-09-22
 
-- `M10-T01` Device-code Host/Controller GUI and playback workspace — done.
+- `M10-T01` Device-code Host/Controller GUI and playback workspace — done. The playback window titled `RedClaw` is an independent top-level window, not owned by `RedClaw Desktop`. One focused lifecycle case passed. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md).
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
 - `M10-T03` Controller floating task workspace — done; four owned task windows, movable translucent task bar, local layout persistence, hide-only lifecycle and input isolation. Debug NoPublish build and 14 focused unattended cases passed, including a corrected initial-layout timing fixture's single-case recheck. Unaffected tests were not rerun; native visual/physical-keyboard/hardware evaluation remains optional. Working-tree delivery only: no publication, peer upgrade or session restart. See the [workspace presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03).
 
