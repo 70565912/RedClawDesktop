@@ -4,10 +4,10 @@
 
 **面向开发者的 Windows P2P 远程桌面与远端 Agent 工作台**
 
-[English](README.en.md) · [下载 v0.1.3](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
+[English](README.en.md) · [下载 v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.3-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,9 +16,9 @@
 
 RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，在同一个界面中查看真实桌面、发送经过授权的键鼠输入，并与开发机上的 AI coding Agent 交互。连接采用在线 DHT rendezvous 与 ICE/STUN/TURN 协商，优先建立端到端 P2P 直连。
 
-> `v0.1.3` 是 Windows x64 Developer Preview，合并采集恢复、Host 光标与文件/剪贴板/终端工作台。尚未提供签名安装器，也不宣称覆盖所有异地 NAT/TURN 组合。详见 [发行说明](docs/releases/v0.1.3.md)。
+> `v0.1.4` 是 Windows x64 Developer Preview。它在 v0.1.3 的桌面和工作台之上要求连接密码，并把播放窗改为独立顶层窗口。尚未提供签名安装器，也不宣称覆盖所有异地 NAT/TURN 组合。详见 [发行说明](docs/releases/v0.1.4.md)。
 
-![RedClawDesktop Controller 正在显示真实视频链路与 Agent 面板](docs/assets/redclaw-controller-desktop-stream.png)
+![RedClawDesktop 连接首页：本机机器码、对方机器码和连接密码](docs/assets/redclaw-connection-homepage.png)
 
 ## 为什么使用 RedClawDesktop
 
@@ -30,8 +30,9 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 当前能力
 
-| 能力 | v0.1.3 状态 |
+| 能力 | v0.1.4 状态 |
 | --- | --- |
+| 连接密码 | 必填；无密码的 v0.1.3 及更早版本会被拒绝 |
 | Windows Host / Controller 图形界面 | 可用 |
 | 机器码与 public-DHT 在线 rendezvous | 可用 |
 | ICE/STUN 直连、可配置 TURN | 可用，网络兼容性仍在扩展验证 |
@@ -48,16 +49,16 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 快速开始
 
-1. 从 [v0.1.3 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.3) 下载 `RedClawDesktop-windows-x64-v0.1.3.zip` 和 `SHA256SUMS.txt`。
+1. 从 [v0.1.4 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) 下载 `RedClawDesktop-windows-x64-v0.1.4.zip` 和 `SHA256SUMS.txt`。
 2. 校验 ZIP：
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.3.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.4.zip -Algorithm SHA256
    ```
 
-3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。仍受支持的 Host 和 Controller 版本通过共同能力互通；连接不要求相同版本或相同二进制。
-4. **当前开发候选**（已发布 v0.1.3 尚无此能力，需升级包含本功能的候选）：在受控电脑输入**本机连接密码**并点击 Save（无需重复确认），保存后选择 **Host** 等待连接；在控制电脑选择 **Controller**，输入 Host 的机器码和**对方连接密码**。密码正确后自动连接，错误不会开放画面或工作台。
-5. 密码使用当前 Windows 用户的 DPAPI 加密保存。Client 只在验证成功后按机器码记住密码，可修改或忘记。不支持密码验证的旧端必须升级，不能回退到无密码连接。详见[连接密码说明](docs/architecture/connection-password-v1.md)。
+3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。具备连接密码能力的 Host 和 Controller 通过共同能力互通；连接不要求相同版本或相同二进制。
+4. 在受控电脑输入**本机连接密码**并点击 Save，保存后选择 **Host** 等待连接；在控制电脑选择 **Controller**，输入 Host 的机器码和**对方连接密码**。密码正确后自动连接，错误不会开放画面或工作台。
+5. 密码使用当前 Windows 用户的 DPAPI 加密保存。Client 只在验证成功后按机器码记住密码，可修改或忘记。v0.1.3 及更早的无密码版本必须升级，不能回退到无密码连接。详见[连接密码说明](docs/architecture/connection-password-v1.md)。
 6. 画面出现后，按界面提示显式开启远程输入。Agent 功能需要 Host 端配置允许的项目和 Provider。
 
 在双方均支持连接密码的前提下，文件、剪贴板和终端按双方共同能力启用；旧端不支持的新功能保持不可用，不要求两端同时升级。传输期间暂停新的桌面/终端输入及 Agent 操作，画面和已有输出继续；取消或完成后恢复符合其他授权条件的操作。
@@ -108,7 +109,7 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 ## 项目状态
 
-`v0.1.3` 沿用真实桌面和 Control / Media / Agent 基线，增加可协商的远程工作台能力。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。
+`v0.1.4` 沿用真实桌面和 Control / Media / Agent 基线，并要求连接密码。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。
 
 下一阶段重点是扩大异地网络与 TURN 覆盖、完善无人值守安装和升级、补充代码签名，并继续降低 GUI 与 Agent 大输出下的调度开销。当前执行状态见 [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md)。
 
