@@ -2,7 +2,8 @@
 
 ## 2026-09-22 — Prepare v0.1.4 Developer Preview
 
-- Version metadata is 0.1.4 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.4.md) point at this preview. The README image is the current connection homepage: two code columns, masked password fields, and collapsed More settings. v0.1.3 and older passwordless releases are rejected. The publisher builds Release and checks the ZIP before creating the tag. On Windows PowerShell, probing a missing GitHub release no longer aborts the publisher. Asset hashes are recorded after that upload. No signed installer is included.
+- Version metadata is 0.1.4 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.4.md) point at this preview. The README image is the current connection homepage: two code columns, masked password fields, and collapsed More settings. v0.1.3 and older passwordless releases are rejected. On Windows PowerShell, a missing GitHub release and staging relative paths no longer abort the publisher. No signed installer is included.
+- [v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4) was published from `4032409` with 335 files and a 348,129,471-byte ZIP. Its SHA256 is `363344bf8851b828b15cdd0ce1562e2b4a1dcc0f3462c91992a60290feec6469`, matching the GitHub asset digest. Local extracted startup passed before the tag was pushed. Documentation of that identity does not retag the release. Physical cursor tracking and the full CTest matrix were not repeated for this publication.
 
 ## 2026-09-22 — Source synchronization and connection UI delivery (X00-T24)
 
