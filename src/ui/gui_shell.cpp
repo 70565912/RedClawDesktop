@@ -2862,7 +2862,17 @@ bool launch_gui_shell(
   playback_status->setWordWrap(true);
   playback_status->hide();
 
-  auto* playback_window = new QWidget(&window, Qt::Window);
+  // A QWidget parent plus Qt::Window is a Windows owned window: it stays above
+  // its owner and is hidden when that owner is minimized. The playback window
+  // has to be an independent top-level window so the two can switch z-order.
+  auto* playback_window = new QWidget(nullptr, Qt::Window);
+  struct PlaybackWindowOwner final : QObject {
+    QWidget* playback = nullptr;
+    PlaybackWindowOwner(QWidget* owner, QWidget* playback_window)
+        : QObject(owner), playback(playback_window) {}
+    ~PlaybackWindowOwner() override { delete playback; }
+  };
+  new PlaybackWindowOwner(&window, playback_window);
   playback_window->setObjectName("playbackWindow");
   playback_window->setWindowTitle("RedClaw");
   playback_window->setMinimumSize(360, 240);

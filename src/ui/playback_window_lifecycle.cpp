@@ -17,6 +17,9 @@ PlaybackWindowLifecycle::PlaybackWindowLifecycle(
     }
 
     playback_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    // Closing the playback window returns to the main window. It must not
+    // end the process while that window can still be restored.
+    playback_window_->setAttribute(Qt::WA_QuitOnClose, false);
     playback_window_->installEventFilter(this);
 }
 
