@@ -97,6 +97,7 @@
 #include <QSettings>
 #include <QSaveFile>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -2871,6 +2872,10 @@ bool launch_gui_shell(
   auto* playback_window_status = task_workspace->connection_status();
   playback_window_status->setText("The live desktop opens here after the connection is ready.");
   auto* remote_control_button = task_workspace->control_button();
+  auto* remote_audio_button = task_workspace->audio_button();
+  bool peer_audio_known = false;
+  std::uint32_t peer_audio_version = 0;
+  bool audio_playback_on = false;
   remote_control_button->setToolTip(
       "Ctrl+Alt+Shift+Esc immediately exits capture. Ctrl+Alt+Del is not supported.");
   auto* remote_control_status = task_workspace->control_status();
@@ -2983,7 +2988,26 @@ bool launch_gui_shell(
       [&controller](const redclaw::protocol::StreamControlMessageV1& message, QString* error) {
         return controller.send_control_message(message, error);
       });
+  auto refresh_audio_ui = [&]() {
+    const bool controller_role = role_combo->currentText() == "controller";
+    remote_audio_button->setVisible(controller_role);
+    const bool supported = peer_audio_known && peer_audio_version >= 1;
+    remote_audio_button->setEnabled(controller_role && supported && controller.is_running());
+    if (!peer_audio_known) {
+      remote_audio_button->setToolTip(QString::fromUtf8("等待对端音频能力"));
+    } else if (!supported) {
+      remote_audio_button->setToolTip(QString::fromUtf8("对端不支持系统音频"));
+    } else {
+      remote_audio_button->setToolTip(QString::fromUtf8("播放 Host 正在输出的声音"));
+    }
+    const QSignalBlocker blocker(remote_audio_button);
+    remote_audio_button->setChecked(audio_playback_on && supported);
+    remote_audio_button->setText(audio_playback_on && supported
+        ? QString::fromUtf8("关闭声音")
+        : QString::fromUtf8("播放声音"));
+  };
   auto refresh_remote_control_ui = [&]() {
+    refresh_audio_ui();
     if (remote_input_capture->active()) {
       remote_control_button->setText("Stop Control");
       remote_control_button->setEnabled(true);
@@ -3085,6 +3109,34 @@ bool launch_gui_shell(
     }
     refresh_remote_control_ui();
   });
+  auto send_audio_playback_request = [&](bool active) {
+    redclaw::protocol::StreamControlMessageV1 request;
+    request.type = redclaw::protocol::StreamControlMessageTypeV1::kCapabilities;
+    request.session_epoch = "local";
+    request.message_id = ++gui_control_message_id;
+    request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    request.audio_version = 1;
+    request.audio_playback_requested = active;
+    QString send_error;
+    if (!controller.send_control_message(request, &send_error)) {
+      append_log(session_log, QString("Remote audio request failed: %1").arg(send_error));
+      return false;
+    }
+    return true;
+  };
+  QObject::connect(remote_audio_button, &QPushButton::clicked, [&]() {
+    const bool want = remote_audio_button->isChecked();
+    if (!send_audio_playback_request(want)) {
+      refresh_audio_ui();
+      return;
+    }
+    audio_playback_on = want;
+    refresh_audio_ui();
+  });
+  QObject::connect(role_combo, &QComboBox::currentTextChanged, &window, [&](const QString&) {
+    refresh_audio_ui();
+  });
+  refresh_audio_ui();
   QObject::connect(retry_capture_button, &QPushButton::clicked, [&]() {
     if (!capture_playback_state.retry_available() || !controller.is_running()) { return; }
     redclaw::protocol::StreamControlMessageV1 request;
@@ -4983,6 +5035,16 @@ bool launch_gui_shell(
   agent_drain_timer->start();
   auto handle_runtime_control = [&](const redclaw::protocol::StreamControlMessageV1& control,
                                     std::uint64_t emitted_monotonic_us) {
+          if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities) {
+            peer_audio_known = true;
+            peer_audio_version = control.audio_version;
+            if (peer_audio_version < 1 && audio_playback_on) {
+              audio_playback_on = false;
+              (void)send_audio_playback_request(false);
+            }
+            refresh_audio_ui();
+            return;
+          }
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kSourceActivityState) {
             if (playback_progress.observe_source(control.session_epoch)) {

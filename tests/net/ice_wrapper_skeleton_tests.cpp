@@ -315,6 +315,8 @@ bool test_media_is_realtime_while_control_remains_reliable() {
         redclaw::net::data_channel_delivery_policy(redclaw::net::DataChannelKind::kTerminal);
     const auto transfer =
         redclaw::net::data_channel_delivery_policy(redclaw::net::DataChannelKind::kTransfer);
+    const auto audio =
+        redclaw::net::data_channel_delivery_policy(redclaw::net::DataChannelKind::kAudio);
     return expect_true(transfer.reliable && transfer.ordered, "file transfer needs reliable ordered bulk delivery")
         && expect_true(!media.reliable, "obsolete media must not block the stream behind retransmissions")
         && expect_true(media.ordered, "media fragments should preserve order within delivered data")
@@ -334,7 +336,12 @@ bool test_media_is_realtime_while_control_remains_reliable() {
         && expect_true(terminal.reliable && terminal.ordered, "terminal control bytes must not be dropped or reordered")
         && expect_true(
             redclaw::net::kDebugBridgeDataChannelLabel == "redclaw-debug-bridge-v1",
-            "debug bridge channel label must be versioned");
+            "debug bridge channel label must be versioned")
+        && expect_true(!audio.reliable && !audio.ordered && audio.max_retransmits == 0,
+            "system audio must stay unordered and zero-retransmit")
+        && expect_true(
+            redclaw::net::kAudioDataChannelLabel == "redclaw-audio-v1",
+            "audio channel label must be versioned");
 }
 
 bool test_only_optional_channels_can_be_rebuilt_independently() {

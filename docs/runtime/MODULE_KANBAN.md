@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-22
+Updated: 2026-09-23
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.4` Developer Preview. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -78,7 +78,9 @@ Updated: 2026-09-22
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-22
+Updated: 2026-09-23
+
+- `X00-T25` Remote system audio — done locally; Controller speaker control alone starts Host shared-mode loopback, Opus transport on optional unordered `redclaw-audio-v1`, and XAudio2 playback. Silence sends nothing. Debug main build passed. Focused protocol, mix/Opus, jitter, and channel-policy tests passed. `release\Debug` was locked by an existing process, so the candidate was published separately. No sound-card listen test was run, and WASAPI exclusive/ASIO remain outside this version. See [remote system audio](../architecture/remote-system-audio-v1.md) and [validation details](../logs/DEVLOG.md).
 
 - `X00-T24` Compact connection homepage and password input — done; two aligned columns, single-entry asynchronous save, independent Show/Hide with asterisk masking, dirty-password waiting gate and default-collapsed permissions/Agent/network settings. Native Windows connection UI/flow tests passed at both standard and high DPI (19 cases each); 800×600 and 900×680 fixture screenshots captured. Initial Debug candidate published separately; subsequently started the local Host under operator authorization. Synchronized through upstream `6b6e930`; merged Debug build and 49 focused UI/runtime/input cases passed. Source delivery preserves that running Host and existing public release assets. See [connection instructions](../architecture/connection-password-v1.md) and [validation details](../logs/DEVLOG.md).
 

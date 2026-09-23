@@ -15,6 +15,7 @@ add_subdirectory(workspace)
 
 set(REDCLAW_DESKTOP_SOURCES
   main.cpp
+  runtime/audio_stream_runtime.cpp
   ui/gui_shell.cpp
 )
 

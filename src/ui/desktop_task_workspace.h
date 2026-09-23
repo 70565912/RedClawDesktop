@@ -28,6 +28,7 @@ public:
     [[nodiscard]] QToolButton* task_button(DesktopTask id) const;
     [[nodiscard]] QWidget* button_bar() const;
     [[nodiscard]] QPushButton* control_button() const;
+    [[nodiscard]] QPushButton* audio_button() const;
     [[nodiscard]] QPushButton* retry_button() const;
     [[nodiscard]] QLabel* control_status() const;
     [[nodiscard]] QLabel* connection_status() const;

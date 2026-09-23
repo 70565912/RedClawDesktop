@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-09-23 — Remote system audio (X00-T25)
+
+- Controller speaker control is enough to start the stream. Host loopback captures every active shared-mode render endpoint, converts PCM 16/24/32, float, and mono-through-7.1 mixes to 48 kHz stereo, and sends 20 ms Opus frames only when the frame is audible. Digital silence and `AUDCLNT_BUFFERFLAGS_SILENT` produce no packet and no DTX filler. Sequence numbers advance only for sent frames.
+- Transport is the optional unordered zero-retransmit channel `redclaw-audio-v1`, outside the video pacer. Hello/Capabilities carry optional `audio_version` (88) and `audio_playback_requested` (89). Missing fields stay 0, so an older peer does not change the offer. The Host opens the channel only after a playback request and `audio_version >= 1` on both sides. A create still opening is not replaced for about three seconds.
+- Controller playback uses the existing XAudio2 player, a 60 ms jitter buffer, and at most two PLC frames. A 100 ms gap with no later packet becomes local silence. Secure desktop, toggle off, channel close, and session end stop capture and clear playback. WASAPI exclusive and ASIO bypass the engine and are not captured. See [remote system audio](../architecture/remote-system-audio-v1.md).
+- Validation: `build.ps1 -Configuration Debug -Target redclaw_desktop` compiled `redclaw_desktop.exe`. Publication into `release\Debug` failed because `qgifd.dll` was locked; the candidate was published to `release\Debug-RemoteAudio-20260923` after the final relink. Focused CTest passed `redclaw_audio_stream_tests`, `redclaw_capture_audio_mix_tests`, `redclaw_render_audio_jitter_tests`, and `redclaw_net_ice_wrapper_skeleton_tests`. Coverage includes old Capabilities fields, packet rejection, PCM/float/24-bit/5.1 conversion, 96 kHz resample, Opus energy and PLC, silence, short-gap concealment, long-gap silence, and the audio channel policy. No sound-card listen test, dual-process session, or live Host replacement was run.
+
 ## 2026-09-22 — Prepare v0.1.4 Developer Preview
 
 - Version metadata is 0.1.4 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.4.md) point at this preview. The README image is the current connection homepage: two code columns, masked password fields, and collapsed More settings. v0.1.3 and older passwordless releases are rejected. On Windows PowerShell, a missing GitHub release and staging relative paths no longer abort the publisher. No signed installer is included.

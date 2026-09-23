@@ -203,6 +203,7 @@ constexpr std::size_t data_channel_index(DataChannelKind kind) {
         case DataChannelKind::kDebugBridge: return 4U;
         case DataChannelKind::kTerminal: return 5U;
         case DataChannelKind::kTransfer: return 6U;
+        case DataChannelKind::kAudio: return 7U;
     }
     return 4U;
 }
@@ -227,6 +228,7 @@ std::optional<DataChannelKind> data_channel_kind_from_label(std::string_view lab
         return DataChannelKind::kTerminal;
     }
     if (label == kTransferDataChannelLabel) return DataChannelKind::kTransfer;
+    if (label == kAudioDataChannelLabel) return DataChannelKind::kAudio;
     return std::nullopt;
 }
 
@@ -239,6 +241,7 @@ std::string_view data_channel_label(DataChannelKind kind) {
         case DataChannelKind::kDebugBridge: return kDebugBridgeDataChannelLabel;
         case DataChannelKind::kTerminal: return kTerminalDataChannelLabel;
         case DataChannelKind::kTransfer: return kTransferDataChannelLabel;
+        case DataChannelKind::kAudio: return kAudioDataChannelLabel;
     }
     return {};
 }
@@ -378,6 +381,13 @@ DataChannelDeliveryPolicy data_channel_delivery_policy(DataChannelKind kind) {
             .max_retransmits = 0,
         };
     }
+    if (kind == DataChannelKind::kAudio) {
+        return DataChannelDeliveryPolicy{
+            .reliable = false,
+            .ordered = false,
+            .max_retransmits = 0,
+        };
+    }
     return DataChannelDeliveryPolicy{};
 }
 
@@ -454,7 +464,8 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
         authentication_exposed_ = true;
         constexpr std::array kinds{DataChannelKind::kMedia, DataChannelKind::kControl,
             DataChannelKind::kAgent, DataChannelKind::kNavigation, DataChannelKind::kDebugBridge,
-            DataChannelKind::kTerminal, DataChannelKind::kTransfer};
+            DataChannelKind::kTerminal, DataChannelKind::kTransfer, DataChannelKind::kAudio};
+        static_assert(kinds.size() == kDataChannelKindCount);
         for (std::size_t index = 0; index < data_channels_.size(); ++index) {
             auto& state = data_channels_[index];
             if (!state.open || state.announced) continue;
@@ -1016,7 +1027,7 @@ public:
     bool ensure_data_channel(DataChannelKind kind, std::string* error) {
         if (kind != DataChannelKind::kAgent && kind != DataChannelKind::kNavigation
             && kind != DataChannelKind::kDebugBridge && kind != DataChannelKind::kTerminal
-            && kind != DataChannelKind::kTransfer) {
+            && kind != DataChannelKind::kTransfer && kind != DataChannelKind::kAudio) {
             assign_error("only an optional data channel can be rebuilt independently", error); return false;
         }
         const auto peer = peer_snapshot();
