@@ -31,6 +31,9 @@ if(FFMPEG_FOUND)
 endif()
 
 target_link_libraries(redclaw_render PUBLIC Opus::opus redclaw_protocol)
+if(WIN32)
+  target_link_libraries(redclaw_render PRIVATE ole32)
+endif()
 
 target_compile_features(redclaw_render PUBLIC cxx_std_20)
 redclaw_apply_warnings(redclaw_render)

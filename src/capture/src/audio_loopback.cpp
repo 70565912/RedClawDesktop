@@ -223,6 +223,7 @@ private:
         }
         std::vector<Endpoint> endpoints;
         auto next_refresh = std::chrono::steady_clock::now();
+        auto next_emit = next_refresh;
         while (running_.load()) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_refresh) {
@@ -251,7 +252,19 @@ private:
                     callback_(pcm);
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (mixed) {
+                // One captured 20 ms frame occupies 20 ms on the wire. A 5 ms
+                // poll would drain a WASAPI backlog four times faster than
+                // realtime and arrive at the player as a burst.
+                next_emit += std::chrono::milliseconds(20);
+                const auto emitted = std::chrono::steady_clock::now();
+                if (next_emit < emitted) {
+                    next_emit = emitted;
+                }
+                std::this_thread::sleep_until(next_emit);
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
         }
         for (auto& endpoint : endpoints) {
             endpoint.close();
