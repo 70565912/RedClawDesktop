@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-09-23 — Publish v0.1.5 Developer Preview
+
+- [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) was published from `9a7483b` with 336 files and a 348,401,429-byte ZIP. Its SHA256 is `f163faa3f975b4f4e87d6f2a51c25b24d73c04d2f45f41d03e088fa0b29860bf`, matching the GitHub asset digest. Local extracted startup passed before the tag was pushed. Documentation of that identity does not retag the release. The operator's listen check was a Debug Controller against the existing peer Host. Full CTest, physical cursor tracking, and the hosted Windows package smoke were not repeated for this publication.
+
 ## 2026-09-23 — Prepare v0.1.5 Developer Preview
 
 - Version metadata is 0.1.5 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.5.md) point at this preview. It adds optional remote system audio and the Controller playback corrections already verified by the operator: COM initialization, immediate playback from a lock-free frame cache, and an output that stays open until remote sound is turned off or the session ends. v0.1.4 stays the 2026-09-22 package. No signed installer is included. Full CTest and physical cursor tracking were not repeated. The publisher writes the ZIP itself and retries a file that a scanner briefly locks; `Compress-Archive` aborted on that lock.
