@@ -56,6 +56,18 @@ TEST(AudioJitterBuffer, LargeSequenceJumpKeepsTheLaterPacket) {
     EXPECT_EQ(pull.frame.sequence, 10U);
 }
 
+TEST(AudioJitterBuffer, OverflowSkipsAheadInsteadOfOpeningAGap) {
+    redclaw::render::AudioJitterBuffer jitter(1);
+    jitter.push(frame(1, 0), 0);
+    ASSERT_EQ(jitter.pull(0).frame.sequence, 1U);
+    for (std::uint32_t sequence = 2; sequence <= 12; ++sequence) {
+        jitter.push(frame(sequence, sequence * 20000ULL), sequence * 20000ULL);
+    }
+    const auto pull = jitter.pull(12 * 20000ULL);
+    ASSERT_EQ(pull.action, redclaw::render::AudioJitterAction::kPacket);
+    EXPECT_EQ(pull.frame.sequence, 5U);
+}
+
 TEST(AudioJitterBuffer, DropsPacketsThatArriveAfterTheyWereDue) {
     redclaw::render::AudioJitterBuffer jitter(1);
     jitter.push(frame(1, 0), 0);

@@ -38,8 +38,16 @@ void AudioJitterBuffer::push(AudioJitterFrame frame, std::uint64_t now_us) {
         have_arrival_ = true;
     }
     frames_[frame.sequence] = std::move(frame);
+    bool dropped_oldest = false;
     while (frames_.size() > kMaxQueuedFrames) {
         frames_.erase(frames_.begin());
+        dropped_oldest = true;
+    }
+    // A normal gap stays put so pull() can conceal one or two missing frames.
+    // Only an overflow drop may skip the cursor; otherwise pull() treats the
+    // hole as a stream break and stops output.
+    if (dropped_oldest && primed_ && !frames_.empty() && frames_.begin()->first > next_sequence_) {
+        next_sequence_ = frames_.begin()->first;
     }
 }
 

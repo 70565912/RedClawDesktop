@@ -1,10 +1,24 @@
 # Development Log
 
+## 2026-09-23 — Prepare v0.1.5 Developer Preview
+
+- Version metadata is 0.1.5 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.5.md) point at this preview. It adds optional remote system audio and the Controller playback corrections already verified by the operator: COM initialization, immediate playback from a lock-free frame cache, and an output that stays open until remote sound is turned off or the session ends. v0.1.4 stays the 2026-09-22 package. No signed installer is included. Full CTest and physical cursor tracking were not repeated.
+
+## 2026-09-23 — Remote audio plays from a lock-free frame cache
+
+- The playback thread no longer sleeps out each 20 ms frame. A fixed slot ring accepts frames from the receiver without a lock; publishing a slot signals a data event. The playback thread submits every cached frame to XAudio2 immediately, then sleeps on that event until the next frame. A gap in packets leaves the output device open; it is released only when remote audio is turned off or the session ends. Host loopback emits one captured frame per 20 ms instead of draining a backlog every 5 ms. The running peer still has the old capture loop until that Host is replaced.
+- Validation: Debug `redclaw_desktop` linked, and `redclaw_render_audio_jitter_tests` passed 5 cases. The local Controller was published and restarted. The operator then verified playback: remote music was audible, and the output stayed open while remote sound remained on. The peer Host was left running, so this listen check does not prove the 20 ms Host pacing.
+
+## 2026-09-23 — Controller playback initializes COM before XAudio2
+
+- Remote audio reached the Controller and decoded, then stayed silent. `XAudio2Create` succeeded on the playback thread, but `CreateMasteringVoice` returned `CO_E_NOTINITIALIZED` because that thread had no COM apartment. The thread now uses `CoInitializeEx(COINIT_MULTITHREADED)` for its lifetime and releases the player before `CoUninitialize`. Host loopback already initialized COM, so only the Controller binary needs this change.
+- Validation: `build.ps1 -SkipConfigure -Target redclaw_desktop -NoPublish` compiled with the VS2022 14.44 compiler, and `publish.ps1 -Configuration Debug` updated `release\Debug` (339 files). The local Controller was restarted and reached `negotiation_phase=connected` with desktop frames flowing. The playback switch starts off after a restart, so a listen test still needs that switch turned on again. The peer Host was left running.
+
 ## 2026-09-23 — Remote system audio (X00-T25)
 
 - Controller speaker control is enough to start the stream. Host loopback captures every active shared-mode render endpoint, converts PCM 16/24/32, float, and mono-through-7.1 mixes to 48 kHz stereo, and sends 20 ms Opus frames only when the frame is audible. Digital silence and `AUDCLNT_BUFFERFLAGS_SILENT` produce no packet and no DTX filler. Sequence numbers advance only for sent frames.
 - Transport is the optional unordered zero-retransmit channel `redclaw-audio-v1`, outside the video pacer. Hello/Capabilities carry optional `audio_version` (88) and `audio_playback_requested` (89). Missing fields stay 0, so an older peer does not change the offer. The Host opens the channel only after a playback request and `audio_version >= 1` on both sides. A create still opening is not replaced for about three seconds.
-- Controller playback uses the existing XAudio2 player, a 60 ms jitter buffer, and at most two PLC frames. A 100 ms gap with no later packet becomes local silence. Secure desktop, toggle off, channel close, and session end stop capture and clear playback. WASAPI exclusive and ASIO bypass the engine and are not captured. See [remote system audio](../architecture/remote-system-audio-v1.md).
+- Controller playback uses the existing XAudio2 player, a jitter buffer, and at most two PLC frames. A quiet gap inserts silence or concealment and leaves the output open. The device is released when remote sound is turned off or the remote session ends. Secure desktop, toggle off, channel close, and session end stop capture and clear playback. WASAPI exclusive and ASIO bypass the engine and are not captured. See [remote system audio](../architecture/remote-system-audio-v1.md).
 - Validation: `build.ps1 -Configuration Debug -Target redclaw_desktop` compiled `redclaw_desktop.exe`. Publication into `release\Debug` failed because `qgifd.dll` was locked; the candidate was published to `release\Debug-RemoteAudio-20260923` after the final relink. Focused CTest passed `redclaw_audio_stream_tests`, `redclaw_capture_audio_mix_tests`, `redclaw_render_audio_jitter_tests`, and `redclaw_net_ice_wrapper_skeleton_tests`. Coverage includes old Capabilities fields, packet rejection, PCM/float/24-bit/5.1 conversion, 96 kHz resample, Opus energy and PLC, silence, short-gap concealment, long-gap silence, and the audio channel policy. No sound-card listen test, dual-process session, or live Host replacement was run.
 
 ## 2026-09-22 — Prepare v0.1.4 Developer Preview

@@ -155,6 +155,7 @@ public:
         XAUDIO2_VOICE_STATE state{};
         source_voice_->GetState(&state);
         const UINT32 queued = state.BuffersQueued;
+        const bool resume_starved_voice = queued == 0;
 
         if (queued >= buffer_count_) {
             // All slots are in flight; drop this chunk to avoid overwriting
@@ -184,6 +185,9 @@ public:
                 *error_detail = "SubmitSourceBuffer failed: " + hresult_str(hr);
             }
             return false;
+        }
+        if (resume_starved_voice) {
+            (void)source_voice_->Start(0);
         }
 
         return true;

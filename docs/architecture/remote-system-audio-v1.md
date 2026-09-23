@@ -54,6 +54,8 @@ Each SCTP message is one frame:
 
 The timestamp is reserved for later picture alignment. This version does not lock audio to the video clock.
 
-The Controller decodes Opus in playback order into the existing XAudio2 `AudioPlayer`. A jitter buffer of about 60 ms absorbs reordering. One or two missing sequence numbers are concealed with Opus PLC while packets are still arriving. If about 100 ms passes with no later packet, concealment stops, the player is closed, and local output stays silent until the next real frame. A full playback queue drops the new block and does not block receive or video decode.
+The Controller decodes Opus in playback order into the existing XAudio2 `AudioPlayer`. The playback thread joins the multithreaded COM apartment before creating the mastering voice and leaves that apartment only after the player is released. Received frames sit in a fixed lock-free slot ring: the receiver publishes a slot and signals a data event; the playback thread drains every filled slot immediately into XAudio2, then sleeps on that event until another frame arrives. One or two missing sequence numbers are concealed with Opus PLC while a later packet is already buffered. A quiet gap leaves the output device open. The device is released only when playback is turned off or the remote session ends. A starved source voice is started again with the next frame. A full jitter queue skips to the oldest frame it still holds. A full slot ring or XAudio2 queue drops the new block and does not block receive or video decode.
+
+Host loopback emits one captured 20 ms frame per 20 ms. A WASAPI backlog is not drained on the 5 ms poll interval.
 
 The speaker control lives on the Controller playback bar. It stays disabled, with an explanation, while the peer `audio_version` is 0. It starts off.
