@@ -1,4 +1,9 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_render_audio_jitter_tests render/audio_jitter_tests.cpp)
+target_link_libraries(redclaw_render_audio_jitter_tests PRIVATE redclaw_render GTest::gtest_main)
+redclaw_apply_warnings(redclaw_render_audio_jitter_tests)
+add_test(NAME redclaw_render_audio_jitter_tests COMMAND redclaw_render_audio_jitter_tests)
+
 add_executable(redclaw_render_decoder_frame_queue_tests
   render/decoder_frame_queue_tests.cpp
 )

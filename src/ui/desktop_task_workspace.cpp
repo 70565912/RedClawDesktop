@@ -209,7 +209,7 @@ struct DesktopTaskWorkspace::Impl {
     std::unique_ptr<FloatingTaskWindow> bar;
     TaskBarLayout* bar_layout;
     std::vector<Task> tasks;
-    QPushButton *control, *retry;
+    QPushButton *control, *audio, *retry;
     QLabel *control_state, *connection_state;
     QPoint bar_position;
     bool has_bar_position = false, enabled = true, syncing = false;
@@ -230,10 +230,16 @@ struct DesktopTaskWorkspace::Impl {
         grip->setObjectName("desktopTaskBarGrip"); grip->setToolTip(QString::fromUtf8("拖动任务按钮条"));
         grip->setFixedSize(20, 28); bar->set_drag_handle(grip); bar_layout->addWidget(grip);
         control = new QPushButton("Start Control", bar.get()); control->setObjectName("remoteControlButton"); control->setEnabled(false);
+        audio = new QPushButton(QString::fromUtf8("播放声音"), bar.get());
+        audio->setObjectName("remoteAudioButton");
+        audio->setCheckable(true);
+        audio->setEnabled(false);
+        audio->hide();
+        audio->setToolTip(QString::fromUtf8("等待对端音频能力"));
         retry = new QPushButton(QString::fromUtf8("重试画面"), bar.get()); retry->setObjectName("retryCaptureButton"); retry->hide();
         control_state = new TaskStatusLabel(bar.get()); control_state->setObjectName("remoteControlStatus");
         connection_state = new TaskStatusLabel(bar.get()); connection_state->setObjectName("playbackWindowStatus");
-        for (auto* widget : std::vector<QWidget*>{control, retry, control_state, connection_state}) bar_layout->addWidget(widget);
+        for (auto* widget : std::vector<QWidget*>{control, audio, retry, control_state, connection_state}) bar_layout->addWidget(widget);
         bar->interacted = [this] { interact(); };
         bar->geometry_committed = [this] {
             bar_position = bar->pos() - bounds().topLeft(); has_bar_position = true;
@@ -343,6 +349,7 @@ QWidget* DesktopTaskWorkspace::task_window(DesktopTask id) const { auto* task = 
 QToolButton* DesktopTaskWorkspace::task_button(DesktopTask id) const { auto* task = impl_->find(id); return task ? task->button : nullptr; }
 QWidget* DesktopTaskWorkspace::button_bar() const { return impl_->bar.get(); }
 QPushButton* DesktopTaskWorkspace::control_button() const { return impl_->control; }
+QPushButton* DesktopTaskWorkspace::audio_button() const { return impl_->audio; }
 QPushButton* DesktopTaskWorkspace::retry_button() const { return impl_->retry; }
 QLabel* DesktopTaskWorkspace::control_status() const { return impl_->control_state; }
 QLabel* DesktopTaskWorkspace::connection_status() const { return impl_->connection_state; }

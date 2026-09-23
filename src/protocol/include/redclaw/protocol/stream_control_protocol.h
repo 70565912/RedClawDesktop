@@ -180,6 +180,9 @@ struct StreamControlMessageV1 {
     std::uint32_t connection_auth_version = 0;
     std::string auth_step;
     std::string auth_data;
+    // Optional system-audio capability. Zero means an older peer.
+    std::uint32_t audio_version = 0;
+    bool audio_playback_requested = false;
     std::optional<WorkspaceControlV1> workspace;
     // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
     std::uint32_t capture_status = 0;

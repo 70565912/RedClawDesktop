@@ -36,6 +36,7 @@
 #endif
 
 #include "redclaw/core/core_module.h"
+#include "redclaw/protocol/audio_packet.h"
 #include "redclaw/protocol/protocol_module.h"
 #include "redclaw/protocol/stream_control_protocol.h"
 #include "redclaw/protocol/agent_protocol.h"
@@ -66,6 +67,7 @@
 #include "redclaw/helper/direct_frame_shared_memory.h"
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
+#include "runtime/audio_stream_runtime.h"
 #include "runtime/runtime_options.h"
 #include "runtime/local_control_output.h"
 #include "runtime/input_qa_receipts.h"
@@ -3433,6 +3435,39 @@ int run_runtime_mode(
             }
         });
 
+    redclaw::runtime::AudioStreamRuntime audio_runtime(
+        options.role == RuntimeRole::kHost,
+        [&ice_wrapper](std::span<const std::uint8_t> packet) {
+            redclaw::net::DataChannelTransportStats stats;
+            if (!ice_wrapper.getDataChannelTransportStats(redclaw::net::DataChannelKind::kAudio, &stats)
+                || !stats.open
+                || stats.buffered_amount > 64U * 1024U) {
+                return false;
+            }
+            return ice_wrapper.sendDataChannelBinaryMessage(
+                redclaw::net::DataChannelKind::kAudio, packet);
+        },
+        [&ice_wrapper] {
+            return ice_wrapper.ensureDataChannel(redclaw::net::DataChannelKind::kAudio);
+        });
+    auto advertise_audio = [&](redclaw::protocol::StreamControlMessageV1* message) {
+        message->audio_version = redclaw::protocol::kAudioStreamCapabilityVersion;
+        message->audio_playback_requested = audio_runtime.playback_requested();
+    };
+    std::uint64_t local_audio_notice_id = 0;
+    auto publish_peer_audio = [&](std::uint32_t version) {
+        if (options.role != RuntimeRole::kController) {
+            return;
+        }
+        redclaw::protocol::StreamControlMessageV1 notice;
+        notice.type = redclaw::protocol::StreamControlMessageTypeV1::kCapabilities;
+        notice.session_epoch = "local";
+        notice.message_id = ++local_audio_notice_id;
+        notice.sent_at_ms = std::max<std::uint64_t>(1, now_unix_ms());
+        notice.audio_version = version;
+        (void)local_control_output.send(notice);
+    };
+
     auto make_source_activity_message = [&](
                                             const redclaw::session::DesktopSourceActivitySnapshot& snapshot) {
         auto message = make_control_message(
@@ -4105,6 +4140,11 @@ int run_runtime_mode(
             runtime_loop_wake.notify();
             return;
         }
+        if (kind == redclaw::net::DataChannelKind::kAudio) {
+            audio_runtime.set_channel_open(true);
+            runtime_loop_wake.notify();
+            return;
+        }
         redclaw::net::DataChannelTransportStats transport_stats;
         std::string transport_error;
         std::uint32_t open_pacing_kbps = kDesktopStreamAdaptiveBitrateFloorKbps;
@@ -4200,7 +4240,8 @@ int run_runtime_mode(
             hello.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
             hello.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
             hello.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
-            hello.payload = "viewport,source-activity,displayable-ack,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input,capture-region,navigation";
+            advertise_audio(&hello);
+            hello.payload = "viewport,source-activity,displayable-ack,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input,capture-region,navigation,system-audio";
             std::string send_error;
             if (!send_control_message(hello, &send_error)) {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -4244,6 +4285,11 @@ int run_runtime_mode(
         }
         if (kind == redclaw::net::DataChannelKind::kTerminal) {
             terminal_bridge.channel_open(false);
+            runtime_loop_wake.notify();
+            return;
+        }
+        if (kind == redclaw::net::DataChannelKind::kAudio) {
+            audio_runtime.set_channel_open(false);
             runtime_loop_wake.notify();
             return;
         }
@@ -4637,6 +4683,12 @@ int run_runtime_mode(
                 peer_capture_status_version.store(control.capture_status_version >= 1 ? 1U : 0U);
                 terminal_bridge.peer_capability(control.terminal_version, control.session_epoch);
                 transfer_bridge.peer_capability(control.file_transfer_version, control.session_epoch, control.clipboard_version);
+                audio_runtime.observe_peer(
+                    control.audio_version,
+                    control.audio_playback_requested,
+                    options.role == RuntimeRole::kHost);
+                publish_peer_audio(control.audio_version);
+                runtime_loop_wake.notify();
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello) {
                 auto capabilities = make_control_message(
@@ -4645,6 +4697,7 @@ int run_runtime_mode(
                 capabilities.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
                 capabilities.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
                 capabilities.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
+                advertise_audio(&capabilities);
                 capabilities.payload = remote_diagnostics_allowed
                     ? "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input"
                     : "viewport,capture-region,navigation,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,reconnect,remote-input";
@@ -5013,6 +5066,12 @@ int run_runtime_mode(
         if (kind == redclaw::net::DataChannelKind::kTerminal) {
             (void)terminal_bridge.receive({reinterpret_cast<const char*>(message.data()), message.size()});
             runtime_loop_wake.notify();
+            return;
+        }
+        if (kind == redclaw::net::DataChannelKind::kAudio) {
+            if (options.role == RuntimeRole::kController) {
+                audio_runtime.on_packet(message);
+            }
             return;
         }
         if (kind == redclaw::net::DataChannelKind::kControl || kind == redclaw::net::DataChannelKind::kAgent) {
@@ -7165,6 +7224,40 @@ int run_runtime_mode(
             if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kWorkspace) {
                 transfer_bridge.from_gui(command); continue;
             }
+            if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities) {
+                if (options.role == RuntimeRole::kController) {
+                    audio_runtime.set_playback_requested(command.audio_playback_requested);
+                    auto outbound = make_control_message(
+                        redclaw::protocol::StreamControlMessageTypeV1::kCapabilities);
+                    outbound.capture_status_version = 1;
+                    outbound.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
+                    outbound.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
+                    outbound.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
+                    advertise_audio(&outbound);
+                    bool control_open = false;
+                    {
+                        std::lock_guard<std::mutex> lock(callback_mutex);
+                        control_open = stream_control_channel_open;
+                    }
+                    std::string audio_error;
+                    if (!control_open || !send_control_message(outbound, &audio_error)) {
+                        std::lock_guard<std::mutex> lock(callback_mutex);
+                        pending_local_control_requests.erase(
+                            std::remove_if(
+                                pending_local_control_requests.begin(),
+                                pending_local_control_requests.end(),
+                                [](const auto& queued) {
+                                    return queued.type
+                                        == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities;
+                                }),
+                            pending_local_control_requests.end());
+                        if (pending_local_control_requests.size() < 64) {
+                            pending_local_control_requests.push_back(std::move(outbound));
+                        }
+                    }
+                }
+                continue;
+            }
             const bool input_command =
                 command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest
                 || command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch
@@ -7372,6 +7465,7 @@ int run_runtime_mode(
                 pending_local_control_requests.push_back(std::move(command));
             }
         }
+        audio_runtime.pump();
 
         // IPC outlives an Agent channel. Drain/reject messages while disconnected
         // so old GUI requests cannot become new work after channel recreation.

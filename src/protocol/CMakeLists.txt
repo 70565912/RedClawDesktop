@@ -1,5 +1,6 @@
 add_library(redclaw_protocol STATIC
   src/agent_protocol.cpp
+  src/audio_packet.cpp
   src/compressed_protobuf.cpp
   src/protobuf_messages.cpp
   src/debug_bridge_protocol.cpp

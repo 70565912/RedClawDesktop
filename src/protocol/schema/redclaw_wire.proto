@@ -291,6 +291,10 @@ message StreamControlMessageV1 {
   uint32 connection_auth_version = 85;
   string auth_step = 86;
   string auth_data = 87;
+  // Optional system-audio capability. Zero means an older peer, and the audio
+  // channel stays closed. audio_playback_requested is set by the Controller.
+  uint32 audio_version = 88;
+  bool audio_playback_requested = 89;
 }
 
 message WorkspaceControlV1 {

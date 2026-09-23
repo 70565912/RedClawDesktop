@@ -201,6 +201,8 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_connection_auth_version(message.connection_auth_version);
     encoded.set_auth_step(message.auth_step);
     encoded.set_auth_data(message.auth_data);
+    encoded.set_audio_version(message.audio_version);
+    encoded.set_audio_playback_requested(message.audio_playback_requested);
     if (message.workspace) {
         const auto& data = *message.workspace;
         auto* nested = encoded.mutable_workspace();
@@ -321,6 +323,8 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.connection_auth_version = encoded.connection_auth_version();
     message.auth_step = encoded.auth_step();
     message.auth_data = encoded.auth_data();
+    message.audio_version = encoded.audio_version();
+    message.audio_playback_requested = encoded.audio_playback_requested();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
         if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kBrowseClipboardCopies)

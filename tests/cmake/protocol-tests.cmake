@@ -1,4 +1,9 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_audio_stream_tests protocol/audio_stream_tests.cpp)
+target_link_libraries(redclaw_audio_stream_tests PRIVATE redclaw_protocol GTest::gtest_main)
+redclaw_apply_warnings(redclaw_audio_stream_tests)
+add_test(NAME redclaw_audio_stream_tests COMMAND redclaw_audio_stream_tests)
+
 add_executable(redclaw_transfer_protocol_tests protocol/transfer_protocol_tests.cpp)
 target_link_libraries(redclaw_transfer_protocol_tests PRIVATE redclaw_protocol GTest::gtest_main)
 redclaw_apply_warnings(redclaw_transfer_protocol_tests)

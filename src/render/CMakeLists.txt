@@ -1,9 +1,12 @@
 add_library(redclaw_render STATIC
   src/render_module.cpp
   src/audio_player.cpp
+  src/audio_jitter_buffer.cpp
+  src/audio_decoder.cpp
 )
 
 find_package(FFMPEG QUIET)
+find_package(Opus CONFIG REQUIRED)
 
 target_include_directories(redclaw_render
   PUBLIC 
@@ -26,6 +29,8 @@ if(FFMPEG_FOUND)
       ${FFMPEG_LIBRARIES}
   )
 endif()
+
+target_link_libraries(redclaw_render PUBLIC Opus::opus redclaw_protocol)
 
 target_compile_features(redclaw_render PUBLIC cxx_std_20)
 redclaw_apply_warnings(redclaw_render)
