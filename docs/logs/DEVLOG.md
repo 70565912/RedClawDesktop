@@ -2,7 +2,7 @@
 
 ## 2026-09-23 — Prepare v0.1.5 Developer Preview
 
-- Version metadata is 0.1.5 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.5.md) point at this preview. It adds optional remote system audio and the Controller playback corrections already verified by the operator: COM initialization, immediate playback from a lock-free frame cache, and an output that stays open until remote sound is turned off or the session ends. v0.1.4 stays the 2026-09-22 package. No signed installer is included. Full CTest and physical cursor tracking were not repeated.
+- Version metadata is 0.1.5 in CMake and vcpkg. Bilingual README, the task ledger, project state and [release notes](../releases/v0.1.5.md) point at this preview. It adds optional remote system audio and the Controller playback corrections already verified by the operator: COM initialization, immediate playback from a lock-free frame cache, and an output that stays open until remote sound is turned off or the session ends. v0.1.4 stays the 2026-09-22 package. No signed installer is included. Full CTest and physical cursor tracking were not repeated. The publisher writes the ZIP itself and retries a file that a scanner briefly locks; `Compress-Archive` aborted on that lock.
 
 ## 2026-09-23 — Remote audio plays from a lock-free frame cache
 

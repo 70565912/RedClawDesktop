@@ -281,7 +281,43 @@ function New-PortableArchive {
     Assert-StagingContent
     $identity = Write-InnerManifest
 
-    Compress-Archive -LiteralPath $stagingDirectory -DestinationPath $zipPath -CompressionLevel Optimal
+    # Compress-Archive fails when a scanner briefly locks a freshly copied DLL.
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::Open(
+        $zipPath,
+        [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in @(Get-ChildItem -LiteralPath $stagingDirectory -Recurse -File)) {
+            $entryName = Get-RelativeStagingPath -BaseDirectory $stagingRoot -FullName $file.FullName
+            $copied = $false
+            for ($attempt = 1; $attempt -le 8 -and -not $copied; $attempt++) {
+                $inputStream = $null
+                $outputStream = $null
+                try {
+                    $inputStream = [System.IO.File]::Open(
+                        $file.FullName,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::Read,
+                        [System.IO.FileShare]::ReadWrite)
+                    $entry = $archive.CreateEntry(
+                        $entryName,
+                        [System.IO.Compression.CompressionLevel]::Optimal)
+                    $outputStream = $entry.Open()
+                    $inputStream.CopyTo($outputStream)
+                    $copied = $true
+                } catch [System.IO.IOException] {
+                    if ($attempt -ge 8) { throw }
+                    Start-Sleep -Milliseconds (250 * $attempt)
+                } finally {
+                    if ($null -ne $outputStream) { $outputStream.Dispose() }
+                    if ($null -ne $inputStream) { $inputStream.Dispose() }
+                }
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
     if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
         throw "ZIP creation failed: $zipPath"
     }
