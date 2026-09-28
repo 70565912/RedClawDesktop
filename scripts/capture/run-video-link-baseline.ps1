@@ -49,9 +49,13 @@ function Invoke-Qa([string]$Action) {
 function Read-Ready {
     $reply = Invoke-Qa 'status'
     $status = $reply.status
+    # Runtime state and stream stats arrive separately. A healthy Host can
+    # transiently report "connected" between those records, including at idle.
     if ($status.role -ne 'host' -or -not $status.runtime_running -or -not $status.connected -or
-        $status.phase -ne 'streaming' -or [long]$status.stream.transmitted -le 0 -or
+        -not $status.channel_open -or $status.phase -notin @('connected','channel_open','streaming') -or
+        [long]$status.stream.transmitted -le 0 -or
         [long]$status.stream.captured -le 0 -or [long]$status.stream.synthetic -ne 0) {
+        Save-Snapshot $reply (Join-Path $report 'failed-readiness.json')
         throw 'Wait for the remote Client and a real captured media stream before starting the baseline.'
     }
     if ($null -eq $reply.result.runtime_log -or
@@ -90,7 +94,7 @@ foreach ($scene in $Scenario) {
         $sceneScript = Join-Path $PSScriptRoot 'run-local-high-motion-scene.ps1'
         # These are local owned paths. Quoting is only for Start-Process argument joining.
         $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$sceneScript+'"'),
-            '-DurationSeconds','85','-TargetFps','30','-RandomSeed',$RandomSeed,'-Scene',$sceneKind,
+            '-DurationSeconds','120','-TargetFps','30','-RandomSeed',$RandomSeed,'-Scene',$sceneKind,
             '-Fullscreen','-TopMost',
             '-Width',$contract.capture_width,'-Height',$contract.capture_height,
             '-ReportFile',('"'+$sceneReport+'"'),'-ReadyFile',('"'+$sceneReady+'"'))
@@ -103,12 +107,27 @@ foreach ($scene in $Scenario) {
             }
             if ($scene -eq 'DynamicLog') { [void](Invoke-Qa 'log_replay_start') }
             Start-Sleep -Seconds 10
-            $before = Read-Ready
-            Save-Snapshot $before (Join-Path $destination 'start.json')
             $request = $runtimeLog + '.frame-trace.request'
             if (Test-Path -LiteralPath $request) { throw 'Another Host trace request is pending.' }
             $existing = @(Get-ChildItem -LiteralPath (Split-Path $runtimeLog) -Filter '*.frame-trace-*.csv' | Select-Object -ExpandProperty FullName)
+            $consumedBefore = @(Get-ChildItem -LiteralPath (Split-Path $request) -Filter ((Split-Path $request -Leaf)+'.consumed-*') | Select-Object -ExpandProperty FullName)
             [IO.File]::WriteAllText($request, 'redclaw.host-frame-trace.v1 60')
+            # The Host polls this sidecar on its 10 s diagnostic tick. Wait for
+            # consumption so the 60 s scene window covers the actual trace.
+            $armWait = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $consumed = @(Get-ChildItem -LiteralPath (Split-Path $request) -Filter ((Split-Path $request -Leaf)+'.consumed-*') |
+                    Where-Object { $_.FullName -notin $consumedBefore })
+                if ($consumed.Count -eq 1) { break }
+                Start-Sleep -Milliseconds 100
+            } while ($armWait.Elapsed.TotalSeconds -lt 15)
+            if ($consumed.Count -ne 1) { throw 'Host trace request was not consumed.' }
+            [pscustomobject]@{schema='redclaw.video-link-arm.v1';minimum_warmup_seconds=10;
+                diagnostic_barrier_seconds=$armWait.Elapsed.TotalSeconds;
+                host_trace_started_us=[long]($consumed[0].Name -replace '^.*\.consumed-','')} |
+                ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'host-arm.json') -Encoding UTF8
+            $before = Read-Ready
+            Save-Snapshot $before (Join-Path $destination 'start.json')
             Invoke-Qa 'measurement_arm' | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $destination 'gui-arm.json')
             $clock = [Diagnostics.Stopwatch]::StartNew()
             $index = 0
@@ -131,15 +150,29 @@ foreach ($scene in $Scenario) {
                     Where-Object { $_.FullName -notin $existing -and $_.FullName.StartsWith($runtimeLog + '.frame-trace-') })
                 if ($trace.Count -eq 1) { break }
                 Start-Sleep -Milliseconds 500
-            } while ($drain.Elapsed.TotalSeconds -lt 20)
+            } while ($drain.Elapsed.TotalSeconds -lt 30)
             if ($trace.Count -ne 1) { throw 'Host frame trace did not finish.' }
             Copy-Item -LiteralPath $trace[0].FullName -Destination (Join-Path $destination 'host-frames.csv')
             $header = Get-Content -LiteralPath $trace[0].FullName -TotalCount 1
             if ($header -notmatch 'overflow=0$') { throw 'Trace overflow makes this window invalid.' }
             $frames = @(Get-Content -LiteralPath $trace[0].FullName | Select-Object -Skip 1 | ConvertFrom-Csv)
-            if ($frames.Count -eq 0 -or @($frames | Where-Object {
+            if (($scene -ne 'Static' -and $frames.Count -eq 0) -or @($frames | Where-Object {
                 [int]$_.width -ne [int]$contract.encode_width -or [int]$_.height -ne [int]$contract.encode_height
-            }).Count -ne 0) { throw 'Empty trace or encoded geometry changed.' }
+            }).Count -ne 0) { throw 'Empty dynamic trace or encoded geometry changed.' }
+            # An unchanged desktop legitimately has no new frame to encode.
+            # Verify its retained geometry from runtime stats, without filler.
+            $geometry = Get-Content -LiteralPath $runtimeLog -Tail 500 |
+                Where-Object { $_ -match 'Runtime desktop stream stats' } | Select-Object -Last 1
+            foreach ($field in @('source_width','source_height','encoded_width','encoded_height')) {
+                $expected = switch ($field) {
+                    'source_width' {$contract.capture_width}; 'source_height' {$contract.capture_height}
+                    'encoded_width' {$contract.encode_width}; 'encoded_height' {$contract.encode_height}
+                }
+                if ($geometry -notmatch ("(?:^| )"+$field+'=(\d+)') -or [int]$Matches[1] -ne [int]$expected) {
+                    throw "Runtime geometry changed or missing: $field"
+                }
+            }
+            $geometry | Set-Content -LiteralPath (Join-Path $destination 'host-geometry.txt') -Encoding UTF8
             # These fixed-prefix numeric summaries preserve effective codec and stage
             # parameters without copying unrelated runtime/Agent output.
             $diagnostics = foreach ($suffix in '.2','.1','') {

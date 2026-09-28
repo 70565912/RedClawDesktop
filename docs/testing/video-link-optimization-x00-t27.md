@@ -81,6 +81,16 @@ using the normal file sink and UI cache. It stops explicitly after measurement a
 has a 90 s safety limit. Local Debug IPC actions `log_replay_start` and
 `log_replay_stop` do not change the peer protocol. Release builds reject them.
 
+After the 10 s warmup, the collector waits for the Host's next diagnostic tick to
+consume the trace request, then measures 60 s. `host-arm.json` records this extra
+0–10 s alignment barrier and the Host trace clock; GUI/status boundaries are
+recorded separately. The scene remains open through the recorder's drain period.
+A static window may contain zero newly encoded frames: retain its zero rate and
+CPU/memory evidence, report frame quantiles as unavailable, and verify retained
+source/encoded geometry from runtime stats. Do not inject filler frames. Connection
+readiness uses the live connection/channel and real-media counters; the transient
+`connected` phase between runtime state and stream-stat records is not a disconnect.
+
 Reports are local, may contain endpoint paths/network metadata and must not be
 committed. CPU samples retain cumulative process seconds and memory bytes; compute
 deltas over each recorded interval. GUI and Host traces retain their own monotonic
