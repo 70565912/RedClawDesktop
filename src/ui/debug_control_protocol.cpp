@@ -94,6 +94,10 @@ DebugControlParseResult parse_debug_control_request(const QByteArray& payload) {
     result.request.action = DebugControlAction::kMeasurementArm;
   } else if (action_name == "measurement_export") {
     result.request.action = DebugControlAction::kMeasurementExport;
+  } else if (action_name == "log_replay_start") {
+    result.request.action = DebugControlAction::kLogReplayStart;
+  } else if (action_name == "log_replay_stop") {
+    result.request.action = DebugControlAction::kLogReplayStop;
   } else if (action_name == "input_probe_start") {
     result.request.action = DebugControlAction::kInputProbeStart;
   } else if (action_name == "input_probe_stop") {
@@ -258,6 +262,10 @@ QString debug_control_action_name(DebugControlAction action) {
     return "measurement_arm";
   case DebugControlAction::kMeasurementExport:
     return "measurement_export";
+  case DebugControlAction::kLogReplayStart:
+    return "log_replay_start";
+  case DebugControlAction::kLogReplayStop:
+    return "log_replay_stop";
   case DebugControlAction::kInputProbeStart: return "input_probe_start";
   case DebugControlAction::kInputProbeStop: return "input_probe_stop";
   case DebugControlAction::kInputProbeExport: return "input_probe_export";

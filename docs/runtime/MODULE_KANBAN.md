@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-09-23
+Updated: 2026-09-28
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.5` Developer Preview. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -66,7 +66,9 @@ Updated: 2026-09-20
 
 ## M10 UI
 
-Updated: 2026-09-22
+Updated: 2026-09-28
+
+- `M10-T04` Confirm user exits from a connected Host — done; main-window close, connection-page Exit and Stop Runtime ask before teardown, with Cancel as the default and escape action. Debug NoPublish build and 10 focused unattended UI tests passed (6 new confirmation cases plus 4 existing lifecycle cases). No publication, peer upgrade or live dual-machine exit test.
 
 - `M10-T01` Device-code Host/Controller GUI and playback workspace — done. The playback window titled `RedClaw` is an independent top-level window, not owned by `RedClaw Desktop`. One focused lifecycle case passed. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md).
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
@@ -78,7 +80,9 @@ Updated: 2026-09-22
 
 ## X00 Cross-module delivery
 
-Updated: 2026-09-23
+Updated: 2026-09-28
+
+- `X00-T27` Video-link optimization and matched cross-LAN validation — in-progress. B0 tooling/P1 implementation and local checks passed: Debug main build, 22 focused cases, deterministic offscreen scenes and baseline preparation. Three fixed-log replays reduced median paint time 66.40%, GUI CPU time 34.58% and synthetic dispatch P95 43.56%; P99 improvement is not confirmed against baseline variation. Real-media B0 and the real-video P95/P99 target wait for pushed-source Debug Host publication and the operator's remote Client. P2–P6 remain planned. See the [phase plan and validation contract](../testing/video-link-optimization-x00-t27.md).
 
 - `X00-T25` Remote system audio — done; Controller speaker control alone starts Host shared-mode loopback, Opus transport on optional unordered `redclaw-audio-v1`, and XAudio2 playback. The playback thread initializes an MTA before `CreateMasteringVoice`. Playback drains a lock-free frame cache into XAudio2 as soon as it has data, then sleeps on the data event. A quiet gap leaves the output open; the device is released only when remote sound is turned off or the session ends. Host capture emits one 20 ms frame per 20 ms. The operator verified audible playback on the local Debug Controller. The peer Host was left running, so that listen check used the previous 5 ms drain. Silence sends nothing. Focused jitter tests passed 5 cases. WASAPI exclusive/ASIO remain outside this version. See [remote system audio](../architecture/remote-system-audio-v1.md) and [v0.1.5 notes](../releases/v0.1.5.md).
 

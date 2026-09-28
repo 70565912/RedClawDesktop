@@ -4,6 +4,15 @@
 
 namespace {
 
+TEST(DebugControlProtocol, ParsesLocalLogReplayActions) {
+  for (const auto& action : {QStringLiteral("log_replay_start"), QStringLiteral("log_replay_stop")}) {
+    const auto parsed = redclaw::ui::parse_debug_control_request(
+        QString("{\"schema\":\"redclaw.debug-control.v1\",\"request_id\":\"replay\",\"action\":\"%1\"}").arg(action).toUtf8());
+    ASSERT_TRUE(parsed.ok);
+    EXPECT_EQ(redclaw::ui::debug_control_action_name(parsed.request.action), action);
+  }
+}
+
 TEST(DebugControlProtocol, ParsesSupportedRequests) {
   const auto start = redclaw::ui::parse_debug_control_request(
       R"({"schema":"redclaw.debug-control.v1","request_id":"req-1","action":"start","role":"host"})");
