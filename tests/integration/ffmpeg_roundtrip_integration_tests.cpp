@@ -443,13 +443,15 @@ TEST(FfmpegRoundtripIntegration, RebuildsEncoderAndResetsDecoderAcrossThreeResol
     };
 
     redclaw::render::FfmpegVideoFrameDecoder decoder;
+    redclaw::capture::EncoderExecutionSession encoder_session;
+    std::int64_t previous_pts = -1;
     std::uint64_t total_encoded_bytes = 0;
     for (std::size_t index = 0; index < std::size(resolutions); ++index) {
         const Resolution resolution = resolutions[index];
         redclaw::capture::EncoderProfileRequest profile_request;
         profile_request.width = resolution.width;
         profile_request.height = resolution.height;
-        profile_request.fps = 15;
+        profile_request.fps = index == 1 ? 30 : 1;
         profile_request.preferred_codec = redclaw::capture::EncoderCodec::kH264;
 
         redclaw::capture::EncoderBackendBridgeRequest bridge_request;
@@ -457,11 +459,13 @@ TEST(FfmpegRoundtripIntegration, RebuildsEncoderAndResetsDecoderAcrossThreeResol
         bridge_request.preferred_backend = redclaw::capture::EncoderBackendType::kSoftware;
         bridge_request.allow_hardware_fallback = true;
 
-        redclaw::capture::EncoderExecutionSession encoder_session;
         redclaw::capture::EncoderBackendBridgePlan resolved_plan;
         std::string start_error;
+        redclaw::capture::EncoderConfigProfile profile;
+        ASSERT_TRUE(redclaw::capture::build_desktop_encoder_profile(
+            profile_request, &profile, &start_error)) << start_error;
         ASSERT_TRUE(redclaw::capture::start_encoder_execution_from_bridge(
-            profile_request,
+            profile,
             bridge_request,
             &encoder_session,
             &resolved_plan,
@@ -476,6 +480,14 @@ TEST(FfmpegRoundtripIntegration, RebuildsEncoderAndResetsDecoderAcrossThreeResol
             &encoded_packet,
             &encode_error)) << encode_error;
         ASSERT_FALSE(encoded_packet.payload.empty());
+        ASSERT_TRUE(encoded_packet.keyframe);
+        const auto diagnostics = encoder_session.diagnostics();
+        EXPECT_EQ(diagnostics.configured_time_base_num, 1U);
+        EXPECT_EQ(diagnostics.configured_time_base_den, 30U);
+        EXPECT_EQ(diagnostics.configured_gop_frames, 60U);
+        EXPECT_GT(diagnostics.last_submitted_pts, previous_pts);
+        EXPECT_EQ(diagnostics.last_output_pts, diagnostics.last_submitted_pts);
+        previous_pts = diagnostics.last_submitted_pts;
         total_encoded_bytes += encoded_packet.payload.size();
 
         if (index != 0) {

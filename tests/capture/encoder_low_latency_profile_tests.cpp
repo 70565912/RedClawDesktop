@@ -129,6 +129,32 @@ bool test_low_latency_profile_uses_all_intra_at_one_fps() {
         && expect_true(profile.zero_latency_tuning, "one-fps mode must keep zero-latency tuning enabled");
 }
 
+bool test_desktop_codec_clock_is_independent_of_submission_cadence() {
+    redclaw::capture::EncoderProfileRequest request;
+    request.width = 1920;
+    request.height = 1080;
+    std::string error;
+    for (const auto fps : {1U, 30U, 1U}) {
+        request.fps = fps;
+        redclaw::capture::EncoderConfigProfile adaptive, desktop;
+        if (!expect_true(redclaw::capture::build_low_latency_encoder_profile(request, &adaptive, &error)
+                && redclaw::capture::build_desktop_encoder_profile(request, &desktop, &error),
+                "desktop and adaptive profiles should build: " + error)
+            || !expect_true(desktop.fps == 30 && desktop.gop_length_frames == 60,
+                "1-to-30-to-1 cadence must retain the nominal clock and frame-count GOP")
+            || !expect_true(desktop.target_bitrate_kbps == adaptive.target_bitrate_kbps
+                && desktop.max_bitrate_kbps == adaptive.max_bitrate_kbps,
+                "nominal codec FPS must not change the existing bitrate adaptation")
+            || !expect_true(desktop.width == request.width && desktop.height == request.height,
+                "desktop policy must preserve pixel geometry")) {
+            return false;
+        }
+        request.width = 1280;
+        request.height = 720;
+    }
+    return true;
+}
+
 bool test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() {
     return expect_true(
                redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(580, 362, 1) == 400,
@@ -158,6 +184,7 @@ int main() {
     ok = test_low_latency_profile_fast_action_has_higher_bitrate_and_shorter_gop() && ok;
     ok = test_low_latency_profile_uses_all_intra_at_one_fps() && ok;
     ok = test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() && ok;
+    ok = test_desktop_codec_clock_is_independent_of_submission_cadence() && ok;
 
     if (!ok) {
         return 1;

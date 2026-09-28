@@ -6596,7 +6596,7 @@ int run_runtime_mode(
 
             redclaw::capture::EncoderConfigProfile encoder_profile;
             std::string encoder_error;
-            if (!redclaw::capture::build_low_latency_encoder_profile(
+            if (!redclaw::capture::build_desktop_encoder_profile(
                     profile_request,
                     &encoder_profile,
                     &encoder_error)) {
@@ -11684,6 +11684,16 @@ int run_runtime_mode(
                               << " encoder_name="
                               << (encoder_diagnostics.encoder_name.empty() ? "n/a" : encoder_diagnostics.encoder_name)
                               << " encoder_configured_fps=" << encoder_diagnostics.configured_fps
+                              << " encoder_target_fps=" << adaptive_control.target_fps
+                              << " encoder_output_fps=" << format_stream_rate(stream_rate_per_second(encoded_delta, rate_window_ms))
+                              << " encoder_time_base_num=" << encoder_diagnostics.configured_time_base_num
+                              << " encoder_time_base_den=" << encoder_diagnostics.configured_time_base_den
+                              << " encoder_gop_frames=" << encoder_diagnostics.configured_gop_frames
+                              << " encoder_last_submitted_pts=" << encoder_diagnostics.last_submitted_pts
+                              << " encoder_last_output_pts=" << encoder_diagnostics.last_output_pts
+                              << " encoder_keyframe_ratio=" << (encoder_diagnostics.encoded_frame_count == 0
+                                  ? 0.0 : static_cast<double>(encoder_diagnostics.encoded_keyframe_count)
+                                      / encoder_diagnostics.encoded_frame_count)
                               << " encoder_configured_kbps=" << encoder_diagnostics.configured_bitrate_kbps
                               << " qsv_low_delay_brc=" << encoder_diagnostics.qsv_low_delay_brc
                               << " qsv_brc_verified=" << encoder_diagnostics.qsv_low_delay_brc_verified
