@@ -161,6 +161,7 @@ endif()
 target_link_libraries(redclaw_desktop PRIVATE
   redclaw_core
   redclaw_runtime_options
+  redclaw_navigation_thumbnail_worker
   redclaw_protocol
   redclaw_agent
   redclaw_net
