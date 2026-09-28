@@ -1666,6 +1666,22 @@ bool build_low_latency_encoder_profile(
     return true;
 }
 
+bool build_desktop_encoder_profile(
+    const EncoderProfileRequest& request,
+    EncoderConfigProfile* profile,
+    std::string* error_detail) {
+    auto desktop_request = request;
+    desktop_request.workload = EncoderWorkload::kInteractiveDesktop;
+    if (!build_low_latency_encoder_profile(desktop_request, profile, error_detail)) {
+        return false;
+    }
+    // Retain the existing cadence-dependent bitrate result. Only the nominal
+    // codec clock and frame-count GOP are fixed for the desktop pipeline.
+    profile->fps = 30;
+    profile->gop_length_frames = 60;
+    return true;
+}
+
 bool resolve_viewport_encode_dimensions(
     std::uint32_t source_width,
     std::uint32_t source_height,
@@ -1950,11 +1966,11 @@ public:
         const EncoderConfigProfile& profile,
         const EncoderBackendBridgePlan& bridge_plan,
         std::string* error_detail) {
+        const auto previous_fps = profile_.fps;
         stop();
 
         diagnostics_ = EncoderExecutionDiagnostics{};
         diagnostics_.backend = bridge_plan.selected_backend;
-        profile_ = profile;
         selected_backend_ = bridge_plan.selected_backend;
         hardware_frame_input_allowed_ = bridge_plan.allow_hardware_frame_input;
         hardware_frame_input_activation_failed_ = !hardware_frame_input_allowed_;
@@ -1972,7 +1988,14 @@ public:
                 error_detail);
         }
 
+        profile_ = profile;
 #if REDCLAW_CAPTURE_HAS_LIBAVCODEC
+        // A codec rebuild (resize/reconnect/fallback) keeps this session's PTS
+        // origin. Rescale the next tick if a non-desktop caller changes units.
+        if (next_pts_ != 0 && previous_fps != 0 && previous_fps != profile.fps) {
+            next_pts_ = static_cast<std::uint64_t>(av_rescale_rnd(
+                static_cast<std::int64_t>(next_pts_), profile.fps, previous_fps, AV_ROUND_UP));
+        }
         const auto encoder_candidates = resolve_encoder_candidates(profile.codec, bridge_plan.selected_backend);
 
         for (const std::string& encoder_name : encoder_candidates) {
@@ -1997,6 +2020,7 @@ public:
         }
         return opened;
 #else
+        (void)previous_fps;
         (void)bridge_plan;
         return fail(
             EncoderExecutionFailureCategory::kLibavcodecUnavailable,
@@ -2399,7 +2423,8 @@ public:
         hardware_frame_transfer_required_ = false;
         hardware_input_plan_.reset();
         selected_backend_ = EncoderBackendType::kSoftware;
-        next_pts_ = 0;
+        // The timestamp timeline belongs to the session object, not the codec
+        // context. Stopping/reopening must not restart a live desktop at PTS 0.
         keyframe_requested_.store(false);
         diagnostics_.initialized = false;
     }
@@ -2608,6 +2633,7 @@ private:
         packet->codec = profile_.codec;
         packet->keyframe = packet_contains_keyframe(profile_.codec, packet_);
         packet->timestamp_ms = consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
+        diagnostics_.last_output_pts = packet_->pts;
         const auto payload_copy_start = std::chrono::steady_clock::now();
         packet->payload.assign(packet_->data, packet_->data + packet_->size);
         diagnostics_.total_payload_copy_us += static_cast<std::uint64_t>(
@@ -2798,6 +2824,9 @@ private:
             return fail(EncoderExecutionFailureCategory::kEncoderInitFailed, error, error_detail);
         }
         diagnostics_.configured_fps = profile_.fps;
+        diagnostics_.configured_time_base_num = static_cast<std::uint32_t>(context_->time_base.num);
+        diagnostics_.configured_time_base_den = static_cast<std::uint32_t>(context_->time_base.den);
+        diagnostics_.configured_gop_frames = static_cast<std::uint32_t>(context_->gop_size);
         diagnostics_.configured_bitrate_kbps = static_cast<std::uint32_t>(context_->bit_rate / 1000);
         if (supports_qsv_tuning) {
             std::int64_t value = -1;

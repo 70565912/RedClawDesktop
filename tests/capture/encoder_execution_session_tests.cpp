@@ -241,6 +241,64 @@ bool test_encoder_execution_reencodes_static_frame_as_requested_keyframe() {
             "static refresh should be visible in encoder keyframe diagnostics");
 }
 
+bool test_desktop_clock_survives_low_cadence_resize_and_restart() {
+    redclaw::capture::EncoderProfileRequest request;
+    request.width = 320;
+    request.height = 180;
+    request.fps = 1;
+    redclaw::capture::EncoderConfigProfile profile;
+    redclaw::capture::EncoderBackendBridgeRequest bridge;
+    bridge.preferred_backend = redclaw::capture::EncoderBackendType::kSoftware;
+    redclaw::capture::EncoderBackendBridgePlan plan;
+    redclaw::capture::EncoderExecutionSession session;
+    std::string error;
+    auto start = [&] {
+        return redclaw::capture::build_desktop_encoder_profile(request, &profile, &error)
+            && redclaw::capture::start_encoder_execution_from_bridge(profile, bridge, &session, &plan, &error);
+    };
+    auto encode = [&](std::uint64_t timestamp) {
+        auto frame = make_test_bgra_frame(request.width, request.height);
+        redclaw::capture::EncodedFramePacket packet;
+        return session.encode_bgra_frame(frame, timestamp, &packet, &error)
+            && !packet.payload.empty() && packet.timestamp_ms == timestamp;
+    };
+    if (!expect_true(start() && encode(1000), "one-FPS desktop source should encode: " + error)) return false;
+    const auto first = session.diagnostics();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
+    if (!expect_true(encode(2050), "low cadence frame should encode: " + error)) return false;
+    auto diagnostics = session.diagnostics();
+    if (!expect_true(diagnostics.last_submitted_pts >= first.last_submitted_pts + 30,
+            "one-second source gap must advance about 30 codec ticks, not one")
+        || !expect_true(diagnostics.encoded_frame_count == 2,
+            "idle time must not generate filler frames")) return false;
+    // Submission accelerates without restarting or changing the codec profile.
+    for (int i = 0; i < 3; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(34));
+        const auto previous = session.diagnostics().last_submitted_pts;
+        if (!expect_true(encode(2084 + i * 34), "higher cadence frame should encode: " + error)
+            || !expect_true(session.diagnostics().last_submitted_pts > previous,
+                "higher cadence PTS must remain strictly increasing")) return false;
+    }
+    for (const bool resize : {true, false}) {
+        const auto previous = session.diagnostics().last_submitted_pts;
+        session.stop();
+        if (resize) { request.width = 640; request.height = 360; }
+        request.fps = 1;
+        if (!expect_true(start() && encode(resize ? 3000 : 3001),
+                "low-cadence resize/reconnect should encode: " + error)) return false;
+        diagnostics = session.diagnostics();
+        if (!expect_true(diagnostics.configured_fps == 30
+                && diagnostics.configured_time_base_num == 1 && diagnostics.configured_time_base_den == 30
+                && diagnostics.configured_gop_frames == 60,
+                "resize/reconnect must retain nominal 30 FPS, time base 1/30 and GOP 60")
+            || !expect_true(diagnostics.last_submitted_pts > previous
+                && diagnostics.last_output_pts == diagnostics.last_submitted_pts,
+                "codec rebuild must preserve monotonic input/output PTS")) return false;
+    }
+    session.stop();
+    return true;
+}
+
 bool test_encoder_execution_accepts_resized_source_frame() {
     redclaw::capture::EncoderProfileRequest profile_request;
     profile_request.width = 640;
@@ -349,6 +407,7 @@ int main() {
     ok = test_encoder_execution_bridge_falls_back_to_software() && ok;
     ok = test_encoder_execution_rejects_b_frames() && ok;
     ok = test_encoder_execution_reencodes_static_frame_as_requested_keyframe() && ok;
+    ok = test_desktop_clock_survives_low_cadence_resize_and_restart() && ok;
 
     if (!ok) {
         return 1;

@@ -207,8 +207,12 @@ struct EncoderExecutionDiagnostics {
 	bool qsv_low_delay_brc = false;
 	bool qsv_low_delay_brc_verified = false;
 	std::uint32_t configured_fps = 0;
+	std::uint32_t configured_time_base_num = 0;
+	std::uint32_t configured_time_base_den = 0;
+	std::uint32_t configured_gop_frames = 0;
 	std::uint32_t configured_bitrate_kbps = 0;
 	std::int64_t last_submitted_pts = 0;
+	std::int64_t last_output_pts = 0;
 	EncoderBackendType backend = EncoderBackendType::kSoftware;
 	std::string encoder_name;
 	std::string input_mode;
@@ -276,6 +280,13 @@ private:
 };
 
 bool build_low_latency_encoder_profile(
+	const EncoderProfileRequest& request,
+	EncoderConfigProfile* profile,
+	std::string* error_detail = nullptr);
+
+// Desktop cadence controls submission and bitrate, independently of codec time.
+// GOP is counted in submitted frames, not elapsed seconds at a low source FPS.
+bool build_desktop_encoder_profile(
 	const EncoderProfileRequest& request,
 	EncoderConfigProfile* profile,
 	std::string* error_detail = nullptr);
