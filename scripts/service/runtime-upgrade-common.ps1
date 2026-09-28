@@ -227,9 +227,16 @@ function Stop-UpgradeGui {
     Assert-UpgradeIdentity $Identity
     if ($ControlName) {
         $response = & (Join-Path $PSScriptRoot 'invoke-cross-lan-debug-control.ps1') -Action status -Role $Role -ControlName $ControlName -Json | ConvertFrom-Json
-        if (-not $response.ok) { throw 'upgrade_debug_status_unavailable' }
-        # The pipe's GUI PID must agree before asking it to exit.
-        if ([int]$response.status.app_pid -ne [int]$Identity.pid -or $response.status.role -ne $Role) { throw 'upgrade_control_identity_mismatch' }
+        # A sticky diagnostic write failure still carries the live identity.
+        # Require that identity, then ask the same process to exit.
+        $identityMatches = $null -ne $response.status -and
+            [int]$response.status.app_pid -eq [int]$Identity.pid -and
+            [string]$response.status.role -eq $Role
+        $diagnosticBarrierOnly = -not $response.ok -and
+            [string]$response.error_code -eq 'diagnostic_barrier_failed' -and
+            $identityMatches
+        if (-not $response.ok -and -not $diagnosticBarrierOnly) { throw 'upgrade_debug_status_unavailable' }
+        if (-not $identityMatches) { throw 'upgrade_control_identity_mismatch' }
         & (Join-Path $PSScriptRoot 'invoke-cross-lan-debug-control.ps1') -Action exit -Role $Role -ControlName $ControlName -Json | Out-Null
     } else {
         $process = Get-Process -Id $Identity.pid
