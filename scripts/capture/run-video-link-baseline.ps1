@@ -25,7 +25,8 @@ $report = (Resolve-Path -LiteralPath $ReportDirectory).Path
 $plan = [ordered]@{
     schema = 'redclaw.video-link-baseline.v1'; warmup_seconds = 10; measurement_seconds = 60
     repetitions = $Repetitions; scenarios = $Scenario; random_seed = $RandomSeed
-    scene_fps = 30; contract = $contract; status_poll_ms = 1000
+    scene_fps = 30; scene_fullscreen = $true; scene_top_most = $true
+    contract = $contract; status_poll_ms = 1000
     executed = $false; cross_machine_timestamp_subtraction = $false
 }
 $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $report 'plan.json') -Encoding UTF8
@@ -90,6 +91,7 @@ foreach ($scene in $Scenario) {
         # These are local owned paths. Quoting is only for Start-Process argument joining.
         $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$sceneScript+'"'),
             '-DurationSeconds','85','-TargetFps','30','-RandomSeed',$RandomSeed,'-Scene',$sceneKind,
+            '-Fullscreen','-TopMost',
             '-Width',$contract.capture_width,'-Height',$contract.capture_height,
             '-ReportFile',('"'+$sceneReport+'"'),'-ReadyFile',('"'+$sceneReady+'"'))
         $sceneProcess = Start-Process -FilePath $windowsPowerShell -ArgumentList $arguments -WindowStyle Hidden -PassThru

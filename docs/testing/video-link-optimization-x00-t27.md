@@ -51,7 +51,11 @@ a contract JSON and a new evidence directory. `-PrepareOnly` validates the contr
 and saves the schedule without opening a scene or sampling. Execution requires a
 running Debug DHT Host, a connected Client, real captured/sent frames, zero synthetic
 frames, matching program hash and matching log visibility. The host's existing
-frame-trace sidecar and GUI trace are reused. The fixture invokes no remote command.
+frame-trace sidecar and GUI trace are reused. The scene is fullscreen and topmost
+so a static trial cannot capture changing windows outside a clipped client area;
+the covered Host log retains its existing visible/layout state. Scene reports
+record the actual client geometry (which can differ from physical capture pixels
+under DPI scaling). The fixture invokes no remote command.
 
 Example contract (replace all geometry and configuration values with measured
 values for the selected local Host / remote viewport before a real run):
