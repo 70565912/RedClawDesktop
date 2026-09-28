@@ -21,6 +21,8 @@
 #include <QEventLoop>
 #include <QLabel>
 #include <QLineEdit>
+#include <QKeyEvent>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -37,6 +39,7 @@
 #include <QTemporaryDir>
 #include "ui/connection_flow_model.h"
 #include "ui/connection_progress_page.h"
+#include "ui/host_exit_confirmation.h"
 #include "ui/playback_control_hint_overlay.h"
 #include "ui/playback_window_lifecycle.h"
 #include "ui/remote_input_capture.h"
@@ -158,6 +161,118 @@ using redclaw::ui::ConnectionFlowRole;
 using redclaw::ui::ConnectionFlowStatus;
 using redclaw::ui::ConnectionFlowView;
 using redclaw::ui::ConnectionStageState;
+
+TEST(HostExitConfirmation, ClosingConnectedHostDefaultsToCancelAndKeepsWindowOpen) {
+  QWidget window;
+  redclaw::ui::HostExitConfirmation confirmation(window, [] { return true; });
+  window.show();
+  QTimer::singleShot(0, &window, [&]() {
+    auto* prompt = window.findChild<QMessageBox*>();
+    ASSERT_NE(prompt, nullptr);
+    EXPECT_EQ(prompt->defaultButton(), prompt->button(QMessageBox::Cancel));
+    EXPECT_EQ(prompt->escapeButton(), prompt->button(QMessageBox::Cancel));
+    prompt->button(QMessageBox::Cancel)->click();
+  });
+
+  EXPECT_FALSE(window.close());
+  EXPECT_TRUE(window.isVisible());
+}
+
+TEST(HostExitConfirmation, SessionExitOnlyStopsAfterExplicitConfirmation) {
+  QWidget window;
+  redclaw::ui::HostExitConfirmation confirmation(window, [] { return true; });
+  int stop_count = 0;
+  for (const bool accept : {false, true}) {
+    QTimer::singleShot(0, &window, [&]() {
+      auto* prompt = window.findChild<QMessageBox*>();
+      ASSERT_NE(prompt, nullptr);
+      EXPECT_EQ(stop_count, 0);
+      for (auto* button : prompt->buttons()) {
+        if (prompt->buttonRole(button) ==
+            (accept ? QMessageBox::AcceptRole : QMessageBox::RejectRole)) {
+          button->click();
+          return;
+        }
+      }
+      ADD_FAILURE() << "Expected exit or cancel button";
+      prompt->reject();
+    });
+    if (confirmation.confirm_exit()) {
+      ++stop_count;
+    }
+    EXPECT_EQ(stop_count, accept ? 1 : 0);
+  }
+}
+
+TEST(HostExitConfirmation, EscapeOrDismissalCancelsExit) {
+  QWidget window;
+  redclaw::ui::HostExitConfirmation confirmation(window, [] { return true; });
+  for (const bool escape : {false, true}) {
+    QTimer::singleShot(0, &window, [&]() {
+      auto* prompt = window.findChild<QMessageBox*>();
+      ASSERT_NE(prompt, nullptr);
+      if (escape) {
+        QKeyEvent key(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(prompt, &key);
+      } else {
+        prompt->close();
+      }
+    });
+    EXPECT_FALSE(confirmation.confirm_exit());
+  }
+}
+
+TEST(HostExitConfirmation, ExplicitConfirmationAllowsMainWindowClose) {
+  QWidget window;
+  redclaw::ui::HostExitConfirmation confirmation(window, [] { return true; });
+  window.show();
+  QTimer::singleShot(0, &window, [&]() {
+    auto* prompt = window.findChild<QMessageBox*>();
+    ASSERT_NE(prompt, nullptr);
+    for (auto* button : prompt->buttons()) {
+      if (prompt->buttonRole(button) == QMessageBox::AcceptRole) {
+        button->click();
+        return;
+      }
+    }
+    ADD_FAILURE() << "Expected exit button";
+    prompt->reject();
+  });
+
+  EXPECT_TRUE(window.close());
+  EXPECT_FALSE(window.isVisible());
+}
+
+TEST(HostExitConfirmation, NoConnectedHostNeedsNoPromptAndStateIsCheckedAtExit) {
+  QWidget window;
+  bool connected_host = true;
+  redclaw::ui::HostExitConfirmation confirmation(window, [&] { return connected_host; });
+  window.show();
+  connected_host = false;
+
+  EXPECT_TRUE(confirmation.confirm_exit());
+  EXPECT_TRUE(window.close());
+  EXPECT_EQ(window.findChild<QMessageBox*>(), nullptr);
+}
+
+TEST(HostExitConfirmation, ReentrantExitIsRejectedWhilePromptIsOpen) {
+  QWidget window;
+  redclaw::ui::HostExitConfirmation confirmation(window, [] { return true; });
+  window.show();
+  QTimer::singleShot(0, &window, [&]() {
+    auto* prompt = window.findChild<QMessageBox*>();
+    ASSERT_NE(prompt, nullptr);
+    EXPECT_FALSE(confirmation.confirm_exit());
+    QCloseEvent nested_close;
+    QApplication::sendEvent(&window, &nested_close);
+    EXPECT_FALSE(nested_close.isAccepted());
+    EXPECT_EQ(window.findChildren<QMessageBox*>().size(), 1);
+    prompt->reject();
+  });
+
+  EXPECT_FALSE(window.close());
+  EXPECT_TRUE(window.isVisible());
+}
 
 TEST(PlaybackWindowLifecycle, ClosingPlaybackRestoresClosedMainWindowWithoutQuittingGui) {
   QWidget main_window;
