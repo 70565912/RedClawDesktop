@@ -40,8 +40,14 @@ void HostFrameTraceFile::poll(std::uint64_t now_us) {
         destination += ".frame-trace-" + std::to_string(batch->started_us) + ".csv";
         std::error_code ec;
         if (std::filesystem::exists(destination, ec) || ec) return;
-        std::ofstream out(destination, std::ios::binary);
-        if (out) write_host_frame_trace_csv(out, *batch);
+        auto pending = destination;
+        pending += ".tmp";
+        // The .csv name is a completion marker for readers, including old collectors.
+        std::ofstream out(pending, std::ios::binary);
+        if (!out) return;
+        write_host_frame_trace_csv(out, *batch);
+        out.close();
+        if (out) std::filesystem::rename(pending, destination, ec);
         return;
     }
     auto request = runtime_log_;

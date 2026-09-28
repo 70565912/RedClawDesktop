@@ -60,6 +60,8 @@ TEST(HostFrameTrace, SidecarExportsOnlyAfterWindowAndCsvIsNumeric) {
     EXPECT_FALSE(recorder.active(1000200));
     EXPECT_FALSE(std::filesystem::exists(csv));
     file.poll(12000200);
+    auto pending = csv; pending += ".tmp";
+    EXPECT_FALSE(std::filesystem::exists(pending));
     std::ifstream input(csv);
     ASSERT_TRUE(input.is_open());
     std::string metadata, header, row;

@@ -350,6 +350,13 @@ bool start_encoder_execution_from_bridge(
 	EncoderBackendBridgePlan* resolved_plan,
 	std::string* error_detail = nullptr);
 
+enum class CaptureFrameDelivery { kCpu, kGpu, kCpuAndGpu };
+
+struct CaptureAdapterIdentity {
+    CaptureAdapterVendor vendor = CaptureAdapterVendor::kUnknown;
+    std::string summary;
+};
+
 struct CaptureSessionConfig {
 	// Local evidence only, not a runtime-profile or wire setting.
 	std::string local_evidence_directory;
@@ -359,8 +366,7 @@ struct CaptureSessionConfig {
 	std::uint32_t frame_acquire_timeout_ms = 250;
 	CaptureBackendType preferred_backend = CaptureBackendType::kDesktopDuplication;
 	bool fallback_enabled = true;
-	bool capture_native_d3d11_textures = false;
-	bool skip_cpu_readback_when_native_texture_available = false;
+    CaptureFrameDelivery frame_delivery = CaptureFrameDelivery::kCpu;
 	std::uint32_t max_consecutive_failures_before_fallback = 5;
 };
 
@@ -415,6 +421,11 @@ struct CaptureBackendTelemetry {
 	std::uint64_t native_texture_pool_create_count = 0;
 	std::uint64_t native_texture_pool_reuse_count = 0;
 	std::uint64_t native_texture_pool_exhaustion_count = 0;
+    // Session-lifetime pool counters; copy/allocation counters follow backend telemetry.
+    std::uint64_t cpu_frame_pool_acquisitions = 0, cpu_frame_pool_exhaustion_count = 0;
+    std::uint64_t cpu_frame_pool_retained_bytes = 0;
+    std::uint64_t cpu_buffer_allocation_count = 0, cpu_frame_copy_count = 0;
+    std::uint64_t gpu_readback_count = 0, native_frame_copy_count = 0;
 	std::uint64_t frame_pool_recreate_count = 0;
 	std::uint64_t total_frame_pool_recreate_us = 0;
 	double last_frame_pool_recreate_ms = 0.0;
@@ -470,9 +481,12 @@ struct CapturedFrame {
 	std::uint64_t desktop_geometry_revision = 0;
 	CaptureRegion source_region;
 	std::vector<std::uint8_t> data;
+    std::shared_ptr<const CaptureAdapterIdentity> adapter_identity;
 	CapturedFrameNativeHandleType native_handle_type = CapturedFrameNativeHandleType::kNone;
 	std::shared_ptr<CapturedFrameNativeHandle> native_handle;
 };
+
+class CapturedFramePool;
 
 class WindowsCaptureSession {
 public:
@@ -480,11 +494,13 @@ public:
 	~WindowsCaptureSession();
 
 	bool start(const CaptureSessionConfig& config, std::string* error_detail = nullptr);
-	bool captureFrame(CapturedFrame* frame, std::string* error_detail = nullptr);
+    // Capture thread only. Empty means bounded backpressure; no capture was attempted.
+    std::shared_ptr<CapturedFrame> acquireFrame();
+    bool captureFrame(CapturedFrame* frame, std::string* error_detail = nullptr,
+                      bool require_cpu_pixels = false);
 	void retryCapture();
-	void configureNativeFrameDelivery(
-		bool capture_native_d3d11_textures,
-		bool skip_cpu_readback_when_native_texture_available);
+    // May be called by the encoder; applied by capture at the next frame boundary.
+    void configureFrameDelivery(CaptureFrameDelivery delivery);
 	void stop();
 	bool isRunning() const;
 	CaptureBackendType activeBackend() const;
@@ -494,6 +510,7 @@ private:
 	friend struct CaptureSessionTestAccess;
 	class Impl;
 	std::unique_ptr<Impl> impl_;
+    std::unique_ptr<CapturedFramePool> frame_pool_;
 };
 
 struct DdaCapturePocResult {

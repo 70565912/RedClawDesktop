@@ -3205,7 +3205,6 @@ int run_runtime_mode(
     bool stream_encoder_started = false;
     std::uint64_t stream_last_preserved_hardware_rate_revision = 0;
     std::uint64_t stream_last_preserved_hardware_geometry_transaction_id = 0;
-    bool stream_capture_skip_cpu_readback = false;
     std::uint64_t stream_encoder_start_retry_after_ms = 0;
     std::uint32_t stream_encoder_width = 0;
     std::uint32_t stream_encoder_height = 0;
@@ -5914,9 +5913,6 @@ int run_runtime_mode(
                 capture_config.display_id = stream_selected_display->id;
             }
             capture_config.frame_acquire_timeout_ms = kDesktopStreamCaptureAcquireTimeoutMs;
-            capture_config.capture_native_d3d11_textures = true;
-            capture_config.skip_cpu_readback_when_native_texture_available =
-                stream_capture_skip_cpu_readback;
             std::string start_error;
             if (!stream_capture_session.start(capture_config, &start_error)) {
                 const auto unavailable = stream_capture_session.telemetry();
@@ -5977,7 +5973,13 @@ int run_runtime_mode(
             }
         }
 
-        redclaw::capture::CapturedFrame captured_frame;
+        auto latest_frame = stream_capture_session.acquireFrame();
+        if (!latest_frame) {
+            std::lock_guard<std::mutex> lock(callback_mutex);
+            stream_capture_telemetry_snapshot = stream_capture_session.telemetry();
+            return HostStreamCaptureTickResult::kNoWork;
+        }
+        auto& captured_frame = *latest_frame;
         std::string capture_error;
         const std::uint64_t navigation_now_ms = now_steady_ms();
         bool navigation_thumbnail_due = false;
@@ -5988,9 +5990,6 @@ int run_runtime_mode(
                     || navigation_now_ms - stream_last_navigation_thumbnail_ms >= 1000
                     || stream_capture_region_apply_pending.has_value());
         }
-        stream_capture_session.configureNativeFrameDelivery(
-            true,
-            stream_capture_skip_cpu_readback && !navigation_thumbnail_due);
         set_stream_worker_stage(
             &stream_capture_worker_stage,
             &stream_capture_worker_stage_since_ms,
@@ -6000,9 +5999,7 @@ int run_runtime_mode(
             stream_source_activity_tracker.on_capture_poll_started(now_steady_ms());
         }
         const auto capture_start = std::chrono::steady_clock::now();
-        if (!stream_capture_session.captureFrame(&captured_frame, &capture_error)) {
-            stream_capture_session.configureNativeFrameDelivery(
-                true, stream_capture_skip_cpu_readback);
+        if (!stream_capture_session.captureFrame(&captured_frame, &capture_error, navigation_thumbnail_due)) {
             set_stream_worker_stage(
                 &stream_capture_worker_stage,
                 &stream_capture_worker_stage_since_ms,
@@ -6080,8 +6077,6 @@ int run_runtime_mode(
             stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
             return HostStreamCaptureTickResult::kFailure;
         }
-        stream_capture_session.configureNativeFrameDelivery(
-            true, stream_capture_skip_cpu_readback);
 
         (void)apply_capture_availability(stream_capture_session.telemetry());
 
@@ -6164,7 +6159,6 @@ int run_runtime_mode(
         if (captured_frame.local_capture_begin_us != 0) {
             captured_frame.local_capture_ready_us = redclaw::net::media_trace_now_us();
         }
-        auto latest_frame = std::make_shared<redclaw::capture::CapturedFrame>(std::move(captured_frame));
         {
             std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
             stream_latest_captured_frame = std::move(latest_frame);
@@ -6682,10 +6676,9 @@ int run_runtime_mode(
                 && ((encode_width == captured_frame->width
                      && encode_height == captured_frame->height)
                     || encoder_diagnostics.d3d11_video_processor_scaling_active);
-            if (stream_capture_skip_cpu_readback != prefer_native_capture_only) {
-                stream_capture_session.configureNativeFrameDelivery(true, prefer_native_capture_only);
-                stream_capture_skip_cpu_readback = prefer_native_capture_only;
-            }
+            stream_capture_session.configureFrameDelivery(prefer_native_capture_only
+                ? redclaw::capture::CaptureFrameDelivery::kGpu
+                : redclaw::capture::CaptureFrameDelivery::kCpu);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 const bool encoder_target_changed = encoder_resolution_changed
@@ -6820,10 +6813,9 @@ int run_runtime_mode(
                 && ((encode_width == captured_frame->width
                      && encode_height == captured_frame->height)
                     || encoder_diagnostics.d3d11_video_processor_scaling_active);
-            if (stream_capture_skip_cpu_readback != prefer_native_capture_only) {
-                stream_capture_session.configureNativeFrameDelivery(true, prefer_native_capture_only);
-                stream_capture_skip_cpu_readback = prefer_native_capture_only;
-            }
+            stream_capture_session.configureFrameDelivery(prefer_native_capture_only
+                ? redclaw::capture::CaptureFrameDelivery::kGpu
+                : redclaw::capture::CaptureFrameDelivery::kCpu);
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
             if (output_not_ready) {
@@ -6853,10 +6845,9 @@ int run_runtime_mode(
             && ((encode_width == captured_frame->width
                  && encode_height == captured_frame->height)
                 || encoder_diagnostics.d3d11_video_processor_scaling_active);
-        if (stream_capture_skip_cpu_readback != prefer_native_capture_only) {
-            stream_capture_session.configureNativeFrameDelivery(true, prefer_native_capture_only);
-            stream_capture_skip_cpu_readback = prefer_native_capture_only;
-        }
+        stream_capture_session.configureFrameDelivery(prefer_native_capture_only
+            ? redclaw::capture::CaptureFrameDelivery::kGpu
+            : redclaw::capture::CaptureFrameDelivery::kCpu);
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
@@ -6990,7 +6981,6 @@ int run_runtime_mode(
             if (stream_capture_started) {
                 capture_telemetry = stream_capture_session.telemetry();
                 stream_capture_session.stop();
-                stream_capture_skip_cpu_readback = false;
             }
             {
                 std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
@@ -11370,6 +11360,14 @@ int run_runtime_mode(
                           << " capture_black_frame_ratio=" << format_stream_stage_ms(capture_telemetry.black_frame_ratio * 100.0)
                           << " capture_attempt_total=" << capture_telemetry.total_capture_attempt_count
                           << " capture_timeout_total=" << capture_telemetry.total_timeout_count
+                          << " capture_buffer_stats_version=1"
+                          << " cpu_frame_pool_acquisitions=" << capture_telemetry.cpu_frame_pool_acquisitions
+                          << " cpu_frame_pool_exhaustions=" << capture_telemetry.cpu_frame_pool_exhaustion_count
+                          << " cpu_frame_pool_retained_bytes=" << capture_telemetry.cpu_frame_pool_retained_bytes
+                          << " cpu_buffer_allocations=" << capture_telemetry.cpu_buffer_allocation_count
+                          << " cpu_frame_copies=" << capture_telemetry.cpu_frame_copy_count
+                          << " gpu_readbacks=" << capture_telemetry.gpu_readback_count
+                          << " native_frame_copies=" << capture_telemetry.native_frame_copy_count
                           << " native_texture_pool_creates=" << capture_telemetry.native_texture_pool_create_count
                           << " native_texture_pool_reuses=" << capture_telemetry.native_texture_pool_reuse_count
                           << " native_texture_pool_exhaustions=" << capture_telemetry.native_texture_pool_exhaustion_count
@@ -11825,9 +11823,11 @@ int run_runtime_mode(
                               << '\n';
 
                     std::cout << "Runtime host stream stage timings role=" << role_name
+                              << " stage_stats_version=2"
                               << " window_seconds="
                               << format_stream_stage_ms(static_cast<double>(rate_window_ms) / 1000.0)
                               << " capture_attempts=" << capture_attempts_delta
+                              << " capture_frames=" << captured_delta
                               << " capture_timeouts_delta=" << capture_timeouts_delta
                               << " encode_submit_attempts=" << encode_submit_attempts_delta
                               << " encode_output_not_ready_delta=" << encode_output_not_ready_delta

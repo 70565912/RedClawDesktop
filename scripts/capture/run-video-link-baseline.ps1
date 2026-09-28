@@ -145,17 +145,35 @@ foreach ($scene in $Scenario) {
             Invoke-Qa 'measurement_export' | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $destination 'gui-export.json')
             # The existing recorder drains in-flight frames for 11 s after its window.
             $drain = [Diagnostics.Stopwatch]::StartNew()
+            $traceInput = $null
             do {
                 $trace = @(Get-ChildItem -LiteralPath (Split-Path $runtimeLog) -Filter '*.frame-trace-*.csv' |
                     Where-Object { $_.FullName -notin $existing -and $_.FullName.StartsWith($runtimeLog + '.frame-trace-') })
-                if ($trace.Count -eq 1) { break }
+                if ($trace.Count -eq 1) {
+                    try {
+                        # Older Hosts create the CSV before completing its write.
+                        # Exclusive access is available only after that writer closes.
+                        $traceInput = [IO.File]::Open($trace[0].FullName, [IO.FileMode]::Open,
+                            [IO.FileAccess]::Read, [IO.FileShare]::None)
+                        break
+                    } catch [IO.IOException] { }
+                }
                 Start-Sleep -Milliseconds 500
             } while ($drain.Elapsed.TotalSeconds -lt 30)
-            if ($trace.Count -ne 1) { throw 'Host frame trace did not finish.' }
-            Copy-Item -LiteralPath $trace[0].FullName -Destination (Join-Path $destination 'host-frames.csv')
-            $header = Get-Content -LiteralPath $trace[0].FullName -TotalCount 1
+            if ($null -eq $traceInput) { throw 'Host frame trace did not finish writing.' }
+            $traceCopy = Join-Path $destination 'host-frames.csv'
+            try {
+                $traceOutput = [IO.File]::Create($traceCopy)
+                try { $traceInput.CopyTo($traceOutput) } finally { $traceOutput.Dispose() }
+            } finally { $traceInput.Dispose() }
+            $header = Get-Content -LiteralPath $traceCopy -TotalCount 1
             if ($header -notmatch 'overflow=0$') { throw 'Trace overflow makes this window invalid.' }
-            $frames = @(Get-Content -LiteralPath $trace[0].FullName | Select-Object -Skip 1 | ConvertFrom-Csv)
+            $frames = @(Get-Content -LiteralPath $traceCopy | Select-Object -Skip 1 | ConvertFrom-Csv)
+            foreach ($frame in $frames) {
+                if (@($frame.PSObject.Properties | Where-Object { $_.Value -notmatch '^\d+$' }).Count -ne 0) {
+                    throw 'Incomplete or nonnumeric Host trace row.'
+                }
+            }
             if (($scene -ne 'Static' -and $frames.Count -eq 0) -or @($frames | Where-Object {
                 [int]$_.width -ne [int]$contract.encode_width -or [int]$_.height -ne [int]$contract.encode_height
             }).Count -ne 0) { throw 'Empty dynamic trace or encoded geometry changed.' }

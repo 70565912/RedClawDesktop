@@ -4,6 +4,7 @@
 #include "redclaw/capture/capture_cursor.h"
 #include "capture_cursor_d3d11.h"
 #include "capture_backend.h"
+#include "redclaw/capture/captured_frame_pool.h"
 #include "capture_failure_evidence.h"
 #include <algorithm>
 #include <atomic>
@@ -91,6 +92,19 @@ struct CapturedFrameNativeHandle {};
 #endif
 
 namespace {
+
+void prepare_capture_cpu_buffer(CapturedFrame& frame, CaptureFrameStageTelemetry* stage) {
+    const auto bytes = static_cast<std::size_t>(frame.row_pitch) * frame.height;
+    if (frame.data.size() != bytes) {
+        const auto previous_capacity = frame.data.capacity();
+        if (previous_capacity != bytes) {
+            std::vector<std::uint8_t>(bytes).swap(frame.data);
+            if (stage) stage->cpu_buffer_allocated = bytes != 0;
+        } else {
+            frame.data.resize(bytes);
+        }
+    }
+}
 
 void assign_error(std::string value, std::string* error_detail) {
     if (error_detail != nullptr) {
@@ -301,6 +315,15 @@ std::string format_dxgi_adapter_identity(const DxgiAdapterIdentity& identity) {
            << ",luid=" << format_luid(identity.luid);
     return stream.str();
 }
+
+std::shared_ptr<const CaptureAdapterIdentity> capture_adapter_identity(ID3D11Device* device) {
+    DxgiAdapterIdentity identity;
+    std::string error;
+    if (!query_d3d11_device_adapter_identity(device, &identity, &error)) return {};
+    return std::make_shared<const CaptureAdapterIdentity>(CaptureAdapterIdentity{
+        classify_dxgi_vendor(identity.vendor_id), format_dxgi_adapter_identity(identity)});
+}
+
 
 bool is_native_frame_backend_vendor_compatible(
     const CapturedFrame& frame,
@@ -1791,35 +1814,10 @@ bool detect_encoder_backend_capabilities(
 CaptureAdapterVendor detect_captured_frame_adapter_vendor(
     const CapturedFrame& frame,
     std::string* adapter_summary) {
-#ifdef _WIN32
-    auto* native = unwrap_d3d11_native_handle(frame);
-    if (native == nullptr || native->d3d11_device == nullptr) {
-        if (adapter_summary != nullptr) {
-            adapter_summary->clear();
-        }
-        return CaptureAdapterVendor::kUnknown;
+    if (adapter_summary) {
+        *adapter_summary = frame.adapter_identity ? frame.adapter_identity->summary : std::string{};
     }
-
-    DxgiAdapterIdentity identity;
-    std::string error_detail;
-    if (!query_d3d11_device_adapter_identity(native->d3d11_device.Get(), &identity, &error_detail)) {
-        if (adapter_summary != nullptr) {
-            *adapter_summary = error_detail;
-        }
-        return CaptureAdapterVendor::kUnknown;
-    }
-
-    if (adapter_summary != nullptr) {
-        *adapter_summary = format_dxgi_adapter_identity(identity);
-    }
-    return classify_dxgi_vendor(identity.vendor_id);
-#else
-    (void)frame;
-    if (adapter_summary != nullptr) {
-        adapter_summary->clear();
-    }
-    return CaptureAdapterVendor::kUnknown;
-#endif
+    return frame.adapter_identity ? frame.adapter_identity->vendor : CaptureAdapterVendor::kUnknown;
 }
 
 bool build_encoder_backend_bridge_plan(
@@ -3794,9 +3792,8 @@ public:
             desktop_geometry_revision_ = 1;
         }
         frame_acquire_timeout_ms_ = config.frame_acquire_timeout_ms;
-        capture_native_d3d11_textures_.store(config.capture_native_d3d11_textures);
-        skip_cpu_readback_when_native_texture_available_.store(
-            config.skip_cpu_readback_when_native_texture_available);
+        frame_delivery_ = config.frame_delivery;
+        adapter_identity_ = capture_adapter_identity(device_.Get());
         return true;
     }
 
@@ -3912,6 +3909,7 @@ public:
         frame->width = desc.Width;
         frame->height = desc.Height;
         frame->bgra = true;
+        frame->adapter_identity = adapter_identity_;
         frame->row_pitch = desc.Width * 4;
         frame->desktop_origin_x = desktop_origin_x_;
         frame->desktop_origin_y = desktop_origin_y_;
@@ -3923,7 +3921,7 @@ public:
         frame->native_handle.reset();
 
         bool native_frame_ready = false;
-        if (capture_native_d3d11_textures_.load()) {
+        if (frame_delivery_ != CaptureFrameDelivery::kCpu) {
             D3D11_TEXTURE2D_DESC native_desc = desc;
             // A video-processor input view does not accept a texture whose only
             // bind flag is D3D11_BIND_SHADER_RESOURCE.  BindFlags == 0 is
@@ -3937,6 +3935,7 @@ public:
             auto native_handle = acquire_native_frame_handle(native_desc, stage_telemetry);
             if (native_handle != nullptr) {
                 context_->CopyResource(native_handle->d3d11_texture.Get(), frame_texture.Get());
+                if (stage_telemetry) stage_telemetry->native_frame_copied = true;
                 const HRESULT cursor_hr = cursor_gpu_.composite(device_.Get(), context_.Get(),
                     native_handle->d3d11_texture.Get(), cursor_shape_, cursor_placement_);
                 if (FAILED(cursor_hr)) {
@@ -3952,7 +3951,7 @@ public:
             }
         }
 
-        if (skip_cpu_readback_when_native_texture_available_.load() && native_frame_ready) {
+        if (frame_delivery_ == CaptureFrameDelivery::kGpu && native_frame_ready) {
             frame->row_pitch = 0;
             frame->data.clear();
             duplication_->ReleaseFrame();
@@ -4004,6 +4003,7 @@ public:
             }
 
             context_->CopyResource(staging_texture_.Get(), frame_texture.Get());
+            if (stage_telemetry) stage_telemetry->gpu_readback = true;
             const HRESULT map_hr = context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, mapped);
             if (FAILED(map_hr)) { record_failure(CaptureFailureStage::kReadback, map_hr); }
             return SUCCEEDED(map_hr) && mapped->pData != nullptr;
@@ -4030,7 +4030,8 @@ public:
         }
 
         {
-            frame->data.resize(static_cast<std::size_t>(frame->row_pitch) * frame->height);
+            prepare_capture_cpu_buffer(*frame, stage_telemetry);
+            if (stage_telemetry) stage_telemetry->cpu_frame_copied = true;
 
             const auto* src = static_cast<const std::uint8_t*>(mapped.pData);
             for (std::uint32_t y = 0; y < frame->height; ++y) {
@@ -4052,12 +4053,8 @@ public:
         return true;
     }
 
-    void configure_native_frame_delivery(
-        bool capture_native_d3d11_textures,
-        bool skip_cpu_readback_when_native_texture_available) override {
-        capture_native_d3d11_textures_.store(capture_native_d3d11_textures);
-        skip_cpu_readback_when_native_texture_available_.store(
-            skip_cpu_readback_when_native_texture_available);
+    void configure_frame_delivery(CaptureFrameDelivery delivery) override {
+        frame_delivery_ = delivery;
     }
 
     void stop() override {
@@ -4157,8 +4154,8 @@ private:
     std::uint32_t desktop_height_ = 0;
     std::uint32_t desktop_rotation_ = 0;
     std::uint64_t desktop_geometry_revision_ = 0;
-    std::atomic_bool capture_native_d3d11_textures_ = false;
-    std::atomic_bool skip_cpu_readback_when_native_texture_available_ = false;
+    CaptureFrameDelivery frame_delivery_ = CaptureFrameDelivery::kCpu;
+    std::shared_ptr<const CaptureAdapterIdentity> adapter_identity_;
 };
 
 class WgcThreadApartment final {
@@ -4325,9 +4322,8 @@ public:
             frame_pool_ = std::move(frame_pool);
             capture_session_ = std::move(capture_session);
             frame_acquire_timeout_ms_ = config.frame_acquire_timeout_ms;
-            capture_native_d3d11_textures_.store(config.capture_native_d3d11_textures);
-            skip_cpu_readback_when_native_texture_available_.store(
-                config.skip_cpu_readback_when_native_texture_available);
+            frame_delivery_ = config.frame_delivery;
+            adapter_identity_ = capture_adapter_identity(device_.Get());
             stopping_ = false;
             recreating_frame_pool_ = false;
             callback_hresult_ = S_OK;
@@ -4562,6 +4558,7 @@ public:
             frame->width = content_width;
             frame->height = content_height;
             frame->bgra = true;
+            frame->adapter_identity = adapter_identity_;
             frame->row_pitch = content_width * 4;
             frame->desktop_origin_x = desktop_origin_x_;
             frame->desktop_origin_y = desktop_origin_y_;
@@ -4573,7 +4570,7 @@ public:
             frame->native_handle.reset();
 
             bool native_frame_ready = false;
-            if (capture_native_d3d11_textures_.load()) {
+            if (frame_delivery_ != CaptureFrameDelivery::kCpu) {
                 D3D11_TEXTURE2D_DESC native_desc = desc;
                 native_desc.BindFlags = 0;
                 native_desc.CPUAccessFlags = 0;
@@ -4582,13 +4579,14 @@ public:
                 auto native_handle = acquire_native_frame_handle(native_desc, stage_telemetry);
                 if (native_handle != nullptr) {
                     context_->CopyResource(native_handle->d3d11_texture.Get(), frame_texture.Get());
+                    if (stage_telemetry) stage_telemetry->native_frame_copied = true;
                     frame->native_handle_type = CapturedFrameNativeHandleType::kD3D11Texture2D;
                     frame->native_handle = std::move(native_handle);
                     native_frame_ready = true;
                 }
             }
 
-            if (skip_cpu_readback_when_native_texture_available_.load() && native_frame_ready) {
+            if (frame_delivery_ == CaptureFrameDelivery::kGpu && native_frame_ready) {
                 frame->row_pitch = 0;
                 frame->data.clear();
                 close_frame();
@@ -4605,6 +4603,7 @@ public:
             }
 
             context_->CopyResource(staging_texture_.Get(), frame_texture.Get());
+            if (stage_telemetry) stage_telemetry->gpu_readback = true;
             D3D11_MAPPED_SUBRESOURCE mapped{};
             const HRESULT map_hr = context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
             if (FAILED(map_hr) || mapped.pData == nullptr) {
@@ -4612,7 +4611,8 @@ public:
                 throw winrt::hresult_error(map_hr, L"failed to map WGC staging texture");
             }
 
-            frame->data.resize(static_cast<std::size_t>(frame->row_pitch) * frame->height);
+            prepare_capture_cpu_buffer(*frame, stage_telemetry);
+            if (stage_telemetry) stage_telemetry->cpu_frame_copied = true;
             const auto* source = static_cast<const std::uint8_t*>(mapped.pData);
             for (std::uint32_t y = 0; y < frame->height; ++y) {
                 std::memcpy(
@@ -4640,12 +4640,8 @@ public:
         return true;
     }
 
-    void configure_native_frame_delivery(
-        bool capture_native_d3d11_textures,
-        bool skip_cpu_readback_when_native_texture_available) override {
-        capture_native_d3d11_textures_.store(capture_native_d3d11_textures);
-        skip_cpu_readback_when_native_texture_available_.store(
-            skip_cpu_readback_when_native_texture_available);
+    void configure_frame_delivery(CaptureFrameDelivery delivery) override {
+        frame_delivery_ = delivery;
     }
 
     void stop() override {
@@ -4980,8 +4976,8 @@ private:
     HRESULT callback_hresult_ = S_OK;
     bool stopping_ = true;
     bool recreating_frame_pool_ = false;
-    std::atomic_bool capture_native_d3d11_textures_ = false;
-    std::atomic_bool skip_cpu_readback_when_native_texture_available_ = false;
+    CaptureFrameDelivery frame_delivery_ = CaptureFrameDelivery::kCpu;
+    std::shared_ptr<const CaptureAdapterIdentity> adapter_identity_;
 };
 
 class GdiCaptureBackend final : public ICaptureBackend {
@@ -5159,13 +5155,17 @@ public:
         frame->height = static_cast<std::uint32_t>(height_);
         frame->row_pitch = frame->width * 4;
         frame->bgra = true;
+        frame->adapter_identity.reset();
+        frame->native_handle.reset();
+        frame->native_handle_type = CapturedFrameNativeHandleType::kNone;
         frame->desktop_origin_x = origin_x_;
         frame->desktop_origin_y = origin_y_;
         frame->desktop_width = frame->width;
         frame->desktop_height = frame->height;
         frame->desktop_rotation = 0;
         frame->desktop_geometry_revision = 1;
-        frame->data.resize(static_cast<std::size_t>(frame->row_pitch) * frame->height);
+        prepare_capture_cpu_buffer(*frame, stage_telemetry);
+        if (stage_telemetry) stage_telemetry->cpu_frame_copied = true;
 
         const int scan_lines = GetDIBits(
             memory_dc_,
@@ -5354,6 +5354,7 @@ public:
     bool start(const CaptureSessionConfig& config, std::string* error_detail) {
         stop();
         config_ = config;
+        frame_delivery_.store(config.frame_delivery);
         telemetry_.generation = ++generation_counter_;
         failure_evidence_.configure(config.local_evidence_directory);
         desktop_context_ = probe_desktop();
@@ -5363,7 +5364,7 @@ public:
 
     void retry_capture() { retry_requested_.store(true); }
 
-    bool capture_frame(CapturedFrame* frame, std::string* error_detail) {
+    bool capture_frame(CapturedFrame* frame, std::string* error_detail, bool require_cpu_pixels) {
         if (frame == nullptr) {
             assign_error("frame pointer must be non-null", error_detail);
             return false;
@@ -5398,6 +5399,11 @@ public:
         CaptureFrameStageTelemetry stage;
         ++telemetry_.total_capture_attempt_count;
         backend_->clear_failure();
+        auto delivery = frame_delivery_.load();
+        if (require_cpu_pixels && delivery == CaptureFrameDelivery::kGpu) {
+            delivery = CaptureFrameDelivery::kCpuAndGpu;
+        }
+        backend_->configure_frame_delivery(delivery);
         if (!backend_->capture_frame(frame, &stage, &backend_error)) {
             update_stage_telemetry(stage);
             if (stage.timeout) {
@@ -5463,17 +5469,8 @@ public:
         assign_error({}, error_detail);
         return true;
     }
-    void configure_native_frame_delivery(
-        bool capture_native_d3d11_textures,
-        bool skip_cpu_readback_when_native_texture_available) {
-        config_.capture_native_d3d11_textures = capture_native_d3d11_textures;
-        config_.skip_cpu_readback_when_native_texture_available =
-            skip_cpu_readback_when_native_texture_available;
-        if (backend_ != nullptr) {
-            backend_->configure_native_frame_delivery(
-                capture_native_d3d11_textures,
-                skip_cpu_readback_when_native_texture_available);
-        }
+    void configure_frame_delivery(CaptureFrameDelivery delivery) {
+        frame_delivery_.store(delivery);
     }
 
     void stop() {
@@ -5508,6 +5505,10 @@ public:
 
 private:
     void update_stage_telemetry(const CaptureFrameStageTelemetry& stage_telemetry) {
+        telemetry_.cpu_buffer_allocation_count += stage_telemetry.cpu_buffer_allocated;
+        telemetry_.cpu_frame_copy_count += stage_telemetry.cpu_frame_copied;
+        telemetry_.gpu_readback_count += stage_telemetry.gpu_readback;
+        telemetry_.native_frame_copy_count += stage_telemetry.native_frame_copied;
         telemetry_.total_capture_wait_us += stage_telemetry.wait_us;
         telemetry_.total_capture_copy_us += stage_telemetry.copy_us;
         telemetry_.last_capture_wait_ms = static_cast<double>(stage_telemetry.wait_us) / 1000.0;
@@ -5669,6 +5670,7 @@ private:
     CaptureSessionConfig config_;
     CaptureBackendType active_backend_ = CaptureBackendType::kUnknown;
     CaptureBackendTelemetry telemetry_;
+    std::atomic<CaptureFrameDelivery> frame_delivery_{CaptureFrameDelivery::kCpu};
     std::uint32_t black_frame_count_ = 0;
     std::uint64_t last_frame_hash_ = 0;
     bool has_last_frame_hash_ = false;
@@ -5677,7 +5679,7 @@ private:
 };
 
 WindowsCaptureSession::WindowsCaptureSession()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>()), frame_pool_(std::make_unique<CapturedFramePool>()) {}
 
 void CaptureSessionTestAccess::install(WindowsCaptureSession& session, CaptureSessionTestHooks hooks) {
     session.stop();
@@ -5690,22 +5692,24 @@ bool WindowsCaptureSession::start(const CaptureSessionConfig& config, std::strin
     return impl_->start(config, error_detail);
 }
 
-bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail) {
-    return impl_->capture_frame(frame, error_detail);
+std::shared_ptr<CapturedFrame> WindowsCaptureSession::acquireFrame() {
+    return frame_pool_->acquire();
+}
+
+bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail,
+                                        bool require_cpu_pixels) {
+    return impl_->capture_frame(frame, error_detail, require_cpu_pixels);
 }
 
 void WindowsCaptureSession::retryCapture() { impl_->retry_capture(); }
 
-void WindowsCaptureSession::configureNativeFrameDelivery(
-    bool capture_native_d3d11_textures,
-    bool skip_cpu_readback_when_native_texture_available) {
-    impl_->configure_native_frame_delivery(
-        capture_native_d3d11_textures,
-        skip_cpu_readback_when_native_texture_available);
+void WindowsCaptureSession::configureFrameDelivery(CaptureFrameDelivery delivery) {
+    impl_->configure_frame_delivery(delivery);
 }
 
 void WindowsCaptureSession::stop() {
     impl_->stop();
+    frame_pool_->release_unused();
 }
 
 bool WindowsCaptureSession::isRunning() const {
@@ -5717,7 +5721,12 @@ CaptureBackendType WindowsCaptureSession::activeBackend() const {
 }
 
 CaptureBackendTelemetry WindowsCaptureSession::telemetry() const {
-    return impl_->telemetry();
+    auto result = impl_->telemetry();
+    const auto pool = frame_pool_->stats();
+    result.cpu_frame_pool_acquisitions = pool.acquisitions;
+    result.cpu_frame_pool_exhaustion_count = pool.exhausted;
+    result.cpu_frame_pool_retained_bytes = pool.retained_cpu_bytes;
+    return result;
 }
 
 DdaCapturePocResult run_dda_min_capture_poc(const std::string& output_file_path, std::uint32_t timeout_ms) {
@@ -5796,7 +5805,7 @@ public:
 
     bool capture_frame(
         CapturedFrame*,
-        std::string* error_detail) {
+        std::string* error_detail, bool) {
         if (error_detail != nullptr) {
             *error_detail = "Windows capture session is only supported on Windows";
         }
@@ -5805,14 +5814,14 @@ public:
 
     void stop() {}
     void retry_capture() {}
-    void configure_native_frame_delivery(bool, bool) {}
+    void configure_frame_delivery(CaptureFrameDelivery) {}
     bool is_running() const { return false; }
     CaptureBackendType active_backend() const { return CaptureBackendType::kUnknown; }
     CaptureBackendTelemetry telemetry() const { return CaptureBackendTelemetry{}; }
 };
 
 WindowsCaptureSession::WindowsCaptureSession()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>()), frame_pool_(std::make_unique<CapturedFramePool>()) {}
 
 WindowsCaptureSession::~WindowsCaptureSession() = default;
 
@@ -5820,22 +5829,24 @@ bool WindowsCaptureSession::start(const CaptureSessionConfig& config, std::strin
     return impl_->start(config, error_detail);
 }
 
-bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail) {
-    return impl_->capture_frame(frame, error_detail);
+std::shared_ptr<CapturedFrame> WindowsCaptureSession::acquireFrame() {
+    return frame_pool_->acquire();
+}
+
+bool WindowsCaptureSession::captureFrame(CapturedFrame* frame, std::string* error_detail,
+                                        bool require_cpu_pixels) {
+    return impl_->capture_frame(frame, error_detail, require_cpu_pixels);
 }
 
 void WindowsCaptureSession::retryCapture() { impl_->retry_capture(); }
 
-void WindowsCaptureSession::configureNativeFrameDelivery(
-    bool capture_native_d3d11_textures,
-    bool skip_cpu_readback_when_native_texture_available) {
-    impl_->configure_native_frame_delivery(
-        capture_native_d3d11_textures,
-        skip_cpu_readback_when_native_texture_available);
+void WindowsCaptureSession::configureFrameDelivery(CaptureFrameDelivery delivery) {
+    impl_->configure_frame_delivery(delivery);
 }
 
 void WindowsCaptureSession::stop() {
     impl_->stop();
+    frame_pool_->release_unused();
 }
 
 bool WindowsCaptureSession::isRunning() const {
@@ -5847,7 +5858,12 @@ CaptureBackendType WindowsCaptureSession::activeBackend() const {
 }
 
 CaptureBackendTelemetry WindowsCaptureSession::telemetry() const {
-    return impl_->telemetry();
+    auto result = impl_->telemetry();
+    const auto pool = frame_pool_->stats();
+    result.cpu_frame_pool_acquisitions = pool.acquisitions;
+    result.cpu_frame_pool_exhaustion_count = pool.exhausted;
+    result.cpu_frame_pool_retained_bytes = pool.retained_cpu_bytes;
+    return result;
 }
 
 DdaCapturePocResult run_dda_min_capture_poc(const std::string& output_file_path, std::uint32_t) {
