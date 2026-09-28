@@ -1,3 +1,4 @@
+#include "redclaw/capture/navigation_thumbnail.h"
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -148,13 +149,13 @@ bool test_navigation_thumbnail_encodes_bounded_jpeg() {
         }
     }
     std::vector<std::uint8_t> jpeg;
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
+    redclaw::capture::NavigationThumbnailImage image;
+    redclaw::capture::NavigationThumbnailEncoder encoder;
     std::string error;
-    const bool encoded = redclaw::capture::encode_navigation_thumbnail_jpeg(
-        frame, 320, &jpeg, &width, &height, &error);
+    const bool encoded = redclaw::capture::prepare_navigation_thumbnail(frame, 320, &image, &error)
+        && encoder.encode(image, &jpeg, &error);
     return expect_true(encoded, "navigation JPEG should encode: " + error)
-        && expect_true(width == 320 && height == 180,
+        && expect_true(image.width == 320 && image.height == 180,
                        "navigation JPEG should preserve aspect within 320 pixels")
         && expect_true(jpeg.size() >= 4 && jpeg.size() <= 512U * 1024U,
                        "navigation JPEG should remain within protocol bounds")

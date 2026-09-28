@@ -180,14 +180,6 @@ struct CaptureRegionSelection {
     }
 };
 
-bool encode_navigation_thumbnail_jpeg(
-	const CapturedFrame& frame,
-	std::uint32_t max_edge,
-	std::vector<std::uint8_t>* jpeg,
-	std::uint32_t* output_width,
-	std::uint32_t* output_height,
-	std::string* error_detail = nullptr);
-
 enum class CapturedFrameNativeHandleType {
 	kNone,
 	kD3D11Texture2D,

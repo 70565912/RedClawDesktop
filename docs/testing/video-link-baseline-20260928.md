@@ -125,5 +125,46 @@ their originals. The collector now waits for writer closure, validates every
 numeric field and reads its own saved copy; newer Hosts publish CSV by rename
 after close. This repairs collection, without rerunning or modifying raw samples.
 
-P1 remote Controller benefit remains unconfirmed. P3 local buffer/copy verification
-is the next candidate gate; P4–P6 and the final 5-minute quality run remain.
+P1 remote Controller benefit remains unconfirmed.
+
+## P3 comparison: CPU and capture-copy cost reduced
+
+The operator confirmed normal display after replacing the local Host with pushed
+Debug `b157e88`. All nine matched windows completed; all 7,851 traced frames were
+sent, with zero capture/encode/transmit failure increments and no Host/GUI trace
+overflow. All nine original/copied CSV pairs were byte-identical, all GUI traces
+parsed successfully, and the hidden mirror had zero refresh increments.
+
+Three-run medians [minimum, maximum], compared with P2 on this same Host:
+
+| Metric | P2 dynamic | P3 dynamic | P2 dynamic + logs | P3 dynamic + logs |
+| --- | --- | --- | --- | --- |
+| Sent FPS | 21.32 [21.30, 21.33] | 21.28 [21.28, 21.33] | 21.28 [21.25, 21.28] | 21.28 [21.27, 21.28] |
+| Host CPU, one core % | 61.90 [61.44, 62.87] | 55.34 [54.79, 55.82] | 61.41 [60.10, 61.56] | 54.88 [54.84, 55.55] |
+| Capture copy, ms/successful capture | 9.78 [9.64, 9.80] | 7.25 [7.23, 7.28] | 9.72 [9.60, 9.72] | 7.25 [7.25, 7.27] |
+| Encode P95, ms | 29.90 [27.06, 30.83] | 27.07 [26.87, 29.35] | 27.11 [25.44, 27.43] | 27.47 [26.72, 29.27] |
+| Frame age P95, ms | 49.24 [48.96, 49.63] | 49.57 [49.31, 50.03] | 48.24 [47.48, 50.58] | 49.23 [48.35, 50.10] |
+| Frame age P99, ms | 63.85 [60.51, 65.27] | 65.08 [63.87, 66.50] | 61.47 [58.35, 67.51] | 63.47 [61.53, 63.71] |
+
+Host CPU medians fell by 10.59% / 10.63%; capture-copy time fell by 25.79% /
+25.38%. The before/after ranges do not overlap for either metric. Copy summaries
+are weighted by successful captures and remain supporting 10-second diagnostics,
+not per-frame timing. Every retained P3 geometry summary reports three large CPU
+allocations, 24,883,200 retained pool bytes, zero pool exhaustion and zero native
+image copies. Readbacks still track real CPU captures: this is buffer reuse and
+copy removal, not GPU-only encoding or zero-copy capture.
+
+Latency improvement is unconfirmed: frame-age tails overlap P2 and their medians
+did not fall. P3 pacing stayed at 11,076 kbps; P2 used 12,434 kbps for dynamic and
+10,389–12,434 kbps for logs. Ordinary-frame mean token waits were 10.16 / 10.17 ms
+in P3 versus 9.04 / 10.35 ms in P2; send-call means were 0.85 / 0.86 ms. The
+capture-return-to-main-publication P99 remained around 11.55–11.58 ms, supporting
+the next P4 investigation of synchronous thumbnail work. Do not add capture-copy
+and frame-age percentiles or infer remote end-to-end latency from these values.
+
+Static windows sent 187 / 0 / 0 frames and remain unsuitable for a performance
+claim because first-window activity differs between runs. The dynamic fixture
+still limits the measured rate to about 21.3 FPS. Evidence is retained under
+`build/reports/x00-t27/p3-comparison-20260929/`, including `analysis.json`,
+`trace-integrity.json`, `gui-validation.json`, geometry/counter snapshots and raw
+traces. P4–P6 and the final 5-minute quality run remain.

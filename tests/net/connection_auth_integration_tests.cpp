@@ -100,6 +100,27 @@ TEST(ConnectionAuthTransport, CorrectPasswordOpensAllChannelsAndReauthentication
     pair.start();
     ASSERT_TRUE(pair.wait([&] { return pair.host_open == kinds.size() && pair.client_open == kinds.size(); }));
 }
+TEST(ConnectionAuthTransport, BoundNavigationSenderCannotMigrateAcrossReconnect) {
+    AuthPair pair(true, true);
+    EXPECT_FALSE(pair.host.bindDataChannelBinarySender(Kind::kNavigation));
+    pair.start();
+    ASSERT_TRUE(pair.wait([&] { return pair.host_open == kinds.size() && pair.client_open == kinds.size(); }));
+    const auto old_sender = pair.host.bindDataChannelBinarySender(Kind::kNavigation);
+    ASSERT_TRUE(old_sender);
+    const std::array<std::uint8_t, 1> bytes{42};
+    ASSERT_TRUE(old_sender(bytes));
+    ASSERT_TRUE(pair.wait([&] { return pair.client_received == 1U; }));
+    ASSERT_TRUE(pair.host.retireAndDrain()); ASSERT_TRUE(pair.client.retireAndDrain());
+    EXPECT_FALSE(old_sender(bytes));
+    EXPECT_FALSE(pair.host.bindDataChannelBinarySender(Kind::kNavigation));
+    pair.host_open = 0; pair.client_open = 0;
+    pair.start();
+    ASSERT_TRUE(pair.wait([&] { return pair.host_open == kinds.size() && pair.client_open == kinds.size(); }));
+    EXPECT_FALSE(old_sender(bytes));
+    const auto new_sender = pair.host.bindDataChannelBinarySender(Kind::kNavigation);
+    ASSERT_TRUE(new_sender); ASSERT_TRUE(new_sender(bytes));
+    ASSERT_TRUE(pair.wait([&] { return pair.client_received == 2U; }));
+}
 TEST(ConnectionAuthTransport, WrongPasswordExposesNoBusinessChannelOrPayload) {
     AuthPair pair(true, true, "incorrect"); pair.start();
     ASSERT_TRUE(pair.wait([&] { return pair.host.authenticationState() == ConnectionAuthState::kRejected

@@ -613,8 +613,17 @@ class IceConnectivityWrapper::Impl : public std::enable_shared_from_this<Impl> {
         }
     }
     template<class Fn>
-    bool send(DataChannelKind kind, Fn fn, std::string* error, DataChannelSendOutcome* outcome) {
-        const auto snapshot = channel_snapshot(kind);
+    bool send(DataChannelKind kind, Fn fn, std::string* error, DataChannelSendOutcome* outcome,
+              const ChannelState* bound = nullptr) {
+        auto snapshot = channel_snapshot(kind);
+        if (bound) {
+            if (snapshot.generation != bound->generation || snapshot.channel != bound->channel) {
+                assign_error("channel generation changed", error);
+                return false;
+            }
+            // Keep the original native channel even if retirement races the send.
+            snapshot.channel = bound->channel;
+        }
         if (!snapshot.channel || !snapshot.open) {
             assign_error("data channel is not open", error);
             return false;
@@ -1227,6 +1236,17 @@ bool IceConnectivityWrapper::sendDataChannelBinaryMessage(
     std::string* error_detail,
     DataChannelSendOutcome* outcome) {
     return impl_->send_data_channel_binary_message(kind, message, error_detail, outcome);
+}
+
+std::function<bool(std::span<const std::uint8_t>)> IceConnectivityWrapper::bindDataChannelBinarySender(DataChannelKind kind) {
+    const auto bound = impl_->channel_snapshot(kind);
+    if (!bound.channel || !bound.open) return {};
+    return [weak = std::weak_ptr<Impl>(impl_), kind, bound](std::span<const std::uint8_t> bytes) {
+        const auto self = weak.lock();
+        return self && self->send(kind, [&](rtc::DataChannel& channel) {
+            return channel.send(reinterpret_cast<const rtc::byte*>(bytes.data()), bytes.size());
+        }, nullptr, nullptr, &bound);
+    };
 }
 
 bool IceConnectivityWrapper::setDataChannelBufferedAmountLowThreshold(

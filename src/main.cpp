@@ -68,6 +68,7 @@
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
 #include "runtime/audio_stream_runtime.h"
+#include "runtime/navigation_thumbnail_worker.h"
 #include "runtime/runtime_options.h"
 #include "runtime/local_control_output.h"
 #include "runtime/input_qa_receipts.h"
@@ -2916,8 +2917,6 @@ int run_runtime_mode(
     redclaw::capture::CaptureRegionSelection stream_capture_region_rollback_region;
     std::uint64_t stream_capture_region_revision = 1;
     std::uint64_t stream_navigation_catalog_revision = 1;
-    std::uint64_t stream_navigation_thumbnail_revision = 0;
-    std::uint64_t stream_last_navigation_thumbnail_ms = 0;
     std::uint64_t stream_last_display_catalog_check_ms = 0;
     redclaw::protocol::StreamControlMessageV1 stream_receiver_stats_snapshot;
     std::uint64_t stream_received_wire_bytes = 0;
@@ -3434,6 +3433,7 @@ int run_runtime_mode(
             }
         });
 
+    redclaw::runtime::NavigationThumbnailWorker navigation_thumbnails(options.role == RuntimeRole::kHost);
     redclaw::runtime::AudioStreamRuntime audio_runtime(
         options.role == RuntimeRole::kHost,
         [&ice_wrapper](std::span<const std::uint8_t> packet) {
@@ -4171,6 +4171,7 @@ int run_runtime_mode(
         if (kind == redclaw::net::DataChannelKind::kNavigation) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_navigation_channel_open = true;
+            navigation_thumbnails.set_sender(ice_wrapper.bindDataChannelBinarySender(kind));
             append_timeline(
                 redclaw::render::RuntimeStatusSeverity::kInfo,
                 "navigation",
@@ -4326,6 +4327,7 @@ int run_runtime_mode(
         if (kind == redclaw::net::DataChannelKind::kNavigation) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_navigation_channel_open = false;
+            navigation_thumbnails.set_sender({});
             append_timeline(
                 redclaw::render::RuntimeStatusSeverity::kWarning,
                 "navigation",
@@ -5700,6 +5702,7 @@ int run_runtime_mode(
     };
 
     auto restart_tcp_signaling_session = [&](const std::string& reason) {
+        navigation_thumbnails.set_sender({});
         if (!ice_wrapper.retireAndDrain()) {
             runtime_error = "tcp signaling retirement requires owner thread";
             return false;
@@ -5741,6 +5744,7 @@ int run_runtime_mode(
     auto apply_capture_availability = [&](const redclaw::capture::CaptureBackendTelemetry& telemetry) {
         const auto previous = stream_capture_gate.snapshot();
         if (stream_capture_gate.update(telemetry.availability, telemetry.generation)) {
+            navigation_thumbnails.invalidate();
             {
                 std::lock_guard<std::mutex> lock(stream_capture_frame_mutex);
                 stream_latest_captured_frame.reset();
@@ -5828,7 +5832,7 @@ int run_runtime_mode(
                         redclaw::input::RemoteInputPauseReason::kGeometryChanged);
                     stream_keyframe_refresh_request_generation.fetch_add(1);
                 }
-                stream_last_navigation_thumbnail_ms = 0;
+                navigation_thumbnails.invalidate();
                 send_desktop_display_catalog();
             }
         }
@@ -5896,6 +5900,7 @@ int run_runtime_mode(
                     stream_latest_captured_frame.reset();
                     stream_last_encoded_capture_sequence = stream_latest_captured_frame_sequence;
                 }
+                navigation_thumbnails.invalidate();
                 stream_media_pacer.reset();
                 stream_encoder_session.request_keyframe();
                 stream_keyframe_refresh_request_generation.fetch_add(1);
@@ -5982,14 +5987,7 @@ int run_runtime_mode(
         auto& captured_frame = *latest_frame;
         std::string capture_error;
         const std::uint64_t navigation_now_ms = now_steady_ms();
-        bool navigation_thumbnail_due = false;
-        {
-            std::lock_guard<std::mutex> lock(callback_mutex);
-            navigation_thumbnail_due = stream_navigation_channel_open
-                && (stream_last_navigation_thumbnail_ms == 0
-                    || navigation_now_ms - stream_last_navigation_thumbnail_ms >= 1000
-                    || stream_capture_region_apply_pending.has_value());
-        }
+        const bool navigation_thumbnail_due = navigation_thumbnails.wants_frame(navigation_now_ms);
         set_stream_worker_stage(
             &stream_capture_worker_stage,
             &stream_capture_worker_stage_since_ms,
@@ -6108,47 +6106,6 @@ int run_runtime_mode(
             }
         }
         captured_frame.source_region = active_region;
-        if (navigation_thumbnail_due && stream_selected_display.has_value()) {
-            std::vector<std::uint8_t> jpeg;
-            std::uint32_t thumbnail_width = 0;
-            std::uint32_t thumbnail_height = 0;
-            std::string thumbnail_error;
-            if (redclaw::capture::encode_navigation_thumbnail_jpeg(
-                    captured_frame,
-                    320,
-                    &jpeg,
-                    &thumbnail_width,
-                    &thumbnail_height,
-                    &thumbnail_error)) {
-                redclaw::net::NavigationThumbnailView thumbnail;
-                thumbnail.catalog_revision = stream_navigation_catalog_revision;
-                thumbnail.thumbnail_revision = ++stream_navigation_thumbnail_revision;
-                thumbnail.width = thumbnail_width;
-                thumbnail.height = thumbnail_height;
-                thumbnail.display_id = stream_selected_display->id;
-                thumbnail.jpeg = jpeg;
-                std::vector<std::uint8_t> packet;
-                if (redclaw::net::serialize_navigation_thumbnail(
-                        thumbnail, &packet, &thumbnail_error)) {
-                    redclaw::net::DataChannelSendOutcome outcome;
-                    if (ice_wrapper.sendDataChannelBinaryMessage(
-                            redclaw::net::DataChannelKind::kNavigation,
-                            packet,
-                            &thumbnail_error,
-                            &outcome)) {
-                        std::lock_guard<std::mutex> lock(callback_mutex);
-                        stream_last_navigation_thumbnail_ms = navigation_now_ms;
-                    }
-                }
-            }
-            if (!thumbnail_error.empty()) {
-                std::lock_guard<std::mutex> lock(callback_mutex);
-                append_timeline(
-                    redclaw::render::RuntimeStatusSeverity::kWarning,
-                    "navigation",
-                    "navigation thumbnail update failed: " + thumbnail_error);
-            }
-        }
         redclaw::input::DesktopGeometry captured_geometry;
         captured_geometry.origin_x = captured_frame.desktop_origin_x;
         captured_geometry.origin_y = captured_frame.desktop_origin_y;
@@ -6161,12 +6118,18 @@ int run_runtime_mode(
         }
         {
             std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
-            stream_latest_captured_frame = std::move(latest_frame);
+            stream_latest_captured_frame = latest_frame;
             ++stream_latest_captured_frame_sequence;
             stream_latest_captured_frame_ready_ms = now_steady_ms();
         }
         stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
         stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kNewCapture);
+
+        // Publish and wake the encoder before preparing the bounded navigation image.
+        if (stream_selected_display.has_value()) {
+            navigation_thumbnails.submit(captured_frame, stream_selected_display->id,
+                                         stream_navigation_catalog_revision, navigation_now_ms);
+        }
 
         redclaw::session::DesktopSourceActivityUpdate activity_update;
         std::uint64_t activity_geometry_revision = 0;
@@ -6940,6 +6903,7 @@ int run_runtime_mode(
     auto stop_stream_workers = [&]() {
         stream_worker_running.store(false);
         stream_capture_worker_running.store(false);
+        navigation_thumbnails.stop();
         stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
         if (stream_worker.joinable()) {
             stream_worker.join();
@@ -8155,6 +8119,7 @@ int run_runtime_mode(
                 stream_control_channel_open = false;
                 stream_agent_channel_open = false;
                 stream_navigation_channel_open = false;
+                navigation_thumbnails.set_sender({});
                 agent_rebuild_pending = false;
                 agent_rebuild_awaiting_open = false;
                 agent_unavailable_until_reconnect = false;
@@ -11340,6 +11305,7 @@ int run_runtime_mode(
                 const std::string stream_health(
                     redclaw::net::desktop_stream_health_name(stream_health_value));
 
+                const auto thumbnail_stats = navigation_thumbnails.stats();
                 std::cout << "Runtime desktop stream stats role=" << role_name
                           << " channel_open=" << (channel_open ? "true" : "false")
                           << " media_channel_open=" << (media_channel_open ? "true" : "false")
@@ -11360,6 +11326,17 @@ int run_runtime_mode(
                           << " capture_black_frame_ratio=" << format_stream_stage_ms(capture_telemetry.black_frame_ratio * 100.0)
                           << " capture_attempt_total=" << capture_telemetry.total_capture_attempt_count
                           << " capture_timeout_total=" << capture_telemetry.total_timeout_count
+                          << " thumbnail_stats_version=1"
+                          << " thumbnail_submitted=" << thumbnail_stats.submitted
+                          << " thumbnail_replaced=" << thumbnail_stats.replaced
+                          << " thumbnail_sent=" << thumbnail_stats.sent
+                          << " thumbnail_failed=" << thumbnail_stats.failed
+                          << " thumbnail_discarded=" << thumbnail_stats.discarded
+                          << " thumbnail_prepare_us=" << thumbnail_stats.prepare_us
+                          << " thumbnail_encode_us=" << thumbnail_stats.encode_us
+                          << " thumbnail_send_us=" << thumbnail_stats.send_us
+                          << " thumbnail_pending_bytes=" << thumbnail_stats.pending_bytes
+                          << " thumbnail_active=" << thumbnail_stats.active
                           << " capture_buffer_stats_version=1"
                           << " cpu_frame_pool_acquisitions=" << capture_telemetry.cpu_frame_pool_acquisitions
                           << " cpu_frame_pool_exhaustions=" << capture_telemetry.cpu_frame_pool_exhaustion_count

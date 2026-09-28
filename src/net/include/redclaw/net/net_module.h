@@ -207,6 +207,8 @@ public:
 		DataChannelKind kind,
 		std::size_t threshold_bytes,
 		std::string* error_detail = nullptr);
+	// A background job must never migrate to a replacement channel after reconnect.
+	std::function<bool(std::span<const std::uint8_t>)> bindDataChannelBinarySender(DataChannelKind kind);
 	bool getDataChannelTransportStats(
 		DataChannelKind kind,
 		DataChannelTransportStats* stats,
