@@ -18,6 +18,7 @@
 #include "ui/gui_latency_probe.h"
 #include "ui/gui_diagnostic_writer.h"
 #include "ui/gui_quit_barrier.h"
+#include "ui/host_exit_confirmation.h"
 #include "ui/runtime_stdio_reader.h"
 #include "ui/runtime_control_writer.h"
 #include "ui/runtime_log_view.h"
@@ -6116,7 +6117,11 @@ bool launch_gui_shell(
                QString("Runtime process started: %1 %2").arg(program, redacted_args).toStdString());
   });
 
-  QObject::connect(stop_button, &QPushButton::clicked, [&]() {
+  HostExitConfirmation host_exit_confirmation(window, [&controller, &debug_status]() {
+    return controller.is_running() && debug_status.role == "host" &&
+           (debug_status.connected || debug_status.channel_open);
+  });
+  const auto stop_runtime = [&]() {
     manual_runtime_stop_requested = true;
     connection_flow_model.begin_stopping();
     refresh_connection_flow_page();
@@ -6139,12 +6144,17 @@ bool launch_gui_shell(
         true);
     append_log(session_log, "Stop signal sent to runtime process.");
     persist_debug_status(true);
+  };
+  QObject::connect(stop_button, &QPushButton::clicked, [&]() {
+    if (host_exit_confirmation.confirm_exit()) {
+      stop_runtime();
+    }
   });
 
   const auto retry_active_flow = [&]() {
     if (controller.is_running()) {
       debug_reconnect_requested = true;
-      stop_button->click();
+      stop_runtime();
       return;
     }
     apply_connection_flow_event(ConnectionFlowEvent::kAutomaticRetry);
@@ -6154,6 +6164,9 @@ bool launch_gui_shell(
     if (connection_flow_model.snapshot().status == ConnectionFlowStatus::kStopping) {
       return;
     }
+    if (!host_exit_confirmation.confirm_exit()) {
+      return;
+    }
     connection_flow_model.begin_stopping();
     refresh_connection_flow_page();
     reset_playback_surface(
@@ -6161,7 +6174,7 @@ bool launch_gui_shell(
         "Connection is closing.",
         true);
     if (controller.is_running()) {
-      stop_button->click();
+      stop_runtime();
     } else {
       apply_connection_flow_event(ConnectionFlowEvent::kExitCompleted);
       set_link_workflow_running(false);
@@ -6406,7 +6419,7 @@ bool launch_gui_shell(
                 fail("not_running", "runtime process is not running");
               } else {
                 debug_reconnect_requested = true;
-                stop_button->click();
+                stop_runtime();
                 ok = true;
               }
               break;
@@ -6414,7 +6427,7 @@ bool launch_gui_shell(
               if (!controller.is_running()) {
                 fail("not_running", "runtime process is not running");
               } else {
-                stop_button->click();
+                stop_runtime();
                 ok = true;
               }
               break;
