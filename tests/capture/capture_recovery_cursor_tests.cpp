@@ -69,7 +69,7 @@ TEST(CaptureHardwareRecovery, NativeEncoderSurvivesCaptureDeviceRecreation) {
     config.preferred_backend = CaptureBackendType::kDesktopDuplication;
     std::string error;
     if (!capture.start(config, &error)) { GTEST_SKIP() << error; }
-    capture.configureNativeFrameDelivery(true, false);
+    capture.configureFrameDelivery(CaptureFrameDelivery::kCpuAndGpu);
     auto next_frame = [&capture, &error](CapturedFrame* frame) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (std::chrono::steady_clock::now() < deadline) {
@@ -101,7 +101,7 @@ TEST(CaptureHardwareRecovery, NativeEncoderSurvivesCaptureDeviceRecreation) {
     // are destroyed. This is the resource ownership boundary used by recovery.
     capture.stop();
     ASSERT_TRUE(capture.start(config, &error)) << error;
-    capture.configureNativeFrameDelivery(true, false);
+    capture.configureFrameDelivery(CaptureFrameDelivery::kCpuAndGpu);
     CapturedFrame recovered;
     ASSERT_TRUE(next_frame(&recovered)) << error;
     ASSERT_TRUE(recovered.native_handle);

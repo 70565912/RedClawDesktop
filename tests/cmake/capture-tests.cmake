@@ -1,4 +1,11 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
+add_executable(redclaw_captured_frame_pool_tests capture/captured_frame_pool_tests.cpp)
+target_link_libraries(redclaw_captured_frame_pool_tests PRIVATE redclaw_capture GTest::gtest_main)
+target_include_directories(redclaw_captured_frame_pool_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/capture/src)
+redclaw_apply_warnings(redclaw_captured_frame_pool_tests)
+add_test(NAME redclaw_captured_frame_pool_tests COMMAND redclaw_captured_frame_pool_tests
+  --gtest_filter=CapturedFramePool.*)
+
 add_executable(redclaw_capture_audio_mix_tests capture/audio_mix_tests.cpp)
 target_link_libraries(redclaw_capture_audio_mix_tests PRIVATE redclaw_capture redclaw_render GTest::gtest_main)
 redclaw_apply_warnings(redclaw_capture_audio_mix_tests)

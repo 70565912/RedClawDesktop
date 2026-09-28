@@ -9,6 +9,8 @@ struct CaptureFrameStageTelemetry {
     std::uint32_t accumulated_frames = 0;
     bool native_texture_pool_created = false, native_texture_pool_reused = false;
     bool native_texture_pool_exhausted = false;
+    bool cpu_buffer_allocated = false, cpu_frame_copied = false;
+    bool gpu_readback = false, native_frame_copied = false;
     std::uint64_t frame_pool_recreate_us = 0;
     std::uint32_t frame_pool_recreate_count = 0;
     bool timeout = false;
@@ -18,7 +20,7 @@ public:
     virtual ~ICaptureBackend() = default;
     virtual bool start(const CaptureSessionConfig&, std::string*) = 0;
     virtual bool capture_frame(CapturedFrame*, CaptureFrameStageTelemetry*, std::string*) = 0;
-    virtual void configure_native_frame_delivery(bool, bool) {}
+    virtual void configure_frame_delivery(CaptureFrameDelivery) {}
     virtual void stop() = 0;
     virtual bool is_running() const = 0;
     virtual CaptureBackendType backend_type() const = 0;
