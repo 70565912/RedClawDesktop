@@ -104,6 +104,7 @@ if (REDCLAW_QT_GUI_ENABLED)
   redclaw_apply_warnings(redclaw_ui_debug_control)
 
   add_library(redclaw_ui_connection_flow STATIC
+    ui/runtime_log_view.cpp
     ui/gui_diagnostic_writer.cpp
     ui/agent_conversation_panel.cpp
     ui/agent_conversation_viewport.cpp

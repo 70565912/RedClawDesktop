@@ -14,6 +14,8 @@ param(
         'remote_input_mouse_click',
         'measurement_arm',
         'measurement_export',
+        'log_replay_start',
+        'log_replay_stop',
         'input_probe_start',
         'input_probe_stop',
         'input_probe_export',

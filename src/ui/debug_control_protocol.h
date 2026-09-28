@@ -24,6 +24,8 @@ enum class DebugControlAction {
   kAgentStatus,
   kMeasurementArm,
   kMeasurementExport,
+  kLogReplayStart,
+  kLogReplayStop,
   kInputProbeStart,
   kInputProbeStop,
   kInputProbeExport,

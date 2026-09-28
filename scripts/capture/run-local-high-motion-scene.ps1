@@ -14,11 +14,20 @@ param(
     [ValidateRange(4, 128)]
     [int]$SpriteCount = 28,
 
+    [int]$RandomSeed = 2700,
+
+    [ValidateSet('Static', 'Dynamic')]
+    [string]$Scene = 'Dynamic',
+
     [switch]$Fullscreen,
 
     [switch]$TopMost,
 
-    [string]$ReportFile
+    [switch]$VerifyOnly,
+
+    [string]$ReportFile,
+
+    [string]$ReadyFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,7 +50,9 @@ if ($PSVersionTable.PSEdition -eq "Core") {
         "-TargetFps", $TargetFps,
         "-Width", $Width,
         "-Height", $Height,
-        "-SpriteCount", $SpriteCount
+        "-SpriteCount", $SpriteCount,
+        "-RandomSeed", $RandomSeed,
+        "-Scene", $Scene
     )
     if ($Fullscreen.IsPresent) {
         $forwardedArguments += "-Fullscreen"
@@ -49,9 +60,11 @@ if ($PSVersionTable.PSEdition -eq "Core") {
     if ($TopMost.IsPresent) {
         $forwardedArguments += "-TopMost"
     }
+    if ($VerifyOnly.IsPresent) { $forwardedArguments += '-VerifyOnly' }
     if (-not [string]::IsNullOrWhiteSpace($ReportFile)) {
         $forwardedArguments += @("-ReportFile", $ReportFile)
     }
+    if ($ReadyFile) { $forwardedArguments += @('-ReadyFile', $ReadyFile) }
 
     & $windowsPowerShell @forwardedArguments
     if ($LASTEXITCODE -ne 0) {
@@ -88,6 +101,8 @@ using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 public sealed class MotionSprite {
+    public float OriginX;
+    public float OriginY;
     public float X;
     public float Y;
     public float Width;
@@ -103,14 +118,16 @@ public sealed class HighMotionSceneForm : Form {
     private readonly Timer timer_ = new Timer();
     private readonly Stopwatch stopwatch_ = new Stopwatch();
     private readonly List<MotionSprite> sprites_ = new List<MotionSprite>();
-    private readonly Random random_ = new Random();
+    private Random random_;
+    private readonly int seed_;
+    private readonly bool static_;
     private readonly Font titleFont_ = new Font("Consolas", 30.0f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font detailFont_ = new Font("Consolas", 16.0f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly int targetFps_;
     private readonly double autoCloseSeconds_;
     private readonly int spriteCount_;
     private readonly bool fullscreen_;
-    private double lastUpdateSeconds_;
+    private long sceneFrame_;
     private double lastFrameSeconds_;
     private long renderedFrameCount_;
     private long updateTickCount_;
@@ -122,12 +139,16 @@ public sealed class HighMotionSceneForm : Form {
         int height,
         int targetFps,
         int spriteCount,
+        int seed,
+        bool staticScene,
         double durationSeconds,
         bool fullscreen,
         bool topMost) {
         targetFps_ = Math.Max(1, targetFps);
         autoCloseSeconds_ = Math.Max(1.0, durationSeconds);
         spriteCount_ = Math.Max(4, spriteCount);
+        seed_ = seed;
+        static_ = staticScene;
         fullscreen_ = fullscreen;
 
         Text = "RedClawDesktop Local Motion Scene";
@@ -138,7 +159,8 @@ public sealed class HighMotionSceneForm : Form {
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(Math.Max(320, width), Math.Max(240, height));
         MinimumSize = new Size(640, 360);
-        FormBorderStyle = fullscreen ? FormBorderStyle.None : FormBorderStyle.Sizable;
+        FormBorderStyle = fullscreen ? FormBorderStyle.None : FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
         WindowState = fullscreen ? FormWindowState.Maximized : FormWindowState.Normal;
         DoubleBuffered = true;
         SetStyle(
@@ -160,6 +182,21 @@ public sealed class HighMotionSceneForm : Form {
 
     public long RenderedFrameCount {
         get { return renderedFrameCount_; }
+    }
+
+    public long SceneFrame { get { return sceneFrame_; } }
+
+    public string RenderHash(long frame) {
+        sceneFrame_ = static_ ? 0 : frame;
+        UpdateSprites((double)sceneFrame_ / targetFps_);
+        using (Bitmap bitmap = new Bitmap(ClientSize.Width, ClientSize.Height))
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+        using (System.IO.MemoryStream bytes = new System.IO.MemoryStream())
+        using (System.Security.Cryptography.SHA256 hash = System.Security.Cryptography.SHA256.Create()) {
+            OnPaint(new PaintEventArgs(graphics, ClientRectangle));
+            bitmap.Save(bytes, System.Drawing.Imaging.ImageFormat.Png);
+            return BitConverter.ToString(hash.ComputeHash(bytes.ToArray())).Replace("-", "").ToLowerInvariant();
+        }
     }
 
     public long UpdateTickCount {
@@ -201,7 +238,7 @@ public sealed class HighMotionSceneForm : Form {
 
     private void OnShown(object sender, EventArgs e) {
         stopwatch_.Restart();
-        lastUpdateSeconds_ = 0.0;
+        sceneFrame_ = 0;
         lastFrameSeconds_ = 0.0;
         timer_.Start();
     }
@@ -231,13 +268,12 @@ public sealed class HighMotionSceneForm : Form {
 
     private void OnTick(object sender, EventArgs e) {
         double elapsedSeconds = stopwatch_.Elapsed.TotalSeconds;
-        double deltaSeconds = lastUpdateSeconds_ > 0.0
-            ? Math.Max(0.001, elapsedSeconds - lastUpdateSeconds_)
-            : (1.0 / targetFps_);
-        lastUpdateSeconds_ = elapsedSeconds;
-        UpdateSprites(deltaSeconds);
+        // Absolute frame time skips late timer ticks without changing trajectories.
+        // Every rendering of frame N has identical content for this seed/geometry.
+        sceneFrame_ = static_ ? 0 : (long)Math.Floor(elapsedSeconds * targetFps_);
+        UpdateSprites((double)sceneFrame_ / targetFps_);
         ++updateTickCount_;
-        Invalidate();
+        if (!static_) Invalidate();
         if (elapsedSeconds >= autoCloseSeconds_) {
             Close();
         }
@@ -258,11 +294,12 @@ public sealed class HighMotionSceneForm : Form {
         }
 
         double elapsedSeconds = stopwatch_.Elapsed.TotalSeconds;
-        DrawBackground(graphics, bounds, elapsedSeconds);
-        DrawStripes(graphics, bounds, elapsedSeconds);
-        DrawSweep(graphics, bounds, elapsedSeconds);
+        double sceneSeconds = (double)sceneFrame_ / targetFps_;
+        DrawBackground(graphics, bounds, sceneSeconds);
+        DrawStripes(graphics, bounds, sceneSeconds);
+        DrawSweep(graphics, bounds, sceneSeconds);
         DrawSprites(graphics);
-        DrawHud(graphics, bounds, elapsedSeconds);
+        DrawHud(graphics, bounds, sceneSeconds);
 
         if (lastFrameSeconds_ > 0.0) {
             double frameDeltaMs = Math.Max(0.0, (elapsedSeconds - lastFrameSeconds_) * 1000.0);
@@ -277,6 +314,7 @@ public sealed class HighMotionSceneForm : Form {
 
     private void ResetSprites() {
         sprites_.Clear();
+        random_ = new Random(seed_);
         int width = Math.Max(1, ClientSize.Width);
         int height = Math.Max(1, ClientSize.Height);
         for (int index = 0; index < spriteCount_; ++index) {
@@ -285,6 +323,8 @@ public sealed class HighMotionSceneForm : Form {
             MotionSprite sprite = new MotionSprite();
             sprite.X = random_.Next(0, Math.Max(1, width - (int)spriteWidth));
             sprite.Y = random_.Next(0, Math.Max(1, height - (int)spriteHeight));
+            sprite.OriginX = sprite.X;
+            sprite.OriginY = sprite.Y;
             sprite.Width = spriteWidth;
             sprite.Height = spriteHeight;
             sprite.VelocityX = (float)(random_.NextDouble() * 900.0 + 240.0) * (index % 2 == 0 ? 1.0f : -1.0f);
@@ -302,30 +342,21 @@ public sealed class HighMotionSceneForm : Form {
             sprite.Ellipse = index % 3 == 0;
             sprites_.Add(sprite);
         }
+        UpdateSprites((double)sceneFrame_ / targetFps_);
     }
 
-    private void UpdateSprites(double deltaSeconds) {
+    private static float ReflectedPosition(double position, double span) {
+        if (span <= 0.0) return 0.0f;
+        double phase = ((position % (2.0 * span)) + 2.0 * span) % (2.0 * span);
+        return (float)(phase <= span ? phase : 2.0 * span - phase);
+    }
+
+    private void UpdateSprites(double sceneSeconds) {
         float width = Math.Max(1, ClientSize.Width);
         float height = Math.Max(1, ClientSize.Height);
         foreach (MotionSprite sprite in sprites_) {
-            sprite.X += sprite.VelocityX * (float)deltaSeconds;
-            sprite.Y += sprite.VelocityY * (float)deltaSeconds;
-
-            if (sprite.X < 0.0f) {
-                sprite.X = 0.0f;
-                sprite.VelocityX = Math.Abs(sprite.VelocityX);
-            } else if (sprite.X + sprite.Width > width) {
-                sprite.X = width - sprite.Width;
-                sprite.VelocityX = -Math.Abs(sprite.VelocityX);
-            }
-
-            if (sprite.Y < 0.0f) {
-                sprite.Y = 0.0f;
-                sprite.VelocityY = Math.Abs(sprite.VelocityY);
-            } else if (sprite.Y + sprite.Height > height) {
-                sprite.Y = height - sprite.Height;
-                sprite.VelocityY = -Math.Abs(sprite.VelocityY);
-            }
+            sprite.X = ReflectedPosition(sprite.OriginX + sprite.VelocityX * sceneSeconds, width - sprite.Width);
+            sprite.Y = ReflectedPosition(sprite.OriginY + sprite.VelocityY * sceneSeconds, height - sprite.Height);
         }
     }
 
@@ -417,16 +448,15 @@ public sealed class HighMotionSceneForm : Form {
 
     private void DrawHud(Graphics graphics, Rectangle bounds, double elapsedSeconds) {
         string timecode = string.Format(
-            "LOCAL MOTION SCENE  FPS {0:0.0}  FRAMES {1}  ELAPSED {2:0.0}s",
-            AverageFps,
-            RenderedFrameCount,
+            "LOCAL SCENE  SEED {0}  FRAME {1}  SCENE TIME {2:0.000}s",
+            seed_,
+            sceneFrame_,
             elapsedSeconds);
         string details = string.Format(
-            "TARGET {0}  SPRITES {1}  MAX_FRAME_DELTA {2:0.0}ms  AVG_FRAME_DELTA {3:0.0}ms  ESC=EXIT",
+            "TARGET {0}  SPRITES {1}  {2}  TEXT AaBb 0123456789  ESC=EXIT",
             TargetFps,
             SpriteCount,
-            MaxFrameDeltaMs,
-            AverageFrameDeltaMs);
+            static_ ? "STATIC" : "DYNAMIC");
 
         Rectangle titleRect = new Rectangle(24, 20, bounds.Width - 48, 42);
         Rectangle detailRect = new Rectangle(24, 64, bounds.Width - 48, 28);
@@ -462,14 +492,45 @@ $form = [HighMotionSceneForm]::new(
     $Height,
     $TargetFps,
     $SpriteCount,
+    $RandomSeed,
+    ($Scene -eq 'Static'),
     [double]$DurationSeconds,
     $Fullscreen.IsPresent,
     $TopMost.IsPresent)
 
+if ($VerifyOnly.IsPresent) {
+    $zero = $form.RenderHash(0)
+    $later = $form.RenderHash(120)
+    $repeat = $form.RenderHash(0)
+    $passed = $zero -eq $repeat -and (($Scene -eq 'Static') -eq ($zero -eq $later))
+    [pscustomobject]@{
+        schema_version = 2; ok = $passed; verification_only = $true
+        random_seed = $RandomSeed; scene = $Scene
+        frame_zero_sha256 = $zero; frame_120_sha256 = $later; repeat_zero_sha256 = $repeat
+        width = $form.ClientSize.Width; height = $form.ClientSize.Height
+    } | ConvertTo-Json | Set-Content -LiteralPath $reportFilePath -Encoding UTF8
+    $form.Dispose()
+    if (-not $passed) { throw 'Deterministic scene verification failed.' }
+    Write-Host 'Deterministic offscreen scene verification passed; no desktop load was started.'
+    return
+}
+
+if ($ReadyFile) {
+    $form.add_Shown({
+        [pscustomobject]@{schema_version=2; ready=$true; width=$form.ClientSize.Width; height=$form.ClientSize.Height} |
+            ConvertTo-Json | Set-Content -LiteralPath $ReadyFile -Encoding UTF8
+    })
+}
 [void]$form.ShowDialog()
 
 $report = [pscustomobject]@{
+    schema_version = 2
     ok = $true
+    scene = $Scene
+    random_seed = $RandomSeed
+    trajectory = 'absolute-frame-reflection-v1'
+    scene_frame = $form.SceneFrame
+    elapsed_seconds = $form.ElapsedSeconds
     duration_seconds = $DurationSeconds
     target_fps = $TargetFps
     measured_fps = [Math]::Round($form.AverageFps, 2)
@@ -477,8 +538,8 @@ $report = [pscustomobject]@{
     max_frame_delta_ms = [Math]::Round($form.MaxFrameDeltaMs, 2)
     rendered_frames = $form.RenderedFrameCount
     update_ticks = $form.UpdateTickCount
-    width = $Width
-    height = $Height
+    width = $form.ClientSize.Width
+    height = $form.ClientSize.Height
     sprite_count = $SpriteCount
     fullscreen = $Fullscreen.IsPresent
     top_most = $TopMost.IsPresent
@@ -490,3 +551,4 @@ $report | ConvertTo-Json -Depth 4 | Set-Content -Path $reportFilePath -Encoding 
 Write-Host "Local high-motion scene completed."
 Write-Host "Report: $reportFilePath"
 Write-Host "Measured FPS: $($report.measured_fps)"
+$form.Dispose()

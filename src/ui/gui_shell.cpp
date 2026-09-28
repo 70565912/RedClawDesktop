@@ -22,6 +22,7 @@
 #include "ui/runtime_stdio_reader.h"
 #include "ui/runtime_control_writer.h"
 #include "ui/runtime_log_view.h"
+#include "ui/runtime_log_replay.h"
 #include "ui/qa_input_probe.h"
 #include "ui/input_diagnostic_target.h"
 #include "playback/playback_canvas.h"
@@ -273,6 +274,12 @@ void append_log(QPlainTextEdit* output, const QString& line) {
   output->appendPlainText(formatted);
   timing.finish();
   write_gui_log_sink(formatted);
+}
+
+void append_log(RuntimeLogView* output, const QString& line) {
+  const QString formatted = format_gui_log_line(line);
+  write_gui_log_sink(formatted);
+  output->appendPlainText(formatted);
 }
 
 struct NetworkExitChoice {
@@ -2722,6 +2729,9 @@ bool launch_gui_shell(
   session_log->setObjectName("runtimeSessionLog");
   session_log->setPlaceholderText("Runtime and pairing events appear here...");
   session_log->setMinimumHeight(84);
+  auto* log_replay = new RuntimeLogReplay(session_page, [session_log](const QString& line) {
+    append_log(session_log, line);
+  });
   session_log_layout->addWidget(session_log_hint);
   session_log_layout->addLayout(session_log_toolbar);
   session_log_layout->addWidget(session_log, 1);
@@ -3301,7 +3311,8 @@ bool launch_gui_shell(
   runtime_detail_tabs->addTab(timeline_list, "Timeline");
 
   auto* runtime_log = new RuntimeLogView(runtime_page);
-  runtime_log->setDocument(session_log->document());
+  runtime_log->set_buffer(session_log->buffer());
+  runtime_log->setObjectName("runtimeSessionLogMirror");
   runtime_log->setPlaceholderText("Runtime output mirror");
   runtime_log->setMinimumHeight(140);
   runtime_detail_tabs->addTab(runtime_log, "Runtime Log");
@@ -3498,16 +3509,7 @@ bool launch_gui_shell(
   runtime_detail_tabs->setVisible(false);
 
   QObject::connect(copy_session_log_button, &QPushButton::clicked, [&]() {
-    QString combined = session_log->toPlainText().trimmed();
-    const QString runtime_text = runtime_log->toPlainText().trimmed();
-    if (!runtime_text.isEmpty()) {
-      if (combined.isEmpty()) {
-        combined = runtime_text;
-      } else if (!combined.contains(runtime_text)) {
-        combined += "\n\n--- runtime mirror ---\n";
-        combined += runtime_text;
-      }
-    }
+    const QString combined = session_log->cached_text();
     if (combined.isEmpty()) {
       session_log_copy_feedback->setText("Log is empty");
       set_link_status("Log is empty; nothing to copy yet.", "warn");
@@ -3522,7 +3524,7 @@ bool launch_gui_shell(
   });
 
   QObject::connect(clear_session_log_button, &QPushButton::clicked, [&]() {
-    session_log->clear();
+    session_log->clear_cached();
     session_log_copy_feedback->setText("Log cleared");
     QTimer::singleShot(2000, session_log_copy_feedback, [session_log_copy_feedback]() {
       session_log_copy_feedback->clear();
@@ -4955,31 +4957,9 @@ bool launch_gui_shell(
   });
 
 
-  constexpr int kRuntimeOutputUiLogFlushIntervalMs = 50;
-  QStringList runtime_output_ui_log_lines;
-  auto* runtime_output_ui_log_timer = new QTimer(session_page);
-  runtime_output_ui_log_timer->setSingleShot(true);
-  runtime_output_ui_log_timer->setTimerType(Qt::PreciseTimer);
-  auto flush_runtime_output_ui_log = [&]() {
-    if (runtime_output_ui_log_lines.isEmpty()) {
-      return;
-    }
-    const QString batch = runtime_output_ui_log_lines.join('\n');
-    runtime_output_ui_log_lines.clear();
-    GuiLatencyScope timing(GuiStage::kLogWidget);
-    session_log->appendPlainText(batch);
-  };
   auto queue_runtime_output_ui_log = [&](const QString& safe_line) {
-    const QString formatted = format_gui_log_line(safe_line);
-    runtime_output_ui_log_lines.push_back(formatted);
-    write_gui_log_sink(formatted);
-    if (!runtime_output_ui_log_timer->isActive()) {
-      runtime_output_ui_log_timer->start(kRuntimeOutputUiLogFlushIntervalMs);
-    }
+    append_log(session_log, safe_line);
   };
-  QObject::connect(runtime_output_ui_log_timer, &QTimer::timeout, [&]() {
-    flush_runtime_output_ui_log();
-  });
 
 
   auto* agent_drain_timer = new QTimer(session_page);
@@ -6372,6 +6352,18 @@ bool launch_gui_shell(
               app.latency.arm_trace();
               result.insert("measurement", app.latency.snapshot().value("trace"));
               break;
+            case DebugControlAction::kLogReplayStart:
+            case DebugControlAction::kLogReplayStop:
+#ifndef NDEBUG
+              if (parsed.request.action == DebugControlAction::kLogReplayStart) log_replay->start();
+              else log_replay->stop();
+              result.insert("log_replay", log_replay->snapshot());
+              result.insert("log_visible", session_log->isVisible());
+              result.insert("mirror_visible", runtime_log->isVisible());
+#else
+              fail("debug_required", "Log replay is available only in a local Debug fixture.");
+#endif
+              break;
             case DebugControlAction::kMeasurementExport: {
               const auto trace_path = QDir(effective_log_dir).filePath(
                   "gui-trace-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".bin");
@@ -6381,6 +6373,13 @@ bool launch_gui_shell(
               break;
             }
             case DebugControlAction::kStatus: {
+              result.insert("runtime_log", QJsonObject{
+                  {"visible", session_log->isVisible()}, {"mirror_visible", runtime_log->isVisible()},
+                  {"cached_lines", static_cast<qint64>(session_log->buffer()->line_count())},
+                  {"cached_bytes", static_cast<qint64>(session_log->buffer()->bytes())},
+                  {"refreshes", static_cast<qint64>(session_log->refresh_count())},
+                  {"mirror_refreshes", static_cast<qint64>(runtime_log->refresh_count())},
+                  {"replay", log_replay->snapshot()}});
               const auto& flow = connection_flow_model.snapshot();
               result.insert("connection_flow", QJsonObject{
                   {"transport_ready", flow.transport_ready},
