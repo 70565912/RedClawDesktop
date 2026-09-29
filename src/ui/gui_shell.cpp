@@ -5522,6 +5522,8 @@ bool launch_gui_shell(
 #if defined(_WIN32)
           playback_progress = {};
           playback_progress.reset_frames(direct_frame_pipe_server.request_session_reset());
+          navigation_frame_pipe_server.request_session_reset();
+          desktop_navigation_panel->set_transport_available(false);
           capture_playback_state = {};
           source_activity_revision = source_reference_keyframe_id = 0;
 #endif
@@ -6656,6 +6658,12 @@ bool launch_gui_shell(
                 playback.insert("content_width", remote_input_capture->remote_frame_size().width());
                 playback.insert("content_height", remote_input_capture->remote_frame_size().height());
                 result.insert("playback", playback);
+                const auto navigation_transport = navigation_frame_pipe_server.stats_snapshot();
+                auto navigation = desktop_navigation_panel->diagnostic_snapshot();
+                navigation.insert("received_frames", qint64(navigation_transport.writer_frames));
+                navigation.insert("published_frames", qint64(navigation_transport.published_frames));
+                navigation.insert("decode_failures", qint64(navigation_transport.decode_failures));
+                result.insert("navigation", navigation);
               }
 #endif
 #if defined(_WIN32) && !defined(NDEBUG)

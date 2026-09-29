@@ -3,6 +3,7 @@
 #include "redclaw/protocol/stream_control_protocol.h"
 
 #include <QImage>
+#include <QJsonObject>
 #include <QRectF>
 #include <QString>
 #include <QWidget>
@@ -52,6 +53,7 @@ class DesktopNavigationPanel final : public QWidget {
   [[nodiscard]] QRectF selected_normalized_region() const;
   [[nodiscard]] std::uint64_t pending_region_revision() const;
   [[nodiscard]] bool pending_request_changes_display() const;
+  [[nodiscard]] QJsonObject diagnostic_snapshot() const;
 
  private:
   friend class NavigationSelectionWidget;

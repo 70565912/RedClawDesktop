@@ -111,3 +111,38 @@ tests above were reused; this publication check does not repeat their matrix.
 The running Client publication remains unchanged, and its controller connection
 and channel are open. The candidate has not replaced either endpoint; remote
 QSV activation, matched performance and visual acceptance remain unverified.
+
+## Peer upgrade check and navigation regression
+
+The operator subsequently upgraded the remote Host and confirmed normal video
+after reconnecting the local Client. The running Host hash starts `16751dba49ba`;
+its checkout is `35c8001`, but its old run manifest does not match that executable.
+The manifest is retained as historical evidence, not used to assert build identity.
+
+P5 attempts GPU input once and latches CPU fallback: `h264_qsv`, nominal 30 FPS,
+1/30 time base, GOP 60, attempts 1, fallbacks 1, GPU confirmation false. The failure
+is `av_hwframe_ctx_init failed for D3D11 frames: Unknown error occurred`.
+Capture readbacks grow 9843→10307; three CPU allocations and zero pool exhaustion
+are retained. The active backend is Desktop Duplication, whereas the baseline used
+WGC. No nine-window comparison was started: GPU activation and backend matching
+are prerequisites for an attributable comparison. Local NVENC success does not
+qualify this Intel path. Inspect the QSV fixed NV12 texture-array allocation and
+derived-frame mapping before the next controlled Host candidate.
+
+The operator also reported DISPLAY2 navigation showing only one image. Host
+thumbnail sends continue 763→791 across four summaries, with zero failures. A
+Client defect was found: per-display thumbnail revisions and the catalog revision
+survived reconnection, rejecting a restarted Host's lower revisions. The repair
+clears those session-scoped values on disconnect and automatic session rebuild,
+discards pending navigation delivery on rebuild, and retains display/crop choices.
+Same-session stale-frame rejection remains. An additive local diagnostic snapshot
+reports selected display/revision and receive/publish/decode counters; no wire
+protocol changed. Four panel cases (including two-display reconnect/render checks)
+and six existing thumbnail worker/preparation cases pass. The Debug main build
+through `build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish`
+passes. Live Client replacement and post-reconnect sequence growth are the next
+verification step, not yet established by these local tests.
+
+Evidence under `build/reports/x00-t27/`: `p5-qsv-reason.json`,
+`p5-navigation-live-result.json`, `p5-navigation-ui-tests.json`,
+`p5-navigation-worker-tests.json`, and `p5-navigation-main-build.txt`.

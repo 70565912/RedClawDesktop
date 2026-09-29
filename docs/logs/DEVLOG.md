@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Diagnose peer QSV fallback and repair navigation reconnect (X00-T27)
+
+- After the operator's remote upgrade and normal-picture confirmation, bounded diagnostics find one QSV GPU attempt followed by CPU fallback at D3D11 frame-pool initialization. Current DDA differs from the WGC baseline. No performance load/comparison was started; QSV activation remains open.
+- Host thumbnail sends continue with zero failures. The DISPLAY2 report exposed per-display thumbnail/catalog revision gates surviving Host restart. Reset session revisions on disconnect and automatic rebuild, clear queued old navigation delivery, preserve display/crop choices, and retain within-session stale rejection. Add a versioned local selected-thumbnail/receiver snapshot to distinguish arrival from display progress; no network protocol changes.
+- Four panel cases (two-display reconnect, continuous updates and stale rejection included), six thumbnail cases and the Debug main build through `build.ps1` pass. Live Client deployment/verification is still pending. See the [P5 findings and evidence](../testing/video-gpu-input-p5-20260929.md#peer-upgrade-check-and-navigation-regression).
+
 ## 2026-09-29 — Publish the pushed P5 Debug candidate (X00-T27)
 
 - Pushed implementation `8955125` and GitHub-policy update `9910fe8` to the existing `origin/main`. Reused the clean independent checkout and ran `build.ps1 -Configuration Debug -Target redclaw_desktop` from `9910fe8`; configure, build and publication passed.

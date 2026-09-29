@@ -70,8 +70,27 @@ class NavigationSelectionWidget final : public QWidget {
     }
   }
 
+  void reset_session() {
+    if (dragging_) releaseMouse();
+    dragging_ = false;
+    drag_mode_ = DragMode::kNone;
+    for (auto& memory : memories_) {
+      memory.thumbnail = {};
+      memory.thumbnail_revision = 0;
+      memory.region = memory.confirmed_region;
+    }
+    update();
+  }
+
   [[nodiscard]] QRectF region() const {
     return memories_.value(display_id_).region;
+  }
+
+  [[nodiscard]] QJsonObject thumbnail_snapshot() const {
+    const auto memory = memories_.value(display_id_);
+    return {{"thumbnail_revision", qint64(memory.thumbnail_revision)},
+            {"thumbnail_width", memory.thumbnail.width()},
+            {"thumbnail_height", memory.thumbnail.height()}};
   }
 
   void set_confirmed_region(const QRectF& region) {
@@ -345,6 +364,12 @@ void DesktopNavigationPanel::apply_region_rejected(
 }
 
 void DesktopNavigationPanel::set_transport_available(bool available) {
+  if (!available) {
+    // Revisions belong to the Host session and restart after a Host replacement.
+    catalog_revision_ = 0;
+    pending_region_revision_ = 0;
+    selection_widget_->reset_session();
+  }
   transport_available_ = available;
   display_combo_->setEnabled(available && !workspace_blocked_ && !displays_.empty());
   status_label_->setText(available ? "Ready" : "Waiting for navigation channel");
@@ -375,6 +400,15 @@ std::uint64_t DesktopNavigationPanel::pending_region_revision() const {
 bool DesktopNavigationPanel::pending_request_changes_display() const {
   return !confirmed_display_id_.isEmpty()
       && selected_display_id() != confirmed_display_id_;
+}
+
+QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
+  auto snapshot = selection_widget_->thumbnail_snapshot();
+  snapshot.insert("version", 1);
+  snapshot.insert("display_id", selected_display_id());
+  snapshot.insert("catalog_revision", qint64(catalog_revision_));
+  snapshot.insert("transport_available", transport_available_);
+  return snapshot;
 }
 
 void DesktopNavigationPanel::select_display(int index, bool submit) {
