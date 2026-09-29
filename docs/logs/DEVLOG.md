@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Publish the pushed P5 Debug candidate (X00-T27)
+
+- Pushed implementation `8955125` and GitHub-policy update `9910fe8` to the existing `origin/main`. Reused the clean independent checkout and ran `build.ps1 -Configuration Debug -Target redclaw_desktop` from `9910fe8`; configure, build and publication passed.
+- Validated the complete 336-file candidate manifest and required runtime dependencies, build/published executable equality, and the published `--help` entry (exit 0). Executable SHA256 is recorded in the [P5 report](../testing/video-gpu-input-p5-20260929.md); local publication receipts retain per-file hashes. Existing focused functional/GPU results were reused.
+- Current Client binaries remain unchanged; a final read-only check confirms controller role, connected state and open channel. No endpoint replacement or remote load occurred. Peer QSV activation, same-peer improvement and visual acceptance remain separate from candidate readiness.
+
 ## 2026-09-29 — Remove repeated GitHub operation confirmation
 
 - At the operator's request, aligned the root guide, GitHub directory guide and execution protocol so task-scoped GitHub operations proceed after an announcement without a separate confirmation for each command. Existing branch/history and sensitive-data rules remain applicable.

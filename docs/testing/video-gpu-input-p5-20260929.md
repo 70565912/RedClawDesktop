@@ -93,3 +93,21 @@ is not a zero-copy claim. Remote QSV activation, AMF behavior, cross-LAN latency
 and CPU improvement, and final quality/soak acceptance are unqualified. Follow
 commit/push/build/controlled rollout before peer measurements, preserving the
 operator's current Client/Host roles unless explicitly changed.
+
+## Pushed candidate publication
+
+P5 implementation `8955125` and the operator-requested GitHub policy update are
+pushed to `origin/main`. Clean source `9910fe8` was then built through
+`build.ps1 -Configuration Debug -Target redclaw_desktop`; configure, build and
+publication passed in the existing independent checkout. Its `release/Debug`
+contains 336 files. The complete manifest and required dependencies validate,
+the published executable matches the build, and its `--help` entry exits with
+code 0. Executable SHA256:
+`f02d15357d28a74dcf081e35215de53bdcfa59ab807e0152c6ab8ee2acbb8935`.
+
+Evidence: `p5-pushed-debug-build.txt`, `p5-candidate-manifest.json` and
+`p5-publish-validation.json` under the same local report directory. Application
+tests above were reused; this publication check does not repeat their matrix.
+The running Client publication remains unchanged, and its controller connection
+and channel are open. The candidate has not replaced either endpoint; remote
+QSV activation, matched performance and visual acceptance remain unverified.
