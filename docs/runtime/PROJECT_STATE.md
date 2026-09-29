@@ -32,7 +32,10 @@ are complete: shared D3D11 synchronization, NV12 conversion, first-output GPU
 confirmation, generation-latched CPU fallback and small GPU thumbnail readback.
 Debug NoPublish build and focused tests passed; WGC/DDA each passed three device
 generations, totaling 36 GPU-only frames without additional desktop readback on
-local NVENC. The candidate is not published or deployed. Peer QSV activation,
+local NVENC. P5 `8955125` is pushed; clean source `9910fe8` is built and published
+to the independent candidate checkout (336 files, manifest and command-entry
+checks passed). The active Client publication remains unchanged and connected;
+neither endpoint has been replaced. Peer QSV activation,
 matched performance and final quality acceptance remain on the [task ledger](MODULE_KANBAN.md).
 
 ## Current release
