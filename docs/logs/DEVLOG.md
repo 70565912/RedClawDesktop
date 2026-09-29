@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-09-29 — Measure P5 and retain the NVENC latency regression (X00-T27)
+
+- Re-established local Host / remote Client comparison after operator picture and viewport confirmation for each replacement. Reused pushed P4 `af637da` CPU publication; built/published pushed `f5dac5d` through `build.ps1`, passed two focused suites and five local GPU/real-capture cases, and verified complete candidates/rollbacks. Independent recovery workers preserved the controlled rollout sequence. The local Host remains f5dac5d; no formal release or production-code change was made in this acceptance.
+- Completed all 18 fixed-scene windows at 1920×1080 capture / 1778×1000 encode / 1920×1001 viewport. CPU/GPU traces contain 7673/5627 sent frames with zero unsent/overflow and zero sampled stream failures. One GPU frame lacks capture timing; raw evidence is retained, throughput includes it, and frame-age/full-timeline accounting excludes it explicitly. The strict all-row GPU accounting failure is not presented as a pass.
+- Dynamic three-run medians: 21.30→15.78 FPS, Host CPU 53.28→10.53% of one logical core, capture copy 7.47→4.23 ms/frame, input preparation 11.48→29.63 ms/attempt, total encoding 21.17→57.61 ms/attempt and Host frame-age P99 76.04→180.26 ms. DynamicLog reproduces the regression; three-run ranges are disjoint. Main-video readback and CPU-copy increments are zero with GPU confirmed/no fallback. Adaptive targets/pacing differ despite unchanged policy and configured codec bitrate; exact GPU-call and sender attribution remain open.
+- A 301.93 s continuous dynamic run sent 4842 frames, with no stream failure/reconnect/recovery increments and stable Host private memory over the observed interval. Two 60 s traces retain tail regression; this is not a full-duration frame trace or a remote pixel-quality comparison. P5 implementation/local functional validation passed, but its FPS/latency objective failed on NVIDIA. Next is GPU preparation/encoding diagnosis, ahead of the independent X00-T28 pacer change. Full ranges, identities, missing-row scope and recomputation are in the [P5 acceptance report](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
+
 ## 2026-09-29 — Encode the filled QSV surface (X00-T27 P5)
 
 - Intel HD Graphics 530 encoded a real bitstream with zero CPU fallback, but software decode was black. The video processor and the copied NV12 were not black. FFmpeg's decoder-target pool is one texture array, and the driver encoded slice 0 while the pool filled a later slice.

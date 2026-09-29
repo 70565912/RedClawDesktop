@@ -1,10 +1,13 @@
 # X00-T27 P5: synchronized GPU input
 
-P5 is implemented and locally validated. WGC and DDA each completed three capture
-device generations through the real encoder; **36 confirmed GPU-only frames had
-zero additional main-video CPU readbacks**. This local device uses `h264_nvenc`.
-The current remote Host uses QSV, so its GPU activation, performance comparison
-and final five-minute visual-quality acceptance remain separate gates.
+P5 is implemented and functionally validated, including the peer's Intel QSV
+surface repair. **The latest matched local NVIDIA Host comparison fails the
+FPS/latency objective:** GPU input removes main-video readback and reduces Host
+CPU, but throughput falls and frame-age tails increase. The five-minute dynamic
+run completed without stream failures or reconnects. See the
+[matched acceptance below](#matched-local-host-performance-acceptance).
+Earlier implementation, publication and role-specific receipts follow in order;
+their waiting states do not describe the current connected Host.
 
 ## Ownership and behavior
 
@@ -254,3 +257,163 @@ picture confirmation. No remote load or performance sampling has started.
 Evidence: `p5-qsv-fix-pushed-build.txt`, `p5-qsv-fix-publication.json`, candidate
 and rollback manifests, and `p5-qsv-fix-host-ready.json`. This readiness does not
 qualify Intel QSV; the local Host uses NVIDIA hardware.
+
+## Matched local Host performance acceptance
+
+**X00-T27 P5: implementation/local functional checks passed; local NVENC
+readback/CPU improvement confirmed; FPS/latency acceptance failed.** This run
+does not measure Intel QSV performance. The peer's strict Intel functional gate
+above remains passed. Diagnose the GPU preparation/encoding regression before
+treating P5 as complete or advancing to the separate X00-T28 pacer change.
+
+### Identity, rollout and fixed conditions
+
+The operator requested local controlled Debug Host / remote Client and confirmed
+normal video after each replacement, holding the Client viewport unchanged.
+The CPU reference is the pushed P4 revision `af637da2a0efc6a318193be2db741e57c8f44f46`
+(330 files, executable SHA256
+`0f69d712419a95e2bbdb30db1c4ee5ce519da75fc1a02ba0eb1e8251a2a4df34`).
+The GPU candidate is pushed revision `f5dac5d13e2d606a754578eb2b889d1a23410d81`
+(336 files, executable SHA256
+`b1ef1bf788859f1d41c8fb79c5b10e1a8055a226089d23458924eb93a62f5bbb`).
+The existing verified P4 build was reused; f5dac5d was built and published from
+clean pushed source through `build.ps1 -Configuration Debug -Target redclaw_desktop`.
+Two focused CTest suites and five GPU/real-capture cases passed on this NVIDIA
+device. Full candidate/dependency/hash and command-entry checks passed.
+
+Both replacements used the existing controlled deployment entry with a complete
+rollback and an independent recovery worker. Protected credentials, capability
+scope and effective ICE port were retained; DHT publication, channels and real
+media were checked before measurement. The final Host remains f5dac5d in
+`release/Debug`. No formal release was published.
+
+| Condition | Both groups |
+| --- | --- |
+| Host | NVIDIA GeForce GTX 1660 SUPER, DDA, NVENC |
+| Capture / encode / Client viewport | 1920×1080 / 1778×1000 / 1920×1001 |
+| Resolution policy | `stream_video_max_width=0`; existing viewport fitting retained |
+| Encoder | 30 nominal FPS, time base 1/30, GOP 60 frames, effective configured 4267 kbps |
+| Scene | Seed 2700, absolute-frame-reflection-v1, 28 sprites, fullscreen; source measured 21.32–21.33 FPS |
+| Scene coordinates | 1536×864 logical pixels under existing desktop DPI; physical capture remains 1920×1080 |
+| Logs / diagnostics | Main log visible, mirror hidden; 10000 ms diagnostics; DynamicLog requests 80 lines/s |
+| Windows | Static, Dynamic, DynamicLog; each 10 s warmup then 60 s trace, three repeats |
+
+Trace arming waits for the next diagnostic tick; the scene remains active through
+drain. CPU was measured first, GPU second; this is a revision comparison, not a
+randomized single-flag experiment. Network settings and adaptive policy were
+unchanged, but their outputs were not frozen. Dynamic per-window median pacing
+rates were CPU 5298/5298/5298 versus GPU 4870/3524/3524 kbps; DynamicLog was CPU
+5298 versus GPU 3688 kbps. Adaptive target FPS settled at CPU 30 versus GPU 21–22.
+These differences limit isolated attribution of sender tails; configured codec
+bitrate stayed 4267 kbps. The slower local preparation/encode measurements still
+require investigation. No bitrate, bursts, congestion, priorities or queues were
+changed for this acceptance.
+
+### Three-run results
+
+Values are median [minimum–maximum] across three repetitions. CPU percentage is
+Host runtime process time, with **100% equal to one logical core**; it is not
+whole-machine utilization and was measured at the different achieved frame rates.
+Frame age is local capture-ready to last send, not end-to-end display latency.
+Preparation and total encoding are per-attempt weighted diagnostic means; total
+encoding includes preparation, so these durations must not be added together.
+
+| Dynamic metric | P4 CPU | P5 GPU | Median change |
+| --- | --- | --- | --- |
+| Sent FPS | 21.30 [21.30–21.33] | 15.78 [15.28–15.87] | −25.9% |
+| Host CPU, one-core % | 53.28 [53.18–53.49] | 10.53 [10.39–11.00] | −80.2% |
+| Capture copy, ms/frame | 7.47 [7.42–7.53] | 4.23 [4.02–4.33] | −43.4% |
+| Input preparation, ms/attempt | 11.48 [11.38–11.64] | 29.63 [29.40–30.24] | +158.1% |
+| Total encoding, ms/attempt | 21.17 [21.06–21.38] | 57.61 [57.30–60.68] | +172.1% |
+| Frame-age P95, ms | 64.44 [63.60–66.35] | 156.15 [152.56–163.25] | +142.3% |
+| Frame-age P99, ms | 76.04 [73.50–85.88] | 180.26 [180.19–191.97] | +137.0% |
+
+| DynamicLog metric | P4 CPU | P5 GPU | Median change |
+| --- | --- | --- | --- |
+| Sent FPS | 21.32 [21.30–21.33] | 15.55 [15.50–15.80] | −27.1% |
+| Host CPU, one-core % | 51.89 [51.32–52.12] | 10.28 [9.51–11.29] | −80.2% |
+| Capture copy, ms/frame | 7.42 [7.41–7.47] | 4.17 [4.13–4.30] | −43.8% |
+| Input preparation, ms/attempt | 11.39 [11.37–11.43] | 29.81 [29.34–30.62] | +161.8% |
+| Total encoding, ms/attempt | 21.07 [21.04–21.08] | 58.44 [58.05–60.18] | +177.3% |
+| Frame-age P95, ms | 64.46 [63.72–65.66] | 156.62 [152.27–157.56] | +143.0% |
+| Frame-age P99, ms | 73.18 [70.69–77.44] | 184.35 [182.84–186.66] | +151.9% |
+
+Every range in these tables is disjoint. Both static groups legitimately sent
+zero new frames; their frame quantiles are unavailable. Static Host CPU ranges
+overlap (CPU 3.45–4.91%, GPU 3.63–4.62%): improvement is unconfirmed. This scene's
+21.3 FPS source is not a measurement of maximum system capacity.
+
+All 18 windows completed: CPU 7673 sent traced frames, GPU 5627, no unsent
+outcomes, no Host/GUI trace overflow, and no sampled capture/encode/transmit
+failure increments. GPU DynamicLog-2 frame 7315 lacks capture timestamps while
+encoding/sending timestamps are present. It is retained for output FPS and
+excluded from capture/frame-age distributions (5626 GPU frames have complete
+capture timing). The strict whole-timeline analyzer rejected that row; the
+separate audit accounts all 7673 CPU and 5626 complete GPU rows without modifying
+raw traces. Do not report the GPU strict full-trace check as passed.
+
+In the within-window diagnostic counter spans (about 40 s, not the full 60 s),
+each dynamic CPU window adds 852–853 main-video readbacks and CPU copies. Every
+GPU window adds zero of either, reports GPU input confirmed, and retains zero
+fallbacks. GPU native texture copies remain: this is not zero-copy. Both modes
+add zero large CPU buffer allocations or pool exhaustion after warmup. GPU
+thumbnail delivery advances 38–39 per dynamic counter span, with zero failures;
+each thumbnail reads only 230400 bytes (320×180 BGRA). Hidden mirror refresh
+deltas stay zero. These local Host logs do not measure remote Controller GUI
+optimization benefit or requalify the peer's previous DISPLAY2 scenario.
+
+### Five-minute continuous run and limits
+
+The same GPU Host ran a continuous dynamic scene for 301.93 s of status sampling,
+sending 4842 real frames (16.04 FPS), with no capture/encode/transmit failures,
+synthetic frames or reconnects. Across the 300.01 s diagnostic span, main-video
+readbacks, CPU copies, large allocations, pool exhaustion, capture rebuilds,
+backend switches and recovery reset/success increments were all zero. GPU input
+remained confirmed with zero fallbacks. Thumbnail sends/readbacks advanced 291
+with zero failures, totaling 67046400 readback bytes.
+
+Two bounded 60 s trace segments contain 959 and 905 sent frames, zero overflow
+and valid send accounting. Frame-age P95/P99 moved from 129.51/161.02 to
+141.21/177.28 ms; this does not show continuous unbounded growth, but neither
+does it resolve the tail regression. The recorder did not trace all five minutes.
+Host working set stayed 60.85–62.67 MiB and private bytes 484.89–486.02 MiB;
+first/last 30 s private-memory medians were 486.012/486.016 MiB. These process
+figures are not total GPU memory or a general leak-free guarantee.
+
+The operator confirmed normal decoded pictures after both replacements. Detailed
+remote text/line/color/cursor comparison is not yet confirmed; no peer pixel
+capture or objective image comparison was collected. Existing real encode/decode,
+crop/color/cursor and recovery tests remain functional evidence only. Current
+timings localize the principal new cost to preparation/encoding, but do not yet
+separate mutex wait, video-processor work, surface lifetime/copy or NVENC submit.
+That separation is the next P5 investigation; pacer policy is unchanged.
+
+### Retained evidence and recomputation
+
+All raw artifacts are local under `build/reports/x00-t27/`, excluded from Git:
+
+- `p5-cpu-reference-20260929/`, `p5-gpu-candidate-20260929/`: plans, identities,
+  scene reports, per-window status/CPU/memory, geometry, original traces and logs.
+- `p5-matched-comparison.json`, `p5-rate-context.json`, `p5-trace-audit.json`:
+  three-run ranges, configuration/adaptation context and exact missing-row scope.
+- `p5-gpu-soak-20260929/`: result, 142 samples, two original traces and analysis.
+  The short tail-only diagnostic extract is retained; `host-stage-complete.txt`
+  recovers the complete original log summaries and is used for soak counters.
+- `p5-acceptance-ctest.txt`, `p5-acceptance-gpu.json`,
+  `p5-acceptance-pushed-build.txt`, candidate/deployment manifests and receipts.
+
+From the repository root, the retained local scripts recompute the tables:
+
+```powershell
+python build/reports/x00-t27/analyze_baseline.py build/reports/x00-t27/p5-cpu-reference-20260929
+python build/reports/x00-t27/analyze_baseline.py build/reports/x00-t27/p5-gpu-candidate-20260929
+python build/reports/x00-t27/compare_p5.py
+python build/reports/x00-t27/audit_p5_traces.py
+python build/reports/x00-t27/analyze_p5_soak.py
+```
+
+The audit and soak scripts reuse `scripts/capture/analyze-video-link-baseline.py`
+for nearest-rank distributions and send accounting. Diagnostic means have
+explicit capture/attempt denominators and may straddle status boundaries.
+No uncalibrated peer timestamps are subtracted. This acceptance changes only
+documentation and local measurement artifacts, not production behavior.
