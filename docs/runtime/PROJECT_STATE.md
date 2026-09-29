@@ -6,11 +6,14 @@ Updated: 2026-09-29
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles are
-**local Debug Host / remote Client**. Pushed `f5dac5d` is clean-source Debug
+**local Debug Host / remote Client**. Pushed `a656ede` is clean-source Debug
 built/published and running from `release/Debug`, with complete 336-file candidate
 and rollback verification, retained protected credentials and effective ICE port
-56000. The operator confirmed normal pictures and unchanged viewport after both
-CPU-reference and GPU-candidate replacements; real-media measurement is complete.
+56000. The first upgrade preflight timed out without stopping the old Host; the
+complete retry passed. The new Host has published DHT and is waiting for the
+remote Client. Wait for operator picture/unchanged-viewport confirmation before
+candidate load or sampling. Earlier CPU-reference/f5dac5d measurements remain
+the comparison evidence, not acceptance of this repaired candidate.
 
 **P5's local NVIDIA FPS/latency acceptance failed.** The fresh P4 CPU versus P5 GPU
 comparison completed 18 windows. Dynamic three-run medians changed from 21.30 to
@@ -28,9 +31,10 @@ the device, retaining the original total acquisition budget and protection.
 Fresh local three-run preparation/submission medians improve from 33.762/60.635
 to 0.054/10.474 ms; probe throughput recovers from 10.49 to 21.28 FPS. CPU ranges
 overlap, stop join stays within the observed 50 ms acquisition budget, and three
-automatic suites plus seven real hardware cases pass. Next: push, clean Debug
-publication, controlled Host replacement and operator picture confirmation before
-repeating affected cross-LAN measurements. These local probes do not qualify
+automatic suites plus seven real hardware cases pass. Push, clean Debug publication
+and controlled replacement are complete. Next: operator picture confirmation and
+live geometry/configuration preflight, then affected cross-LAN measurements.
+These local probes do not qualify
 deployed performance. See the [repair and validation](../testing/video-gpu-input-p5-20260929.md#bounded-dda-wait-repair).
 Do not mark P5 complete or substitute the separate pacer task for this regression. See the
 [matched results and limits](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
