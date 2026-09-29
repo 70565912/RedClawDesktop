@@ -26,5 +26,5 @@ This directory owns repository automation and AI-assist metadata:
 
 ## GitHub Operation Safety
 
-- Do not run networked GitHub operations from local tooling unless the user has explicitly confirmed them in the current task.
+- Follow the root `AGENTS.md` GitHub policy: announce operations and proceed within the authorized task scope without per-operation confirmation.
 - Do not introduce workflows that publish artifacts, upload logs, or expose runtime evidence containing secrets without redaction.

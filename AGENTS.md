@@ -165,7 +165,7 @@ For stream work, record both normal smoke evidence and strict capture evidence w
 
 ## GitHub and Network Operations
 
-- Any GitHub-connected operation such as `git fetch`, `git pull`, `git push`, `gh`, or repository sync must be announced to the user first and only run after explicit confirmation.
+- Announce GitHub-connected operations such as `git fetch`, `git pull`, `git push`, `gh`, or repository sync, then proceed within the authorized task scope without asking for per-operation confirmation.
 - Do not create, rewrite, or force-push branches unless the user asked for that exact operation.
 - CI workflow edits must preserve the Windows/unit-test baseline unless the task explicitly changes the release gate.
 
