@@ -226,3 +226,28 @@ Evidence under `build/reports/x00-t27/`: `p5-qsv-fix-focused-build.txt`,
 `libavutil/hwcontext.c`, `hwcontext_d3d11va.c`, `hwcontext_qsv.c` and
 `libavcodec/qsvenc.c`. Intel execution, peer connection and matched performance
 remain separate acceptance items.
+
+### Pushed Debug publication and local Host readiness
+
+Repair `e1c915a` was pushed to `origin/main`, then built/published with
+`build.ps1 -Configuration Debug -Target redclaw_desktop` from the clean existing
+independent checkout. All 336 candidate files, required dependencies, build/hash
+correspondence and the command entry passed. The formal `release/Debug` now
+contains this candidate; the complete previous 336-file publication is retained
+as a verified rollback. No runtime was running during replacement. The existing
+supervisor startup entry and an independent rollback launch script are available.
+Executable SHA256:
+`d690dfd29910204bf049da21e530a573cdad81d4a117471e6d2feda586201276`.
+
+The controlled local Host reuses the protected credential, previous capability
+scope and effective ICE UDP port 56000 (binding verified before startup).
+GUI and runtime executable hashes both match the candidate. At the readiness
+check, runtime is running, DHT is reachable, listener is ready, phase is
+`dht_waiting`, negotiation is `offer_ready`, and generation 1 has one successful
+publication. No error, Client connection, captured frames or transmitted frames
+are reported. Wait for the operator's remote Client update/connection and real
+picture confirmation. No remote load or performance sampling has started.
+
+Evidence: `p5-qsv-fix-pushed-build.txt`, `p5-qsv-fix-publication.json`, candidate
+and rollback manifests, and `p5-qsv-fix-host-ready.json`. This readiness does not
+qualify Intel QSV; the local Host uses NVIDIA hardware.

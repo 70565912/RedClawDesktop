@@ -6,11 +6,13 @@ Updated: 2026-09-29
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). The operator now
-requests **local Debug Host / remote Client**, after pushing the P5 QSV repair
-and building/publishing that pushed source. The local Client is stopped. Reuse
-the existing protected Host credential and controlled supervisor; verify the
-prior effective ICE port 56000 before starting. Do not start remote load or
-sampling until the operator connects the updated Client and confirms video.
+requests **local Debug Host / remote Client**. QSV repair `e1c915a` is pushed,
+clean-source Debug built/published and deployed to `release/Debug`, with complete
+336-file candidate and rollback verification. Local controlled Host is running
+with the existing protected credential and verified ICE port 56000. DHT is
+reachable, listener ready, current-generation publication successful, and phase
+is `dht_waiting` / `offer_ready`. Do not start remote load or sampling until the
+operator connects the updated Client and confirms video.
 
 The QSV bridge repair uses an aligned decoder-target NV12 array and maps leased
 D3D11 surfaces into the derived QSV context, preserving visible crop dimensions.
@@ -18,7 +20,8 @@ Both focused CTest suites, five local GPU/real-capture cases and the Debug main
 build pass. Local NVIDIA tests cannot qualify Intel QSV: the strict Intel
 encode/decode/resize/recovery gate is compiled but still needs Intel execution.
 See the [repair and validation limits](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
-Publication and controlled Host readiness are the immediate next steps.
+The immediate next step is the operator's remote Client connection; see the
+[Host readiness receipt](../testing/video-gpu-input-p5-20260929.md#pushed-debug-publication-and-local-host-readiness).
 
 The previous local-Client/remote-Host run confirmed normal video and the DISPLAY2
 thumbnail repair: deployed `8c4fc09`, advancing revisions 1761→1777 and no failures.
