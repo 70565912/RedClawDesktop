@@ -66,7 +66,8 @@ public:
         std::uint32_t output_height,
         DXGI_FORMAT output_format,
         CapturedFrame* output,
-        std::string* error_detail) {
+        std::string* error_detail,
+        GpuInputPreparationTiming* timing) {
         auto* native = unwrap_d3d11_native_handle(source);
         if (native == nullptr || !native->owner || native->d3d11_device == nullptr
             || native->d3d11_texture == nullptr || output == nullptr) {
@@ -79,7 +80,9 @@ public:
             return false;
         }
 
+        D3D11TimingCheckpoint clock;
         std::lock_guard lock(native->owner->mutex);
+        clock.record(timing ? &timing->scale_lock_wait_us : nullptr);
         D3D11_TEXTURE2D_DESC source_desc{};
         native->d3d11_texture->GetDesc(&source_desc);
         if (!ensure_pipeline(
@@ -92,6 +95,7 @@ public:
             return false;
         }
 
+        clock.record(timing ? &timing->scale_setup_us : nullptr);
         ComPtr<ID3D11VideoProcessorInputView> input_view;
         D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_desc{};
         input_desc.FourCC = 0;
@@ -111,6 +115,7 @@ public:
             return false;
         }
 
+        clock.record(timing ? &timing->scale_input_view_us : nullptr);
         const CaptureRegion source_region = normalize_capture_region(
             source.source_region,
             source.width,
@@ -161,8 +166,10 @@ public:
         D3D11_VIDEO_PROCESSOR_STREAM stream{};
         stream.Enable = TRUE;
         stream.pInputSurface = input_view.Get();
+        clock.record(timing ? &timing->scale_state_us : nullptr);
         const HRESULT blit_hr = video_context_->VideoProcessorBlt(
             processor_.Get(), output_view_.Get(), 0, 1, &stream);
+        clock.record(timing ? &timing->scale_blt_us : nullptr);
         if (FAILED(blit_hr)) {
             assign_error(
                 "VideoProcessorBlt failed hr="
@@ -349,8 +356,15 @@ private:
 D3D11VideoProcessorScaler::D3D11VideoProcessorScaler() : impl_(std::make_unique<Impl>()) {}
 D3D11VideoProcessorScaler::~D3D11VideoProcessorScaler() = default;
 bool D3D11VideoProcessorScaler::scale(const CapturedFrame& frame, std::uint32_t width, std::uint32_t height,
-                                    DXGI_FORMAT format, CapturedFrame* output, std::string* error) {
-    return impl_->scale(frame, width, height, format, output, error);
+                                    DXGI_FORMAT format, CapturedFrame* output, std::string* error,
+                                    GpuInputPreparationTiming* timing) {
+    D3D11TimingCheckpoint clock;
+    const bool ok = impl_->scale(frame, width, height, format, output, error, timing);
+    if (timing) {
+        ++timing->scale_calls;
+        clock.record(&timing->scale_us);
+    }
+    return ok;
 }
 void D3D11VideoProcessorScaler::reset() { impl_->reset(); }
 } // namespace redclaw::capture

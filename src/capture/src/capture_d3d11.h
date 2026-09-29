@@ -7,8 +7,22 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <mutex>
+#include <chrono>
 
 namespace redclaw::capture {
+// A checkpoint records elapsed wall time since the previous checkpoint.
+// No device synchronization or per-frame I/O is introduced by diagnostics.
+class D3D11TimingCheckpoint {
+public:
+    void record(std::uint64_t* total) {
+        const auto now = std::chrono::steady_clock::now();
+        if (total) *total += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - previous_).count());
+        previous_ = now;
+    }
+private:
+    std::chrono::steady_clock::time_point previous_ = std::chrono::steady_clock::now();
+};
 // One owner per capture-device lifetime. Textures and FFmpeg retain this owner
 // after capture recovery/stop; every immediate/video-context user shares mutex.
 struct D3D11CaptureDevice {
@@ -39,7 +53,8 @@ public:
     D3D11VideoProcessorScaler();
     ~D3D11VideoProcessorScaler();
     bool scale(const CapturedFrame& source, std::uint32_t width, std::uint32_t height,
-               DXGI_FORMAT format, CapturedFrame* output, std::string* error);
+               DXGI_FORMAT format, CapturedFrame* output, std::string* error,
+               GpuInputPreparationTiming* timing = nullptr);
     void reset();
 private:
     class Impl;
