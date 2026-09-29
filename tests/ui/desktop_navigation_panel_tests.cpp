@@ -173,4 +173,54 @@ TEST(DesktopNavigationPanelTests, IndependentNavigationFailedSendRollsBack) {
   EXPECT_EQ(panel->pending_region_revision(), 0U);
 }
 
+TEST(DesktopNavigationPanelTests, ReconnectAcceptsNewHostRevisionsForEveryDisplay) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.resize(520, 360);
+  panel.set_display_catalog(displays(), 90);
+  panel.set_transport_available(true);
+  panel.show();
+  QApplication::processEvents();
+  auto* combo = panel.findChild<QComboBox*>();
+  auto* selection = panel.findChild<QWidget*>("desktopNavigationSelection");
+  ASSERT_NE(combo, nullptr);
+  ASSERT_NE(selection, nullptr);
+  QImage thumbnail(320, 180, QImage::Format_RGB32);
+  const auto color_at_center = [&] {
+    const QImage rendered = selection->grab().toImage();
+    return rendered.pixelColor(rendered.width() / 2, rendered.height() / 2);
+  };
+  thumbnail.fill(Qt::red);
+  panel.set_thumbnail("display-a", thumbnail, 900);
+  panel.set_thumbnail("display-b", thumbnail, 901);
+  combo->setCurrentIndex(1);
+  const QColor old_color = color_at_center();
+  thumbnail.fill(Qt::green);
+  panel.set_thumbnail("display-b", thumbnail, 1);
+  EXPECT_EQ(color_at_center(), old_color); // Keep rejecting stale frames in one session.
+
+  panel.set_transport_available(false);
+  EXPECT_NE(color_at_center(), old_color);
+  auto new_catalog = displays();
+  new_catalog[1].display_name = "New Host DISPLAY2";
+  panel.set_display_catalog(new_catalog, 1);
+  panel.set_transport_available(true);
+  EXPECT_EQ(combo->currentText(), QString("New Host DISPLAY2"));
+  EXPECT_EQ(panel.selected_display_id(), QString("display-b"));
+  for (int index = 0; index < 2; ++index) {
+    combo->setCurrentIndex(index);
+    const auto id = panel.selected_display_id().toStdString();
+    thumbnail.fill(Qt::green);
+    panel.set_thumbnail(id, thumbnail, 1);
+    const QColor first = color_at_center();
+    EXPECT_GT(first.green(), first.red());
+    thumbnail.fill(Qt::blue);
+    panel.set_thumbnail(id, thumbnail, 2);
+    const QColor second = color_at_center();
+    EXPECT_GT(second.blue(), second.green());
+    thumbnail.fill(Qt::red);
+    panel.set_thumbnail(id, thumbnail, 1);
+    EXPECT_EQ(color_at_center(), second);
+  }
+}
+
 }  // namespace

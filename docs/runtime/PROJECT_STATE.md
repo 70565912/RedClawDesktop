@@ -7,9 +7,16 @@ Updated: 2026-09-29
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). The operator's current
 topology is local Client / remote Host, with replaced video confirmed normal.
+The latest peer upgrade streams normally but QSV GPU activation falls back once
+at D3D11 frame-pool initialization. The active backend is DDA, unlike the WGC
+baseline below; performance comparison waits for activation and matched conditions.
+The reported DISPLAY2 thumbnail freeze exposed Client revision state surviving
+Host restart. Session reset and diagnostics pass four panel tests, six thumbnail
+cases and the Debug main build; controlled Client publication and live verification
+are next. See the [latest findings](../testing/video-gpu-input-p5-20260929.md#peer-upgrade-check-and-navigation-regression).
 The local P4 Debug candidate is `af637da`; the earlier local-Host B0/P2/P3 data
-must not be reused as a remote-Host comparison baseline. The remote Agent now
-reports a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
+must not be reused as a remote-Host comparison baseline. The baseline remote Agent previously
+reported a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
 P3/P4 present, capture 1680×1050 / encode 1584×990, 10-second diagnostics, main
 log visible and mirror hidden. Full hash and network evidence stay on the peer.
 The [current-role baseline](../testing/video-link-remote-host-baseline-20260929.md)
@@ -35,7 +42,7 @@ generations, totaling 36 GPU-only frames without additional desktop readback on
 local NVENC. P5 `8955125` is pushed; clean source `9910fe8` is built and published
 to the independent candidate checkout (336 files, manifest and command-entry
 checks passed). The active Client publication remains unchanged and connected;
-neither endpoint has been replaced. Peer QSV activation,
+the operator later upgraded the peer Host as recorded above. Peer QSV activation,
 matched performance and final quality acceptance remain on the [task ledger](MODULE_KANBAN.md).
 
 ## Current release
