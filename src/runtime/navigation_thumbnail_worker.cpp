@@ -29,6 +29,7 @@ public:
     std::optional<Job> pending;
     Sender sender;
     NavigationThumbnailStats counters;
+    capture::NavigationThumbnailPreparer preparer;
     std::thread worker;
 
     Impl(bool enabled, Encoder encode) : running(enabled) {
@@ -128,7 +129,7 @@ void NavigationThumbnailWorker::submit(const capture::CapturedFrame& frame, cons
     job.display_id = display_id;
     job.catalog_revision = catalog_revision;
     bool prepared = false;
-    try { prepared = capture::prepare_navigation_thumbnail(frame, 320, &job.image); }
+    try { prepared = impl_->preparer.prepare(frame, 320, &job.image); }
     catch (...) { prepared = false; }
     const auto prepare_us = elapsed_us(started);
     {
@@ -136,6 +137,10 @@ void NavigationThumbnailWorker::submit(const capture::CapturedFrame& frame, cons
         impl_->counters.prepare_us += prepare_us;
         if (!impl_->running || impl_->generation != job.generation) { ++impl_->counters.discarded; return; }
         if (!prepared) { ++impl_->counters.failed; return; }
+        if (job.image.gpu_readback_bytes) {
+            ++impl_->counters.gpu_readbacks;
+            impl_->counters.gpu_readback_bytes += job.image.gpu_readback_bytes;
+        }
         if (impl_->pending) ++impl_->counters.replaced;
         ++impl_->counters.submitted;
         impl_->counters.pending_bytes = job.image.bgra.size();

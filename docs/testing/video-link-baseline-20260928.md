@@ -204,6 +204,11 @@ short result is `build/reports/x00-t27/remote-role-preflight-short-result.txt`.
 
 ## Sending wait attribution
 
+The subsequent [remote-Host baseline](video-link-remote-host-baseline-20260929.md)
+establishes the new role's identity, nine valid windows and current CPU/readback
+cost. It supersedes the pending preflight state above; the historical local-Host
+results in this document retain their original scope.
+
 The [P6 attribution report](video-send-attribution-20260929.md) reuses all 27 B0/P2/P3
 windows and separates key/ordinary frames, exclusive waits, wake overshoot, send
 calls, queue time and frame age. It preserves this former-local-Host scope and

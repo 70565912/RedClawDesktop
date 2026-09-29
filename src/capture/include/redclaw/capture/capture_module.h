@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "redclaw/capture/hardware_input_policy.h"
 
 #include <cstdint>
 #include "redclaw/capture/capture_recovery.h"
@@ -210,6 +211,9 @@ struct EncoderExecutionDiagnostics {
 	std::string input_mode;
 	std::string capture_adapter_summary;
 	bool hardware_frame_input_active = false;
+    bool hardware_frame_input_confirmed = false;
+    CaptureFrameDelivery requested_capture_delivery = CaptureFrameDelivery::kCpu;
+    std::uint64_t hardware_input_attempt_count = 0, hardware_input_fallback_count = 0;
 	bool d3d11_video_processor_scaling_active = false;
 	bool gpu_to_cpu_readback_active = false;
 	std::string hardware_input_block_reason;
@@ -342,7 +346,6 @@ bool start_encoder_execution_from_bridge(
 	EncoderBackendBridgePlan* resolved_plan,
 	std::string* error_detail = nullptr);
 
-enum class CaptureFrameDelivery { kCpu, kGpu, kCpuAndGpu };
 
 struct CaptureAdapterIdentity {
     CaptureAdapterVendor vendor = CaptureAdapterVendor::kUnknown;
