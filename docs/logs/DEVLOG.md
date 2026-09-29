@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Deploy navigation repair and verify DISPLAY2 progress (X00-T27)
+
+- Pushed `8c4fc09`, then built/published the clean independent Debug candidate through `build.ps1`; all 336 candidate files and the command entry verify. The first controlled deployment exposed a stale launch port (55000 versus live 56000); Windows excludes 55000. Full rollback completed, and the old Client was relaunched on its prior effective 56000 port and reconnected. The second deployment verified matching effective/launch settings and succeeded, preserving a complete 330-file rollback and existing credentials. No system port exclusions changed.
+- The new Client reconnects and the peer primary DISPLAY2 thumbnail revision grows 1761→1777 across four samples: receive/publish +16, thumbnail decode failures 0. Main decoded surfaces +47, decode/present failures 0. The remote Host was not replaced; its short independent recovery guard completed with zero restarts and no remaining task. Local lower-revision reconnect regression tests complement this live progress evidence.
+- QSV GPU activation remains blocked at D3D11 frame-pool initialization; DDA/WGC conditions still differ, so no new performance comparison ran. Full receipts, deployment caveats and next step are in the [P5 report](../testing/video-gpu-input-p5-20260929.md#controlled-client-deployment-and-observed-recovery).
+
 ## 2026-09-29 — Diagnose peer QSV fallback and repair navigation reconnect (X00-T27)
 
 - After the operator's remote upgrade and normal-picture confirmation, bounded diagnostics find one QSV GPU attempt followed by CPU fallback at D3D11 frame-pool initialization. Current DDA differs from the WGC baseline. No performance load/comparison was started; QSV activation remains open.

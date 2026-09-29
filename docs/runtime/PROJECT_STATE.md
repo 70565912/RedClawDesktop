@@ -12,9 +12,10 @@ at D3D11 frame-pool initialization. The active backend is DDA, unlike the WGC
 baseline below; performance comparison waits for activation and matched conditions.
 The reported DISPLAY2 thumbnail freeze exposed Client revision state surviving
 Host restart. Session reset and diagnostics pass four panel tests, six thumbnail
-cases and the Debug main build; controlled Client publication and live verification
-are next. See the [latest findings](../testing/video-gpu-input-p5-20260929.md#peer-upgrade-check-and-navigation-regression).
-The local P4 Debug candidate is `af637da`; the earlier local-Host B0/P2/P3 data
+cases and the Debug main build. Pushed candidate `8c4fc09` is now deployed locally;
+DISPLAY2 thumbnail revisions advance 1761→1777 with zero failures. QSV repair is
+next. See the [latest findings](../testing/video-gpu-input-p5-20260929.md#peer-upgrade-check-and-navigation-regression).
+The baseline local P4 Debug candidate was `af637da`; the earlier local-Host B0/P2/P3 data
 must not be reused as a remote-Host comparison baseline. The baseline remote Agent previously
 reported a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
 P3/P4 present, capture 1680×1050 / encode 1584×990, 10-second diagnostics, main
@@ -41,8 +42,8 @@ Debug NoPublish build and focused tests passed; WGC/DDA each passed three device
 generations, totaling 36 GPU-only frames without additional desktop readback on
 local NVENC. P5 `8955125` is pushed; clean source `9910fe8` is built and published
 to the independent candidate checkout (336 files, manifest and command-entry
-checks passed). The active Client publication remains unchanged and connected;
-the operator later upgraded the peer Host as recorded above. Peer QSV activation,
+checks passed). That publication initially left the Client unchanged; the latest
+controlled Client replacement and peer upgrade are recorded above. Peer QSV activation,
 matched performance and final quality acceptance remain on the [task ledger](MODULE_KANBAN.md).
 
 ## Current release
