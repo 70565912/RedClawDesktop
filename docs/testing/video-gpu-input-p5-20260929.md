@@ -140,9 +140,44 @@ reports selected display/revision and receive/publish/decode counters; no wire
 protocol changed. Four panel cases (including two-display reconnect/render checks)
 and six existing thumbnail worker/preparation cases pass. The Debug main build
 through `build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish`
-passes. Live Client replacement and post-reconnect sequence growth are the next
-verification step, not yet established by these local tests.
+passes. The subsequent controlled Client deployment and live checks are recorded below.
 
 Evidence under `build/reports/x00-t27/`: `p5-qsv-reason.json`,
 `p5-navigation-live-result.json`, `p5-navigation-ui-tests.json`,
 `p5-navigation-worker-tests.json`, and `p5-navigation-main-build.txt`.
+
+### Controlled Client deployment and observed recovery
+
+Fix `8c4fc09` was pushed before a clean Debug build/publication through `build.ps1`
+in the existing independent checkout. The complete 336-file candidate and command
+entry passed. Published SHA256 is
+`3b02bc1fb35315dd14f5df3c32ff4df8b9273d7bedc04f87da02299dae2792f1`.
+The first command-entry wrapper reported failure under Windows PowerShell although
+help was emitted; the PS7 check confirmed exit 0 and the expected help text.
+
+The first deployment exposed a launch-state mismatch: the old GUI command line
+specified UDP 55000, while the live Client used 56000. Port 55000 was excluded by
+Windows, so the candidate runtime could not start. The independent worker restored
+the complete old publication; its original arguments had the same stale port.
+After the worker exited, the original Client was relaunched with its previously
+verified effective port 56000 and all other arguments preserved. It reconnected.
+The second controlled deployment first checked effective and launch ports match;
+new publication and the complete 330-file rollback both verify. Windows exclusions
+were not modified. Future controlled upgrades must verify effective UI values
+against launch arguments, including rollback arguments, before handoff.
+
+The new Client reconnected through DHT/ICE and is streaming. Its initially selected
+primary display is the peer's DISPLAY2. Four consecutive samples show thumbnail
+revision 1761→1767→1772→1777, receive/publish counts 11→17→22→27, and zero thumbnail
+decode failures. Main decoded surfaces advance 13→60 with zero decode/present
+failures. This confirms current thumbnail delivery/display-state progress; the
+same-GUI lower-revision Host restart regression is covered by the local two-display
+test, not by restarting the remote Host for this check. No media protocol changed.
+
+The remote Host was not replaced or restarted. Its independent four-minute recovery
+guard completed with zero restart attempts and removed its scheduled task. The local
+Client remains at the new publication. QSV GPU activation and matched performance
+remain open; no new benchmark load was started. Evidence: `p5-navigation-pushed-build.txt`,
+`p5-navigation-publish-validation.json`, `p5-navigation-deployment-recovery.json`,
+`p5-navigation-deployed-manifests.json`, `p5-navigation-live-client-samples.json`, and
+`p5-navigation-acceptance.json`. Both deployment attempts retain their own receipts.
