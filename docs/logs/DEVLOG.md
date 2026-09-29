@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-09-29 — Remove repeated GitHub operation confirmation
+
+- At the operator's request, aligned the root guide, GitHub directory guide and execution protocol so task-scoped GitHub operations proceed after an announcement without a separate confirmation for each command. Existing branch/history and sensitive-data rules remain applicable.
+- The operator authorized pushing P5 commit `8955125` and continuing candidate preparation. Documentation consistency and diff checks passed; this rule-only change needs no compilation. P5's application build and focused test evidence are retained separately.
+
 ## 2026-09-29 — Restore synchronized GPU input (X00-T27 P5)
 
 - Extracted shared D3D11 device/context ownership and video processing. Capture copies, DDA cursor composition, GPU conversion and FFmpeg callbacks share a recursive mutex and protected context; native/FFmpeg references retain its lifetime. QSV prepares NV12 and other backends select advertised formats. GPU-only delivery requires a real encoded packet; failure requests IDR and resumes from the next real CPU frame, latched until a new capture generation. Resize/recovery preserve this policy, including an initial CPU frame after restart. Runtime consumes one typed delivery decision.

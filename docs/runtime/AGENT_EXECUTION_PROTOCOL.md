@@ -60,7 +60,7 @@ When resuming after a pause or handoff:
 
 ## External Operation Guardrail (GitHub)
 - Any operation that connects to GitHub (for example `gh auth`, `gh repo create`, `git push`, `git fetch`, `git pull`) must be announced to the user in advance.
-- Agent must wait for explicit user confirmation after the announcement before executing GitHub-connected commands.
+- Proceed within the authorized task scope without per-operation confirmation, following the [root GitHub policy](../../AGENTS.md#github-and-network-operations).
 
 ## Output Contract for Each Completed Task
 - Code or doc changes made in the workspace.
