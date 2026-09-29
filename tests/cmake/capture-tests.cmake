@@ -1,10 +1,10 @@
 # Registered in the parent tests directory; relative sources stay anchored there.
-add_executable(redclaw_capture_gpu_input_tests capture/gpu_input_tests.cpp capture/gpu_input_profile_tests.cpp)
+add_executable(redclaw_capture_gpu_input_tests capture/gpu_input_tests.cpp capture/gpu_input_profile_tests.cpp capture/dda_frame_wait_tests.cpp)
 target_link_libraries(redclaw_capture_gpu_input_tests PRIVATE redclaw_capture redclaw_render GTest::gtest_main)
 target_include_directories(redclaw_capture_gpu_input_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/capture/src)
 redclaw_apply_warnings(redclaw_capture_gpu_input_tests)
 add_test(NAME redclaw_capture_gpu_input_tests COMMAND redclaw_capture_gpu_input_tests
-  --gtest_filter=HardwareInputPolicy.*:HardwareInputDevice.*)
+  --gtest_filter=HardwareInputPolicy.*:HardwareInputDevice.*:DdaFrameWait.*)
 
 add_executable(redclaw_navigation_thumbnail_tests capture/navigation_thumbnail_tests.cpp)
 target_link_libraries(redclaw_navigation_thumbnail_tests PRIVATE redclaw_navigation_thumbnail_worker redclaw_net GTest::gtest_main)

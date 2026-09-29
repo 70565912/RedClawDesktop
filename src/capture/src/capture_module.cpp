@@ -4,6 +4,7 @@
 #include "redclaw/capture/capture_cursor.h"
 #include "capture_cursor_d3d11.h"
 #include "capture_d3d11.h"
+#include "dda_frame_wait.h"
 #include "capture_backend.h"
 #include "redclaw/capture/captured_frame_pool.h"
 #include "capture_failure_evidence.h"
@@ -22,6 +23,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -3514,13 +3516,21 @@ public:
         DXGI_OUTDUPL_FRAME_INFO frame_info{};
         ComPtr<IDXGIResource> desktop_resource;
         const auto acquire_start = std::chrono::steady_clock::now();
-        const HRESULT acquire_hr = duplication_->AcquireNextFrame(frame_acquire_timeout_ms_, &frame_info, &desktop_resource);
+        const auto acquisition = wait_for_dda_frame(frame_acquire_timeout_ms_,
+            [&](std::uint32_t timeout_ms) {
+                return duplication_->AcquireNextFrame(timeout_ms, &frame_info, &desktop_resource);
+            },
+            [] { return std::chrono::steady_clock::now(); },
+            [](auto deadline) { std::this_thread::sleep_until(deadline); });
+        const HRESULT acquire_hr = acquisition.status;
         const auto wait_us = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - acquire_start)
                 .count());
         if (stage_telemetry != nullptr) {
             stage_telemetry->wait_us = wait_us;
+            stage_telemetry->dda_acquire_polls = acquisition.polls;
+            stage_telemetry->dda_external_waits = acquisition.waits;
             stage_telemetry->accumulated_frames = frame_info.AccumulatedFrames;
         }
 
@@ -5211,6 +5221,8 @@ private:
         telemetry_.gpu_readback_count += stage_telemetry.gpu_readback;
         telemetry_.native_frame_copy_count += stage_telemetry.native_frame_copied;
         telemetry_.total_capture_wait_us += stage_telemetry.wait_us;
+        telemetry_.dda_acquire_poll_count += stage_telemetry.dda_acquire_polls;
+        telemetry_.dda_external_wait_count += stage_telemetry.dda_external_waits;
         telemetry_.total_capture_copy_us += stage_telemetry.copy_us;
         telemetry_.last_capture_wait_ms = static_cast<double>(stage_telemetry.wait_us) / 1000.0;
         telemetry_.last_capture_copy_ms = static_cast<double>(stage_telemetry.copy_us) / 1000.0;

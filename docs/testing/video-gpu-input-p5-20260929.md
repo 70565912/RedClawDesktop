@@ -516,3 +516,69 @@ and `p5-profile-hardware.json`. Reproduce explicitly with a moving desktop:
 build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=LocalDiagnostic/GpuInputProfile.* --gtest_output=json:build/reports/gpu-input-profile.json
 build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=LocalDiagnostic/DdaDeviceWaitProfile.* --gtest_output=json:build/reports/d3d11-entry-profile.json
 ```
+
+## Bounded DDA wait repair
+
+DDA now calls `AcquireNextFrame(0)` and, after an empty result, waits up to 8 ms
+outside the capture device/context locks before probing again. One steady-clock
+deadline preserves the caller's original total wait budget (50 ms in streaming).
+Late OS wakeups do not restart that budget. Success and device loss return
+immediately; a zero budget makes exactly one probe. Multithread protection,
+shared device ownership, bounded frame slots and codec settings are retained.
+There is no new thread, timer-resolution change or network policy change.
+
+Local cumulative diagnostic v1 adds DDA probe and external-wait counts to the
+existing ten-second summary. They count API calls and requested waits, not OS
+context switches or system-wide wakeups. No per-frame disk output is added.
+
+### Local before/after validation
+
+The existing concurrent real-DDA/NVENC probe was rebuilt before changing runtime
+acquisition, then repeated after the repair. Each group uses three seed-2700
+dynamic desktop runs, physical 1920×1080 capture, 1778×1000 encode, 30 nominal FPS,
+GOP 60 and 4267 kbps. Stage measurements exclude the first 3 s and cover about
+8 s; process CPU covers the whole approximately 11 s probe, including warmup.
+The old f5dac5d Host remains background load throughout; these probes send no
+network media. The desktop generator achieves about 21.3 FPS in this setup.
+
+| Dynamic metric, median [three-run range] | Before repair | After repair |
+| --- | --- | --- |
+| Codec output FPS | 10.49 [9.67–11.17] | 21.28 [21.18–21.32] |
+| Input preparation, ms/attempt | 33.762 [32.246–34.586] | 0.054 [0.052–0.057] |
+| Codec submission, ms/attempt | 60.635 [56.653–68.341] | 10.474 [10.221–10.802] |
+| Total encoding, ms/attempt | 94.451 [88.947–102.976] | 10.575 [10.325–10.898] |
+| Probe process CPU, % of one logical core | 5.21 [3.69–5.51] | 4.38 [4.25–4.95] |
+| Stop request to producer join, ms | 0.71 [0.51–16.12] | 8.04 [0.50–49.97] |
+
+The repaired dynamic runs make approximately 79 DXGI probes and 58 external
+waits per second. Three separate 5 s static-desktop runs show CPU ranges
+0.31–1.87% before and 0.31–0.94% after, with about 66 probes/waits per second
+after repair. Both dynamic and static CPU ranges overlap: CPU improvement is
+**unconfirmed**. These are short process measurements, not power measurements.
+Call-rate counters are collected after producer join and divided by the active
+window, so may include up to one final bounded acquisition (at most approximately
+1% of a static window). Static stop-join maximum is 47.14 ms; cancellation still
+waits for the current acquisition budget and OS scheduling, rather than being
+instantaneous. No unbounded polling or new stop/recovery failure was observed.
+
+Three focused automatic CTest suites pass, including four fake-clock tests for
+zero budget, total deadline, success/device-loss and late wakeups. Seven manual
+hardware cases pass without skips: conversion/crop/color, padded NV12 surfaces,
+actual codec/fallback/resize, real WGC and DDA across capture generations,
+capture-device recreation with a live encoder, and GPU/CPU cursor comparison.
+The local real codec remains NVENC; the prior Intel QSV functional gate is retained
+as separate evidence. Intel performance is not inferred from this repair.
+The main program passes `build.ps1 -Configuration Debug -SkipConfigure -Target
+redclaw_desktop -NoPublish`. The first restricted-environment build stalled in
+Ninja without compiler children/output and was stopped; the normal desktop
+environment retry passed. No running Host was stopped during that recovery.
+
+The local stage regression is repaired in these probes. Cross-LAN frame-age tails,
+adaptive submission and decoded visual quality still require the pushed candidate,
+controlled Host replacement and operator reconnection confirmation. P5 remains
+open until that affected acceptance is complete.
+
+Local artifacts: `build/reports/x00-t27/p5-wait-{before,after}-{dynamic,static}/`,
+`p5-wait-hardware/`, `p5-wait-comparison.json`, `p5-wait-ctest.txt`,
+`p5-wait-focused-build.txt` and `p5-wait-main-build.txt`. Recompute medians/ranges
+with `python build/reports/x00-t27/compare_p5_wait.py`.

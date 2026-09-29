@@ -14,6 +14,16 @@ using namespace redclaw::capture;
 namespace {
 struct ProfileCase { bool concurrent; std::uint32_t acquire_timeout_ms; };
 class GpuInputProfile : public ::testing::TestWithParam<ProfileCase> {};
+double process_cpu_seconds() {
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
+        ADD_FAILURE() << "GetProcessTimes failed"; return 0;
+    }
+    const auto value = [](FILETIME time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    return static_cast<double>(value(kernel) + value(user)) / 10000000.0;
+}
 }
 
 // Developer-invoked diagnostic, excluded from CTest. Run with a moving desktop.
@@ -56,6 +66,7 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
     EncoderExecutionDiagnostics before;
     std::uint64_t attempts = 0, outputs = 0;
     const auto start = Clock::now();
+    const double cpu_start = process_cpu_seconds();
     auto measured_start = start;
     while (Clock::now() - start < std::chrono::seconds(11)) {
         std::shared_ptr<CapturedFrame> frame;
@@ -90,7 +101,11 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
         if (measuring) { ++attempts; if (output) ++outputs; }
     }
     const double seconds = std::chrono::duration<double>(Clock::now()-measured_start).count();
+    const double run_seconds = std::chrono::duration<double>(Clock::now()-start).count();
+    const double cpu_percent = 100.0 * (process_cpu_seconds()-cpu_start) / run_seconds;
+    const auto stopping = Clock::now();
     producer.request_stop(); if (producer.joinable()) producer.join();
+    RecordProperty("stop_join_ms", std::to_string(std::chrono::duration<double, std::milli>(Clock::now()-stopping).count()));
     ASSERT_TRUE(measuring); ASSERT_GT(attempts, 0U);
     const auto after = encoder.diagnostics();
     EXPECT_TRUE(after.hardware_frame_input_confirmed);
@@ -104,6 +119,11 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
     RecordProperty("sent_to_codec_fps", std::to_string(outputs/seconds));
     RecordProperty("captured", std::to_string(captured.load()));
     RecordProperty("timeouts", std::to_string(timeouts.load()));
+    RecordProperty("cpu_percent_one_core_full_run", std::to_string(cpu_percent));
+    RecordProperty("capture_calls_per_second_full_run", std::to_string((captured.load()+timeouts.load()+capture_failures.load())/run_seconds));
+    const auto capture_stats = capture.telemetry();
+    RecordProperty("dda_polls_per_second_full_run", std::to_string(capture_stats.dda_acquire_poll_count/run_seconds));
+    RecordProperty("dda_external_waits_per_second_full_run", std::to_string(capture_stats.dda_external_wait_count/run_seconds));
     auto record = [&](const char* name, std::uint64_t end, std::uint64_t begin) {
         RecordProperty(name, std::to_string(static_cast<double>(end-begin)/attempts/1000.0));
     };
@@ -189,4 +209,42 @@ TEST_P(DdaDeviceWaitProfile, ProtectedDeviceEntryWhileAcquiring) {
     capture.stop();
 }
 INSTANTIATE_TEST_SUITE_P(LocalDiagnostic, DdaDeviceWaitProfile, ::testing::Values(50U, 0U));
+
+TEST(DdaIdleProfile, BoundedCaptureWaitAndStop) {
+    WindowsCaptureSession capture;
+    CaptureSessionConfig config;
+    config.preferred_backend = CaptureBackendType::kDesktopDuplication;
+    config.fallback_enabled = false; config.frame_delivery = CaptureFrameDelivery::kGpu;
+    config.frame_acquire_timeout_ms = 50;
+    std::string error;
+    ASSERT_TRUE(capture.start(config, &error)) << error;
+    std::atomic<unsigned> calls = 0, frames = 0, failures = 0;
+    const auto start = std::chrono::steady_clock::now();
+    const double cpu_start = process_cpu_seconds();
+    std::jthread producer([&](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            auto frame = capture.acquireFrame();
+            if (!frame) { ++failures; break; }
+            std::string detail;
+            ++calls;
+            if (capture.captureFrame(frame.get(), &detail)) ++frames;
+            else if (detail != "timeout waiting for desktop frame") ++failures;
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    const auto stopping = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(stopping-start).count();
+    const double cpu_percent = 100.0*(process_cpu_seconds()-cpu_start)/seconds;
+    producer.request_stop(); producer.join();
+    RecordProperty("schema", "redclaw.dda-idle-profile.v1");
+    RecordProperty("cpu_percent_one_core", std::to_string(cpu_percent));
+    RecordProperty("capture_calls_per_second", std::to_string(calls.load()/seconds));
+    RecordProperty("frames", frames.load());
+    const auto stats = capture.telemetry();
+    RecordProperty("dda_polls_per_second", std::to_string(stats.dda_acquire_poll_count/seconds));
+    RecordProperty("dda_external_waits_per_second", std::to_string(stats.dda_external_wait_count/seconds));
+    RecordProperty("stop_join_ms", std::to_string(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-stopping).count()));
+    EXPECT_EQ(failures.load(), 0U);
+    capture.stop();
+}
 #endif

@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Move DDA waiting outside the shared device (X00-T27 P5)
+
+- Replaced blocking DDA acquisition with immediate-return probes and at most 8 ms external waits under one original caller deadline. Multithread protection, device/frame ownership, dimensions, codec quality and network policy remain unchanged. Success/device loss returns immediately; OS wake lateness cannot reset the total budget. Added local v1 cumulative probe/wait diagnostic fields to existing summaries, with no per-frame disk output.
+- Three real-desktop runs per candidate show preparation/codec-submission medians 33.762/60.635→0.054/10.474 ms and codec throughput 10.49→21.28 FPS. Dynamic and static process CPU ranges overlap, so CPU improvement is unconfirmed. Repaired dynamic runs make about 79 probes/58 waits per second; static about 66/66. Stop join reaches 49.97 ms, retaining bounded rather than instant cancellation. These are local NVENC probes, not cross-LAN acceptance or Intel performance evidence.
+- Three focused CTest suites and seven real conversion/codec/WGC/DDA/device-recovery/cursor cases pass without skips. Main Debug NoPublish build through `build.ps1` passes; the first restricted-environment Ninja stall was stopped before a successful normal-environment retry, preserving the running Host. See the [repair report](../testing/video-gpu-input-p5-20260929.md#bounded-dda-wait-repair). P5 remains open for pushed-candidate publication, controlled Host replacement, operator picture confirmation and affected matched acceptance.
+
 ## 2026-09-29 — Locate shared DDA-device waiting behind GPU input cost (X00-T27 P5)
 
 - Added cumulative local GPU preparation timing fields (v1) and two developer-only diagnostic probes; no online protocol, production acquisition policy or per-frame disk output changed. Application mutex wait, video state/blit, frame pool/release/map and texture-copy calls have separate wall-clock counters. Main orchestration was not expanded.

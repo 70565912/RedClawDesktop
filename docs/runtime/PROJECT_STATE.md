@@ -22,10 +22,16 @@ interval. Subsequent local probes identify the principal mechanism: concurrent
 DDA `AcquireNextFrame(50)` blocks shared `ID3D11Multithread` entry for 32.13 ms on
 average, versus 0.0044 ms with immediate-return acquisition. Our own scale mutex
 wait is only 0.025 ms. Three-run preparation/codec submission falls from
-35.74/53.40 ms to 0.047/9.71 ms in that diagnostic contrast. Next: repair DDA wait
-scheduling while retaining device protection and validating CPU/wakeup cost,
-then repeat the affected cross-LAN comparison. The probes do not qualify a
-deployed scheduling fix. See the [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
+35.74/53.40 ms to 0.047/9.71 ms in that diagnostic contrast. The bounded wait
+repair is now implemented: nonblocking DXGI probes with up to 8 ms waits outside
+the device, retaining the original total acquisition budget and protection.
+Fresh local three-run preparation/submission medians improve from 33.762/60.635
+to 0.054/10.474 ms; probe throughput recovers from 10.49 to 21.28 FPS. CPU ranges
+overlap, stop join stays within the observed 50 ms acquisition budget, and three
+automatic suites plus seven real hardware cases pass. Next: push, clean Debug
+publication, controlled Host replacement and operator picture confirmation before
+repeating affected cross-LAN measurements. These local probes do not qualify
+deployed performance. See the [repair and validation](../testing/video-gpu-input-p5-20260929.md#bounded-dda-wait-repair).
 Do not mark P5 complete or substitute the separate pacer task for this regression. See the
 [matched results and limits](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
 
