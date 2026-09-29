@@ -103,4 +103,12 @@ class ConnectionFlowModel {
     QStringView line,
     ConnectionFlowRole role);
 
+struct IceUdpPortBindFailure {
+  bool matched = false;
+  int port = 0;
+};
+
+[[nodiscard]] IceUdpPortBindFailure classify_ice_udp_port_bind_failure(QStringView line);
+[[nodiscard]] QString ice_udp_port_bind_failure_prompt(int port);
+
 }  // namespace redclaw::ui

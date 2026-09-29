@@ -38,6 +38,10 @@
 - Main-window close, connection-page Exit and Stop Runtime now share a Host exit confirmation before any teardown. A running Host with either a connected transport or open channel prompts; Cancel is the default, and Esc or dismissing the prompt keeps the session running. Reentrant exit requests cannot open a second prompt. Controller and disconnected Host exits retain their existing behavior. Explicit Debug control and reconnect operations keep their noninteractive shutdown path.
 - Extracted the confirmation into a small owned UI component and reused the existing runtime stop operation. Debug main-program and UI-test builds passed through `build.ps1 -NoPublish` using the matching VS2022 environment after recovering a stalled sandbox build and mixed MSVC environment. Ten focused offscreen tests passed: six new confirmation cases and four existing exit/window/diagnostic lifecycle cases. Full CTest and live dual-machine exit validation were not run; no running Host or Controller was replaced or restarted.
 
+## 2026-09-28 — ICE UDP bind failure asks for another port
+
+- When the runtime cannot reserve the configured ICE UDP port, the connection page returns to the entry view, opens More settings, focuses the port field, and tells the user to choose a different port and try again. A Host waiting session does not immediately restart on that same port. A Debug controller started on the unavailable port showed this prompt with More settings open and the port field focused. Full CTest was not repeated.
+
 ## 2026-09-23 — Publish v0.1.5 Developer Preview
 
 - [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) was published from `9a7483b` with 336 files and a 348,401,429-byte ZIP. Its SHA256 is `f163faa3f975b4f4e87d6f2a51c25b24d73c04d2f45f41d03e088fa0b29860bf`, matching the GitHub asset digest. Local extracted startup passed before the tag was pushed. Documentation of that identity does not retag the release. The operator's listen check was a Debug Controller against the existing peer Host. Full CTest, physical cursor tracking, and the hosted Windows package smoke were not repeated for this publication.

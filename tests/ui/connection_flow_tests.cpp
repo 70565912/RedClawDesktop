@@ -541,6 +541,28 @@ TEST(ConnectionFlowLineAdapter, SeparatesAutomaticRepairFromFatalFailure) {
   EXPECT_EQ(failed.event, ConnectionFlowEvent::kFatalFailure);
 }
 
+TEST(ConnectionFlowLineAdapter, PortBindFailureTellsTheUserToChangePort) {
+  const auto reserved = redclaw::ui::classify_ice_udp_port_bind_failure(
+      u"Runtime ICE UDP port reserved role=controller ice_udp_port=55000");
+  EXPECT_FALSE(reserved.matched);
+
+  const auto failed = redclaw::ui::classify_ice_udp_port_bind_failure(
+      u"Runtime ICE UDP port reservation failed role=controller ice_udp_port=55000 error=ICE UDP port 55000 is unavailable: exclusive UDP bind failed (native_error=10013)");
+  ASSERT_TRUE(failed.matched);
+  EXPECT_EQ(failed.port, 55000);
+  EXPECT_EQ(
+      redclaw::ui::ice_udp_port_bind_failure_prompt(failed.port),
+      "ICE UDP port 55000 could not be bound. Open More settings, choose a different port, and try again.");
+
+  const auto missing_port = redclaw::ui::classify_ice_udp_port_bind_failure(
+      u"Runtime ICE UDP port reservation failed role=host error=unavailable");
+  ASSERT_TRUE(missing_port.matched);
+  EXPECT_EQ(missing_port.port, 0);
+  EXPECT_EQ(
+      redclaw::ui::ice_udp_port_bind_failure_prompt(missing_port.port),
+      "The ICE UDP port could not be bound. Open More settings, choose a different port, and try again.");
+}
+
 TEST(ConnectionEntryPage, MakesReadOnlyAndEditableCodesVisiblyDistinct) {
   redclaw::ui::ConnectionEntryPage page;
   page.set_local_code("AB12CD34");

@@ -2323,6 +2323,8 @@ bool launch_gui_shell(
   connection_entry_page->password_panel()->set_settings(ui_settings);
   QString connection_credential_error;
   QString connection_auth_failure;
+  QString ice_udp_port_bind_prompt;
+  int automatic_restart_generation = 0;
   if (!gui_auto_start.connection_credential_file.isEmpty()) {
     redclaw::security::ConnectionCredential credential;
     if (!redclaw::security::load_connection_credential_file(
@@ -5232,6 +5234,33 @@ bool launch_gui_shell(
             return;
           }
   };
+  auto present_ice_udp_port_bind_failure = [&](const QString& prompt) {
+    const bool first_notice = ice_udp_port_bind_prompt.isEmpty();
+    ice_udp_port_bind_prompt = prompt;
+    if (first_notice) {
+      ++automatic_restart_generation;
+      append_runtime_event(
+          redclaw::render::RuntimeStatusSeverity::kError,
+          "runtime",
+          prompt.toStdString());
+    }
+    connection_flow_model.reset();
+    refresh_connection_flow_page();
+    set_link_workflow_running(false);
+    if (QToolButton* network_toggle = connection_entry_page->network_settings_toggle()) {
+      network_toggle->setChecked(true);
+    }
+    link_ice_udp_port->setFocus(Qt::OtherFocusReason);
+    link_ice_udp_port->selectAll();
+    status_label->setText("ICE UDP port bind failed");
+    set_runtime_banner(prompt, "bad");
+    set_link_status(prompt, "bad");
+    last_failure_value->setText(prompt);
+    reset_playback_surface(
+        "Your remote desktop will appear here",
+        prompt,
+        true);
+  };
   auto handle_runtime_diagnostic = [&](const QString& trimmed) {
         const QString safe_trimmed = QString::fromStdString(
             redclaw::diag::redact_log_text(trimmed.toStdString()));
@@ -5248,6 +5277,11 @@ bool launch_gui_shell(
                   && agent_control_server->available(),
               agent_control_server != nullptr && agent_control_server->sync_required());
           persist_debug_status(previous_phase != debug_status.phase);
+        }
+
+        const IceUdpPortBindFailure port_bind = classify_ice_udp_port_bind_failure(trimmed);
+        if (port_bind.matched) {
+          present_ice_udp_port_bind_failure(ice_udp_port_bind_failure_prompt(port_bind.port));
         }
 
         if (trimmed == "Runtime connection_auth accepted") {
@@ -5576,6 +5610,10 @@ bool launch_gui_shell(
               : connection_auth_failure, "bad");
           return;
         }
+        if (!expected_stop && !ice_udp_port_bind_prompt.isEmpty()) {
+          present_ice_udp_port_bind_failure(ice_udp_port_bind_prompt);
+          return;
+        }
         if (debug_reconnect || host_persist_wait) {
           // Explicit reconnect may start a new flow after Stop completed;
           // late runtime retry notifications must never undo a pending Stop.
@@ -5619,7 +5657,11 @@ bool launch_gui_shell(
           set_runtime_banner("Session ended. Restarting host wait with the same code.", "info");
           set_link_status("Session ended. Waiting again for the next connection.", "info");
           append_log(session_log, "Host persist wait: scheduling automatic re-wait with the current code.");
-          QTimer::singleShot(1500, &window, [start_button]() {
+          const int restart_generation = automatic_restart_generation;
+          QTimer::singleShot(1500, &window, [start_button, restart_generation, &automatic_restart_generation, &ice_udp_port_bind_prompt]() {
+            if (restart_generation != automatic_restart_generation || !ice_udp_port_bind_prompt.isEmpty()) {
+              return;
+            }
             start_button->click();
           });
         } else if (manual_stop) {
@@ -5659,6 +5701,7 @@ bool launch_gui_shell(
       set_link_status(password_error, "bad"); return;
     }
     connection_auth_failure.clear();
+    ice_udp_port_bind_prompt.clear();
 
     if (role == "host") {
       host_wait_remote_input_authorized =
