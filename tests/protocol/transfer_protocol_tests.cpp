@@ -7,6 +7,26 @@
 
 namespace {
 using namespace redclaw::protocol;
+TEST(TransferProtocol, ClipboardChangeRevisionRoundTripsAndIsRestrictedToRemotePublish) {
+    StreamControlMessageV1 control;
+    control.type = StreamControlMessageTypeV1::kWorkspace; control.session_epoch = "host";
+    control.message_id = 1; control.sent_at_ms = 1; control.request_id = "clipboard-change";
+    auto& value = control.workspace.emplace();
+    value.action = WorkspaceActionV1::kClipboardChanged; value.purpose = WorkspaceTransferPurposeV1::kClipboard;
+    value.direction = TransferDirectionV1::kToController; value.clipboard_mode = 2; value.clipboard_revision = 123;
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(control));
+    ASSERT_TRUE(parsed.ok) << parsed.error; EXPECT_EQ(parsed.value.workspace->clipboard_revision, 123U);
+    value.clipboard_revision = 0; EXPECT_FALSE(validate_workspace_control_v1(value));
+    value.clipboard_revision = 123; value.direction = TransferDirectionV1::kToHost;
+    EXPECT_FALSE(validate_workspace_control_v1(value));
+    value.direction = TransferDirectionV1::kToController; value.clipboard_mode = 1;
+    EXPECT_FALSE(validate_workspace_control_v1(value));
+    value.clipboard_mode = 2; value.action = WorkspaceActionV1::kPrepare; value.clipboard_sequence = 456;
+    parsed = parse_local_runtime_control_frame_v2(serialize_local_runtime_control_frame_v2(control));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.workspace->clipboard_sequence, 456U);
+    EXPECT_EQ(parsed.value.workspace->clipboard_revision, 123U);
+}
 TEST(TransferProtocol, IncompressibleChunkFitsTransportAndKeeps64BitOffset) {
     TransferMessageV1 message;
     message.type = TransferMessageTypeV1::kChunk;

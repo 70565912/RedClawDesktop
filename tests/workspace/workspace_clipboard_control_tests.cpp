@@ -2,6 +2,9 @@
 #include "redclaw/workspace/transfer_runtime_bridge.h"
 #include "redclaw/workspace/clipboard_host_paste.h"
 #include "redclaw_wire.pb.h"
+#include "ui/transfer_coordinator.h"
+#include <QCoreApplication>
+#include <QThreadPool>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QElapsedTimer>
@@ -22,6 +25,9 @@ struct ClipboardControlFixture : testing::Test {
     std::vector<Control> results;
     std::uint64_t now = 0, sequence = 0;
     int host_publications = 0, local_publications = 0, pastes = 0;
+    std::atomic_uint32_t host_clipboard_sequence{100}, local_clipboard_sequence{200};
+    std::unique_ptr<redclaw::ui::TransferCoordinator> coordinator;
+    std::string automatic_operation;
     ClipboardFocusToken focus{1, 2, 3, 4, 5, 6, 7};
     std::string descriptor() {
         wire::ClipboardSourceV1 source; source.set_schema_version(1);
@@ -43,10 +49,14 @@ struct ClipboardControlFixture : testing::Test {
         value.focus_snapshot = [this] { return std::optional(focus); };
         value.publish = [this, remote](auto&, const auto& guard, auto*) {
             if (!guard()) return false;
-            if (remote) ++host_publications; else ++local_publications;
+            if (remote) { ++host_publications; ++host_clipboard_sequence; }
+            else { ++local_publications; ++local_clipboard_sequence; }
             return true;
         };
-        value.capture = [this](auto& snapshot, const auto& spool, auto, const auto& cancelled, auto* error) {
+        value.sequence = [this, remote] { return remote ? host_clipboard_sequence.load() : local_clipboard_sequence.load(); };
+        value.capture = [this, remote](auto& snapshot, const auto& spool, auto expected, const auto& cancelled, auto* error) {
+            const auto current = remote ? host_clipboard_sequence.load() : local_clipboard_sequence.load();
+            if (expected && expected != current) { if (error) *error = "clipboard_changed_before_snapshot"; return false; }
             return snapshot.create(spool, descriptor(), cancelled, error);
         };
         return value;
@@ -70,12 +80,17 @@ struct ClipboardControlFixture : testing::Test {
             [&](auto value) { return send(value, hc); }, [](auto) { return true; },
             [&](auto bytes) { hb.emplace_back(bytes); return true; }, [] { return true; }, actions(true));
         controller = std::make_unique<TransferRuntimeBridge>(false, "controller", root / "controller", cg,
-            [&](auto value) { return send(value, ch); }, [&](auto value) { results.push_back(value); return true; },
+            [&](auto value) { return send(value, ch); }, [&](auto value) {
+                results.push_back(value); if (coordinator) coordinator->receive(value); return true;
+            },
             [&](auto bytes) { cb.emplace_back(bytes); return true; }, [] { return true; }, actions(false));
         host->peer_capability(1, "controller", 3); controller->peer_capability(1, "host", 3);
         host->channel_open(true); controller->channel_open(true); step();
     }
-    void TearDown() override { controller.reset(); host.reset(); }
+    void TearDown() override {
+        coordinator.reset(); controller.reset(); host.reset();
+        EXPECT_TRUE(QThreadPool::globalInstance()->waitForDone(5000));
+    }
     void step() {
         now += 10;
         while (!ch.empty()) { EXPECT_TRUE(host->receive_control(ch.front())); ch.pop_front(); }
@@ -83,6 +98,18 @@ struct ClipboardControlFixture : testing::Test {
         while (!cb.empty()) { EXPECT_TRUE(host->receive_bulk(cb.front())); cb.pop_front(); }
         while (!hb.empty()) { EXPECT_TRUE(controller->receive_bulk(hb.front())); hb.pop_front(); }
         host->pump(now, true); controller->pump(now, true);
+        QCoreApplication::processEvents();
+    }
+    void enable_return() {
+        coordinator = std::make_unique<redclaw::ui::TransferCoordinator>(
+            [&](const auto& message, auto*) { controller->from_gui(message); return true; }, nullptr,
+            [&] { return local_clipboard_sequence.load(); });
+        coordinator->started = [&](const auto& message) { automatic_operation = message.request_id; };
+        host->peer_capability(1, "controller", 4); controller->peer_capability(1, "host", 4); step();
+    }
+    void remote_copy() {
+        ++host_clipboard_sequence;
+        for (int tick = 0; tick < 8 && automatic_operation.empty(); ++tick) step();
     }
     Control command(std::uint32_t mode, std::string id) {
         Control value; value.type = StreamControlMessageTypeV1::kWorkspace; value.request_id = id;
@@ -182,5 +209,99 @@ TEST_F(ClipboardControlFixture, LocalSnapshotCopyCanBeListedAndCleanedByOpaqueId
     EXPECT_TRUE(cleaned->workspace->error_code.empty()) << cleaned->workspace->error_code;
     EXPECT_FALSE(std::filesystem::exists(path));
     EXPECT_EQ(host_publications + local_publications + pastes, 0);
+}
+TEST_F(ClipboardControlFixture, RemoteCopyAutomaticallyReturnsVerifiedFormatsAndFilesWithoutInjectingPaste) {
+    enable_return();
+    EXPECT_TRUE(automatic_operation.empty()); // Connecting does not export an old clipboard.
+    remote_copy(); ASSERT_FALSE(automatic_operation.empty());
+    const auto result = finish(automatic_operation); ASSERT_TRUE(result);
+    ASSERT_TRUE(result->workspace->error_code.empty()) << result->workspace->error_code;
+    EXPECT_EQ(local_publications, 1); EXPECT_EQ(host_publications, 0); EXPECT_EQ(pastes, 0);
+    const auto& snapshot = result->workspace->snapshot_path;
+    const auto path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(snapshot.data()), snapshot.size()));
+    PreparedClipboardPayload verified; const std::atomic_bool cancelled{false}; std::string error;
+    EXPECT_TRUE(verified.load(path, cancelled, &error)) << error;
+    wire::ClipboardPayloadManifestV1 manifest;
+    std::ifstream metadata(path / "metadata/manifest.pb", std::ios::binary);
+    ASSERT_TRUE(manifest.ParseFromIstream(&metadata)); EXPECT_EQ(manifest.formats_size(), 6);
+    std::ifstream copied(path / "files/0/source/data", std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(copied), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(bytes, std::string(65539, 'C'));
+    EXPECT_TRUE(std::filesystem::is_directory(path / "files/0/source/empty"));
+    const auto completed_id = automatic_operation;
+    for (int tick = 0; tick < 20; ++tick) step();
+    EXPECT_EQ(automatic_operation, completed_id); EXPECT_EQ(local_publications, 1);
+}
+TEST_F(ClipboardControlFixture, LocalCopyDuringReturnPreventsRemotePublication) {
+    enable_return(); remote_copy(); ASSERT_FALSE(automatic_operation.empty());
+    ++local_clipboard_sequence;
+    const auto result = finish(automatic_operation); ASSERT_TRUE(result);
+    EXPECT_EQ(result->workspace->error_code, "clipboard_local_changed");
+    EXPECT_EQ(local_publications, 0); EXPECT_EQ(pastes, 0);
+}
+TEST_F(ClipboardControlFixture, ANewerRemoteCopyCannotBeCapturedAsTheRequestedRevision) {
+    host->peer_capability(1, "controller", 4); controller->peer_capability(1, "host", 4); step();
+    auto copy = command(2, "stale-copy"); copy.workspace->clipboard_source.clear();
+    copy.workspace->direction = TransferDirectionV1::kToController;
+    copy.workspace->clipboard_sequence = local_clipboard_sequence;
+    copy.workspace->clipboard_revision = host_clipboard_sequence.load() - 1;
+    controller->from_gui(copy);
+    const auto result = finish("stale-copy"); ASSERT_TRUE(result);
+    EXPECT_EQ(result->workspace->error_code, "clipboard_changed_before_snapshot"); EXPECT_EQ(local_publications, 0);
+}
+TEST_F(ClipboardControlFixture, BusyHostRejectionPreservesReturnIdentityAndReleasesController) {
+    host->peer_capability(1, "controller", 4); controller->peer_capability(1, "host", 4); step();
+    ASSERT_TRUE(hg.begin("host", "other-operation"));
+    auto copy = command(2, "busy-return"); copy.workspace->clipboard_source.clear();
+    copy.workspace->direction = TransferDirectionV1::kToController;
+    copy.workspace->clipboard_sequence = local_clipboard_sequence;
+    copy.workspace->clipboard_revision = host_clipboard_sequence;
+    controller->from_gui(copy);
+    for (int tick = 0; tick < 12; ++tick) step();
+    EXPECT_FALSE(cg.blocks_mutation()); EXPECT_TRUE(hg.blocks_mutation());
+    const auto found = std::find_if(results.begin(), results.end(), [](const auto& message) {
+        return message.request_id == "busy-return" && message.workspace->action == Action::kFinished;
+    });
+    ASSERT_NE(found, results.end()); EXPECT_EQ(found->workspace->error_code, "workspace_transfer_busy");
+    EXPECT_EQ(found->workspace->clipboard_mode, 2U); EXPECT_EQ(found->workspace->clipboard_revision, 100U);
+    EXPECT_EQ(local_publications, 0); hg.disconnected();
+}
+TEST_F(ClipboardControlFixture, PublishingToHostDoesNotEchoAndReconnectDoesNotReplayClipboard) {
+    enable_return();
+    controller->from_gui(command(2, "local-write"));
+    const auto result = finish("local-write"); ASSERT_TRUE(result); EXPECT_TRUE(result->workspace->error_code.empty());
+    for (int tick = 0; tick < 10; ++tick) step();
+    EXPECT_EQ(host_publications, 1); EXPECT_EQ(local_publications, 0); EXPECT_TRUE(automatic_operation.empty());
+    host->channel_open(false); controller->channel_open(false); step(); coordinator->disconnected();
+    ++host_clipboard_sequence;
+    host->peer_capability(1, "controller", 3); controller->peer_capability(1, "host", 3);
+    host->channel_open(true); controller->channel_open(true);
+    for (int tick = 0; tick < 10; ++tick) step();
+    EXPECT_TRUE(automatic_operation.empty());
+    host->channel_open(false); controller->channel_open(false); step(); coordinator->disconnected();
+    ++host_clipboard_sequence;
+    host->peer_capability(1, "controller", 4); controller->peer_capability(1, "host", 4);
+    host->channel_open(true); controller->channel_open(true);
+    for (int tick = 0; tick < 10; ++tick) step();
+    EXPECT_TRUE(automatic_operation.empty()); // Upgrade enables new copies, not replay.
+    remote_copy(); ASSERT_FALSE(automatic_operation.empty());
+    ASSERT_TRUE(finish(automatic_operation)); EXPECT_EQ(local_publications, 1);
+}
+TEST_F(ClipboardControlFixture, VersionThreePeersKeepBothDirectionsWithoutAutomaticNotifications) {
+    ++host_clipboard_sequence;
+    for (int tick = 0; tick < 8; ++tick) step();
+    EXPECT_TRUE(std::none_of(results.begin(), results.end(), [](const auto& message) {
+        return message.workspace->action == Action::kClipboardChanged;
+    }));
+    auto incoming = command(2, "v3-remote-copy"); incoming.workspace->clipboard_source.clear();
+    incoming.workspace->direction = TransferDirectionV1::kToController;
+    controller->from_gui(incoming); auto result = finish("v3-remote-copy"); ASSERT_TRUE(result);
+    EXPECT_TRUE(result->workspace->error_code.empty()); EXPECT_EQ(local_publications, 1);
+    controller->from_gui(command(2, "v3-local-copy")); result = finish("v3-local-copy"); ASSERT_TRUE(result);
+    EXPECT_TRUE(result->workspace->error_code.empty()); EXPECT_EQ(host_publications, 1);
+    incoming.workspace->clipboard_revision = host_clipboard_sequence;
+    incoming.session_epoch = "host";
+    EXPECT_FALSE(controller->receive_control(incoming));
+    incoming.session_epoch = "controller"; EXPECT_FALSE(host->receive_control(incoming));
 }
 }

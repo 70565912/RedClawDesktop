@@ -199,4 +199,6 @@ else {
     }
 }
 
+& (Join-Path $repoRoot 'scripts\release\copy-msvc-desktop-runtime.ps1') -DestinationDirectory $resolvedPublishDirectory
+
 Write-Host "[publish] Published runtime directory is ready: $resolvedPublishDirectory"

@@ -60,9 +60,12 @@ bool ClipboardHostPaste::complete(PreparedClipboardPayload& payload, std::string
     const bool result = actions_.submit_paste(revision, error);
     cancel(); return result;
 }
-bool ClipboardHostPaste::publish(PreparedClipboardPayload& payload, std::string* error) {
-    const auto eligible = [this] { return actions_.publish_eligible ? actions_.publish_eligible()
-        : actions_.eligibility && actions_.eligibility().eligible; };
+bool ClipboardHostPaste::publish_eligible() const {
+    return actions_.publish_eligible ? actions_.publish_eligible()
+        : actions_.eligibility && actions_.eligibility().eligible;
+}
+bool ClipboardHostPaste::publish(PreparedClipboardPayload& payload, std::string* error, const std::function<bool()>& additional_guard) {
+    const auto eligible = [&] { return publish_eligible() && (!additional_guard || additional_guard()); };
     if (!eligible()) return fail(error, "clipboard_input_revoked");
     return actions_.publish ? actions_.publish(payload, eligible, error) : payload.publish(eligible, error);
 }

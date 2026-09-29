@@ -15,6 +15,7 @@ struct ClipboardHostActions {
     std::function<bool(PreparedClipboardPayload&, const std::function<bool()>&, std::string*)> publish;
     std::function<bool()> publish_eligible;
     ClipboardCapture capture;
+    std::function<std::uint32_t()> sequence = clipboard_sequence_number;
 };
 // Runtime-owner component. Expensive disk reads/allocation have already finished
 // on TransferWorker; final policy, focus and fixed input submission share the
@@ -26,7 +27,8 @@ public:
     bool pump();
     bool complete(PreparedClipboardPayload& payload, std::string* error);
     bool paste(std::string* error);
-    bool publish(PreparedClipboardPayload& payload, std::string* error);
+    bool publish(PreparedClipboardPayload& payload, std::string* error, const std::function<bool()>& additional_guard = {});
+    bool publish_eligible() const;
     void cancel();
 private:
     ClipboardHostActions actions_;

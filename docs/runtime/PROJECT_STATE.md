@@ -1,6 +1,29 @@
 # Project State
 
-Updated: 2026-09-23
+Updated: 2026-09-29
+
+## Current optimization work
+
+Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
+[phase plan](../testing/video-link-optimization-x00-t27.md). The operator's current
+topology is local Client / remote Host, with replaced video confirmed normal.
+The local P4 Debug candidate is `af637da`; the earlier local-Host B0/P2/P3 data
+must not be reused as a remote-Host comparison baseline. The remote Agent now
+reports a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
+P3/P4 present, capture 1680×1050 / encode 1584×990, 10-second diagnostics, main
+log visible and mirror hidden. Full hash and network evidence stay on the peer.
+The existing Agent task is executing nine current-role fixed-scene windows;
+verify its completion and sanitized metrics before treating this as a baseline.
+The operator additionally authorized the remote terminal; it is available for
+read-only progress/result queries, with no duplicate sampling task.
+Keep the current connection and Client viewport 1920×991. No remote replacement
+is requested. Local Client observation and previous results are in the
+[measurement report](../testing/video-link-baseline-20260928.md).
+
+[P6 offline attribution](../testing/video-send-attribution-20260929.md) is complete
+for the former local Host; it does not qualify the current peer. X00-T28 records
+the separately scoped wake-lateness follow-up. P5 and final acceptance remain
+on the [task ledger](MODULE_KANBAN.md).
 
 ## Current release
 

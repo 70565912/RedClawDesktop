@@ -12,7 +12,7 @@ enum class TransferConflictV1 { kKeepBoth, kOverwrite, kSkip };
 enum class WorkspaceActionV1 {
     kPrepare, kPrepared, kSelectSource, kSelectionComplete, kScanProgress,
     kOffer, kReady, kCancel, kFinished, kError, kBrowse, kBrowseEntry, kBrowseEnd,
-    kSourceAccepted, kProgress, kAvailability, kBrowseClipboardCopies
+    kSourceAccepted, kProgress, kAvailability, kBrowseClipboardCopies, kClipboardChanged
 };
 enum class TransferDirectionV1 { kToHost, kToController };
 enum class WorkspaceTransferPurposeV1 { kFiles, kClipboard, kClipboardCleanup, kClipboardOpenCopy };
@@ -39,6 +39,7 @@ struct WorkspaceControlV1 {
     std::uint32_t clipboard_mode = 0; // 0 legacy, 1 export, 2 publish, 3 paste only
     std::string clipboard_source; // owner-local protobuf descriptor, never sent to peer
     std::string snapshot_path; // owner-local verified result reference
+    std::uint32_t clipboard_revision = 0; // capability 4: Host copy notification / exact snapshot request
 };
 [[nodiscard]] bool validate_workspace_control_v1(const WorkspaceControlV1&, std::string* error = nullptr);
 enum class TransferMessageTypeV1 { kEntry, kChunk, kCommit, kReceipt, kFinish, kFinished };

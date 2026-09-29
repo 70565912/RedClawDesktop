@@ -43,6 +43,12 @@ try {
 $requiredEntries = @(
     'RedClawDesktop/redclaw_desktop.exe',
     'RedClawDesktop/platforms/qwindows.dll',
+    'RedClawDesktop/msvcp140.dll',
+    'RedClawDesktop/msvcp140_1.dll',
+    'RedClawDesktop/msvcp140_2.dll',
+    'RedClawDesktop/msvcp140_atomic_wait.dll',
+    'RedClawDesktop/vcruntime140.dll',
+    'RedClawDesktop/vcruntime140_1.dll',
     'RedClawDesktop/README.md',
     'RedClawDesktop/README.en.md',
     'RedClawDesktop/LICENSE',

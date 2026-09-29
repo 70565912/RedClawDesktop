@@ -219,6 +219,8 @@ if ($null -eq $deployTool) {
     }
 }
 
+& (Join-Path $repoRoot 'scripts\release\copy-msvc-desktop-runtime.ps1') -DestinationDirectory $resolvedDest
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
