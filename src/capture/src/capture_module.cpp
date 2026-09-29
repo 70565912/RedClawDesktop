@@ -66,6 +66,15 @@ extern "C" {
 #define REDCLAW_CAPTURE_HAS_D3D11_HWCONTEXT 0
 #endif
 
+#if REDCLAW_CAPTURE_HAS_D3D11_HWCONTEXT && __has_include(<libavutil/hwcontext_qsv.h>) && __has_include(<mfxvideo.h>)
+#define REDCLAW_CAPTURE_HAS_QSV_HWCONTEXT 1
+extern "C" {
+#include <libavutil/hwcontext_qsv.h>
+}
+#else
+#define REDCLAW_CAPTURE_HAS_QSV_HWCONTEXT 0
+#endif
+
 #if __has_include(<libswscale/swscale.h>)
 #define REDCLAW_CAPTURE_HAS_LIBSWSCALE 1
 extern "C" {
@@ -136,7 +145,6 @@ std::string describe_encoder_backend(EncoderBackendType backend);
 constexpr std::uint32_t kDxgiVendorIdIntel = 0x8086U;
 constexpr std::uint32_t kDxgiVendorIdNvidia = 0x10DEU;
 constexpr std::uint32_t kDxgiVendorIdAmd = 0x1002U;
-constexpr int kD3D11HardwareFramePoolSize = 32;
 constexpr std::size_t kDdaNativeTexturePoolSize = 4;
 // Capture, latest pending and encoding may each retain a distinct frame.
 constexpr std::size_t kWgcNativeTexturePoolSize = 3;
@@ -1786,11 +1794,11 @@ public:
         if (hardware_frame_input_active_) {
             prepared_frame = prepare_hardware_input_frame(hardware_candidate, &convert_error);
             diagnostics_.input_mode = gpu_scaled
-                ? (hardware_frame_transfer_required_
-                    ? "d3d11-video-processor-scale-transfer"
+                ? (hardware_frame_mapping_required_
+                    ? "d3d11-video-processor-scale-map"
                     : "d3d11-video-processor-scale-direct")
-                : (hardware_frame_transfer_required_
-                    ? "hwframe-transfer"
+                : (hardware_frame_mapping_required_
+                    ? "hwframe-map"
                     : "d3d11-hwframe-direct");
         } else {
             if (!has_cpu_pixels) {
@@ -2031,7 +2039,7 @@ public:
         hardware_frame_input_active_ = false;
         hardware_frame_input_allowed_ = true;
         hardware_input_policy_.invalidate_context();
-        hardware_frame_transfer_required_ = false;
+        hardware_frame_mapping_required_ = false;
         hardware_input_plan_.reset();
         selected_backend_ = EncoderBackendType::kSoftware;
         // The timestamp timeline belongs to the session object, not the codec
@@ -2344,7 +2352,7 @@ private:
 
         direct_bgra_input_ = false;
         hardware_frame_input_active_ = false;
-        hardware_frame_transfer_required_ = false;
+        hardware_frame_mapping_required_ = false;
 
         if (prefer_hardware_frame_input) {
             if (!initialize_hardware_frame_bridge(*native_frame, error_detail)) {
@@ -2475,7 +2483,7 @@ private:
         frame_->width = context_->width;
         frame_->height = context_->height;
 
-        if (prefer_hardware_frame_input && hardware_frame_transfer_required_) {
+        if (prefer_hardware_frame_input && hardware_frame_mapping_required_) {
             source_hw_frame_ = av_frame_alloc();
             if (source_hw_frame_ == nullptr) {
                 stop_runtime_context_only();
@@ -2506,8 +2514,8 @@ private:
 
         diagnostics_.encoder_name = selected_encoder_name_;
         diagnostics_.input_mode = prefer_hardware_frame_input
-            ? (hardware_frame_transfer_required_
-                ? hardware_input_plan_.value().input_mode + "-transfer"
+            ? (hardware_frame_mapping_required_
+                ? hardware_input_plan_.value().input_mode + "-map"
                 : hardware_input_plan_.value().input_mode + "-direct")
             : describe_encoder_cpu_input_mode(context_->pix_fmt, false);
         diagnostics_.hardware_frame_input_active = prefer_hardware_frame_input;
@@ -2569,7 +2577,7 @@ private:
 #endif
         direct_bgra_input_ = false;
         hardware_frame_input_active_ = false;
-        hardware_frame_transfer_required_ = false;
+        hardware_frame_mapping_required_ = false;
     }
 
     void drain_encoder_before_close() {
@@ -2648,12 +2656,22 @@ private:
             return false;
         }
 
+        const bool qsv = hardware_input_plan_->device_type == AV_HWDEVICE_TYPE_QSV;
+#if !REDCLAW_CAPTURE_HAS_QSV_HWCONTEXT
+        if (qsv) {
+            return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
+                "QSV surface metadata support is unavailable in this build", error_detail);
+        }
+#endif
+        // QSV allocates 16-aligned surfaces; the codec and crop stay at the
+        // visible dimensions (for example 1584x990 inside a 1584x992 surface).
         base_d3d11_frames_context_ = create_d3d11_frames_context(
             base_d3d11_device_context_,
             profile_.width,
             profile_.height,
             AV_PIX_FMT_D3D11,
             native->d3d11_format == DXGI_FORMAT_NV12 ? AV_PIX_FMT_NV12 : AV_PIX_FMT_BGRA,
+            qsv,
             error_detail);
         if (base_d3d11_frames_context_ == nullptr) {
             return false;
@@ -2663,7 +2681,7 @@ private:
             && hardware_input_plan_.value().pixel_format == AV_PIX_FMT_D3D11) {
             encoder_hw_device_context_ = av_buffer_ref(base_d3d11_device_context_);
             encoder_hw_frames_context_ = av_buffer_ref(base_d3d11_frames_context_);
-            hardware_frame_transfer_required_ = false;
+            hardware_frame_mapping_required_ = false;
         } else {
             const int derive_device_result = av_hwdevice_ctx_create_derived(
                 &encoder_hw_device_context_,
@@ -2696,7 +2714,21 @@ private:
                     error_detail);
             }
 
-            hardware_frame_transfer_required_ = true;
+#if REDCLAW_CAPTURE_HAS_QSV_HWCONTEXT
+            if (qsv) {
+                const auto* frames = reinterpret_cast<AVHWFramesContext*>(encoder_hw_frames_context_->data);
+                auto* qsv_frames = static_cast<AVQSVFramesContext*>(frames->hwctx);
+                for (int i = 0; i < qsv_frames->nb_surfaces; ++i) {
+                    auto& info = qsv_frames->surfaces[i].Info;
+                    info.CropW = static_cast<mfxU16>(profile_.width);
+                    info.CropH = static_cast<mfxU16>(profile_.height);
+                    info.FrameRateExtN = profile_.fps;
+                    info.FrameRateExtD = 1;
+                }
+            }
+#endif
+
+            hardware_frame_mapping_required_ = true;
         }
 
         if (encoder_hw_device_context_ == nullptr || encoder_hw_frames_context_ == nullptr) {
@@ -2725,7 +2757,7 @@ private:
                 error_detail);
         }
 
-        if (hardware_frame_transfer_required_) {
+        if (hardware_frame_mapping_required_) {
             if (source_hw_frame_ == nullptr || base_d3d11_frames_context_ == nullptr) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
@@ -2748,22 +2780,25 @@ private:
             }
 
             av_frame_unref(frame_);
-            const int encoder_buffer_result = av_hwframe_get_buffer(encoder_hw_frames_context_, frame_, 0);
-            if (encoder_buffer_result < 0) {
+            frame_->format = hardware_input_plan_->pixel_format;
+            frame_->hw_frames_ctx = av_buffer_ref(encoder_hw_frames_context_);
+            if (frame_->hw_frames_ctx == nullptr) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
-                    "av_hwframe_get_buffer failed for encoder hardware frame: "
-                        + ffmpeg_error_to_string(encoder_buffer_result),
+                    "av_buffer_ref failed for mapped encoder hardware frame",
                     error_detail);
             }
 
-            const int transfer_result = av_hwframe_transfer_data(frame_, source_hw_frame_, 0);
-            if (transfer_result < 0) {
+            // A derived context maps this exact pool surface, retaining its
+            // lease. FFmpeg rejects HW->HW transfer into a derived context.
+            const int map_result = av_hwframe_map(frame_, source_hw_frame_, AV_HWFRAME_MAP_READ | AV_HWFRAME_MAP_DIRECT);
+            if (map_result < 0) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
-                    "av_hwframe_transfer_data failed: " + ffmpeg_error_to_string(transfer_result),
+                    "av_hwframe_map failed for encoder hardware frame: " + ffmpeg_error_to_string(map_result),
                     error_detail);
             }
+            av_frame_unref(source_hw_frame_);
         } else {
             av_frame_unref(frame_);
             const int encoder_buffer_result = av_hwframe_get_buffer(encoder_hw_frames_context_, frame_, 0);
@@ -2850,6 +2885,7 @@ private:
         std::uint32_t height,
         AVPixelFormat hardware_pixel_format,
         AVPixelFormat software_pixel_format,
+        bool qsv,
         std::string* error_detail) {
         if (device_context == nullptr) {
             if (error_detail != nullptr) {
@@ -2866,12 +2902,37 @@ private:
             return nullptr;
         }
 
+        const auto desc = describe_d3d11_encoder_pool(width, height,
+            software_pixel_format == AV_PIX_FMT_NV12 ? DXGI_FORMAT_NV12 : DXGI_FORMAT_B8G8R8A8_UNORM, qsv);
         auto* hw_frames_context = reinterpret_cast<AVHWFramesContext*>(frames_context->data);
         hw_frames_context->format = hardware_pixel_format;
         hw_frames_context->sw_format = software_pixel_format;
-        hw_frames_context->width = static_cast<int>(width);
-        hw_frames_context->height = static_cast<int>(height);
-        hw_frames_context->initial_pool_size = kD3D11HardwareFramePoolSize;
+        hw_frames_context->width = static_cast<int>(desc.Width);
+        hw_frames_context->height = static_cast<int>(desc.Height);
+        hw_frames_context->initial_pool_size = static_cast<int>(desc.ArraySize);
+        auto* d3d11_frames = static_cast<AVD3D11VAFramesContext*>(hw_frames_context->hwctx);
+        // A fixed QSV NV12 array is a decoder-target pool, not a render-target
+        // array (which FFmpeg maps without array-slice indices).
+        d3d11_frames->BindFlags = desc.BindFlags;
+        if (qsv) {
+            const auto* device = reinterpret_cast<AVHWDeviceContext*>(device_context->data);
+            const auto* d3d11 = static_cast<AVD3D11VADeviceContext*>(device->hwctx);
+            // Supply the one pool texture to FFmpeg, retaining the driver HRESULT
+            // that av_hwframe_ctx_init otherwise reduces to AVERROR_UNKNOWN.
+            const HRESULT hr = d3d11->device->CreateTexture2D(&desc, nullptr, &d3d11_frames->texture);
+            if (FAILED(hr)) {
+                av_buffer_unref(&frames_context);
+                if (error_detail != nullptr) {
+                    *error_detail = "D3D11 encoder surface pool allocation failed hr="
+                        + format_hex_u32(static_cast<std::uint32_t>(hr))
+                        + " size=" + std::to_string(desc.Width) + "x" + std::to_string(desc.Height)
+                        + " format=" + std::to_string(desc.Format)
+                        + " slices=" + std::to_string(desc.ArraySize)
+                        + " bind=" + std::to_string(desc.BindFlags);
+                }
+                return nullptr;
+            }
+        }
 
         const int init_result = av_hwframe_ctx_init(frames_context);
         if (init_result < 0) {
@@ -2968,7 +3029,7 @@ private:
     bool hardware_frame_input_active_ = false;
     bool hardware_frame_input_allowed_ = true;
     HardwareInputPolicy hardware_input_policy_;
-    bool hardware_frame_transfer_required_ = false;
+    bool hardware_frame_mapping_required_ = false;
 #ifdef _WIN32
     D3D11VideoProcessorScaler d3d11_scaler_;
 #endif

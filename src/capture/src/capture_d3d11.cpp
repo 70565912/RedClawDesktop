@@ -42,6 +42,20 @@ std::shared_ptr<CapturedFrameNativeHandle> make_d3d11_native_handle(
     return handle;
 }
 
+D3D11_TEXTURE2D_DESC describe_d3d11_encoder_pool(
+    std::uint32_t width, std::uint32_t height, DXGI_FORMAT format, bool qsv) {
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = qsv ? (width + 15U) & ~15U : width;
+    desc.Height = qsv ? (height + 15U) & ~15U : height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 32;
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = qsv ? D3D11_BIND_DECODER : 0U;
+    return desc;
+}
+
 class D3D11VideoProcessorScaler::Impl {
 public:
     bool scale(

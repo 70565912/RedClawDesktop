@@ -5,46 +5,36 @@ Updated: 2026-09-29
 ## Current optimization work
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
-[phase plan](../testing/video-link-optimization-x00-t27.md). The operator's current
-topology is local Client / remote Host, with replaced video confirmed normal.
-The latest peer upgrade streams normally but QSV GPU activation falls back once
-at D3D11 frame-pool initialization. The active backend is DDA, unlike the WGC
-baseline below; performance comparison waits for activation and matched conditions.
-The reported DISPLAY2 thumbnail freeze exposed Client revision state surviving
-Host restart. Session reset and diagnostics pass four panel tests, six thumbnail
-cases and the Debug main build. Pushed candidate `8c4fc09` is now deployed locally;
-DISPLAY2 thumbnail revisions advance 1761→1777 with zero failures. QSV repair is
-next. See the [latest findings](../testing/video-gpu-input-p5-20260929.md#peer-upgrade-check-and-navigation-regression).
-The baseline local P4 Debug candidate was `af637da`; the earlier local-Host B0/P2/P3 data
-must not be reused as a remote-Host comparison baseline. The baseline remote Agent previously
-reported a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
-P3/P4 present, capture 1680×1050 / encode 1584×990, 10-second diagnostics, main
-log visible and mirror hidden. Full hash and network evidence stay on the peer.
-The [current-role baseline](../testing/video-link-remote-host-baseline-20260929.md)
-is complete: nine valid windows, 15980 sent traced frames, zero overflow or failure
-increments. After explicit Agent handoff, the authorized terminal finished two
-replacement windows and the result checks. Dynamic capture copying averages
-4.36 ms/frame and input preparation 12.90 ms/attempt; main-video CPU readback
-remains. Adaptive pacing differs in the two replacements and no same-peer pre-P4
-recording exists, so this establishes current behavior, not an improvement claim.
-The Client observer advanced 51575 decoded surfaces in 30 minutes with no failure
-or fallback increments. Host log replay is stopped; both endpoints remain streaming.
-Keep the current connection and Client viewport 1920×991. No remote replacement
-is requested. Local Client observation and previous results are in the
-[measurement report](../testing/video-link-baseline-20260928.md).
+[phase plan](../testing/video-link-optimization-x00-t27.md). The operator now
+requests **local Debug Host / remote Client**, after pushing the P5 QSV repair
+and building/publishing that pushed source. The local Client is stopped. Reuse
+the existing protected Host credential and controlled supervisor; verify the
+prior effective ICE port 56000 before starting. Do not start remote load or
+sampling until the operator connects the updated Client and confirms video.
+
+The QSV bridge repair uses an aligned decoder-target NV12 array and maps leased
+D3D11 surfaces into the derived QSV context, preserving visible crop dimensions.
+Both focused CTest suites, five local GPU/real-capture cases and the Debug main
+build pass. Local NVIDIA tests cannot qualify Intel QSV: the strict Intel
+encode/decode/resize/recovery gate is compiled but still needs Intel execution.
+See the [repair and validation limits](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
+Publication and controlled Host readiness are the immediate next steps.
+
+The previous local-Client/remote-Host run confirmed normal video and the DISPLAY2
+thumbnail repair: deployed `8c4fc09`, advancing revisions 1761→1777 and no failures.
+The peer's QSV path had latched CPU fallback, and its active DDA backend differed
+from the WGC [remote-Host baseline](../testing/video-link-remote-host-baseline-20260929.md).
+That baseline contains nine valid windows / 15980 sent frames, no overflow or
+sampled failure increments, capture-copy 4.36 ms/frame and input preparation
+12.90 ms/attempt. The [earlier local-Host evidence](../testing/video-link-baseline-20260928.md)
+and this remote-Host baseline remain historical; changing roles requires a new
+matched baseline. Neither local NVENC results nor the role change establish
+QSV activation or an attributable performance improvement.
 
 [P6 offline attribution](../testing/video-send-attribution-20260929.md) is complete
-for the former local Host; it does not qualify the current peer. X00-T28 records
-the separately scoped wake-lateness follow-up. [P5 implementation and local gates](../testing/video-gpu-input-p5-20260929.md)
-are complete: shared D3D11 synchronization, NV12 conversion, first-output GPU
-confirmation, generation-latched CPU fallback and small GPU thumbnail readback.
-Debug NoPublish build and focused tests passed; WGC/DDA each passed three device
-generations, totaling 36 GPU-only frames without additional desktop readback on
-local NVENC. P5 `8955125` is pushed; clean source `9910fe8` is built and published
-to the independent candidate checkout (336 files, manifest and command-entry
-checks passed). That publication initially left the Client unchanged; the latest
-controlled Client replacement and peer upgrade are recorded above. Peer QSV activation,
-matched performance and final quality acceptance remain on the [task ledger](MODULE_KANBAN.md).
+for the former local Host. X00-T28 retains the separately scoped wake-lateness
+follow-up. Intel GPU activation, matched performance and final five-minute
+quality acceptance remain open on the task ledger.
 
 ## Current release
 
