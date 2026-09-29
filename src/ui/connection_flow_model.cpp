@@ -246,4 +246,44 @@ ConnectionFlowLineEvent classify_connection_flow_line(
   return result;
 }
 
+IceUdpPortBindFailure classify_ice_udp_port_bind_failure(QStringView line) {
+  IceUdpPortBindFailure result;
+  if (!line.startsWith(u"Runtime ICE UDP port reservation failed")) {
+    return result;
+  }
+  result.matched = true;
+  const QStringView key = u"ice_udp_port=";
+  const qsizetype at = line.indexOf(key);
+  if (at < 0) {
+    return result;
+  }
+  int value = 0;
+  bool any_digit = false;
+  for (qsizetype index = at + key.size(); index < line.size(); ++index) {
+    const QChar character = line.at(index);
+    if (!character.isDigit()) {
+      break;
+    }
+    any_digit = true;
+    value = value * 10 + character.digitValue();
+    if (value > 65535) {
+      return result;
+    }
+  }
+  if (any_digit && value >= 1) {
+    result.port = value;
+  }
+  return result;
+}
+
+QString ice_udp_port_bind_failure_prompt(int port) {
+  if (port >= 1 && port <= 65535) {
+    return QString(
+        "ICE UDP port %1 could not be bound. Open More settings, choose a different port, and try again.")
+        .arg(port);
+  }
+  return QString(
+      "The ICE UDP port could not be bound. Open More settings, choose a different port, and try again.");
+}
+
 }  // namespace redclaw::ui
