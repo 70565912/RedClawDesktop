@@ -8,6 +8,7 @@
 #ifdef _WIN32
 #include "capture_d3d11.h"
 #include <d3d11_4.h>
+#include <dxgi1_2.h>
 #endif
 using namespace redclaw::capture;
 
@@ -41,9 +42,26 @@ std::shared_ptr<D3D11CaptureDevice> create_device(D3D_DRIVER_TYPE driver) {
         nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr))) return {};
     return D3D11CaptureDevice::create(device.Get());
 }
-CapturedFrame make_frame(const std::shared_ptr<D3D11CaptureDevice>& owner, std::uint64_t generation = 1) {
+std::shared_ptr<D3D11CaptureDevice> create_intel_device() {
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return {};
+    for (UINT index = 0; ; ++index) {
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        if (FAILED(factory->EnumAdapters1(index, &adapter))) return {};
+        DXGI_ADAPTER_DESC1 desc{};
+        if (FAILED(adapter->GetDesc1(&desc)) || desc.VendorId != 0x8086
+            || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        if (SUCCEEDED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr))) {
+            return D3D11CaptureDevice::create(device.Get());
+        }
+    }
+}
+CapturedFrame make_frame(const std::shared_ptr<D3D11CaptureDevice>& owner,
+                        std::uint64_t generation = 1, std::uint32_t width = 640, std::uint32_t height = 400) {
     CapturedFrame frame;
-    frame.width = 640; frame.height = 400; frame.row_pitch = frame.width * 4;
+    frame.width = width; frame.height = height; frame.row_pitch = frame.width * 4;
     frame.bgra = true; frame.capture_generation = generation;
     frame.data.resize(static_cast<std::size_t>(frame.row_pitch) * frame.height);
     for (std::uint32_t y = 0; y < frame.height; ++y) for (std::uint32_t x = 0; x < frame.width; ++x) {
@@ -119,6 +137,37 @@ TEST(GpuInputHardware, Nv12CropAndBoundedThumbnailPreserveColor) {
     EXPECT_NEAR(image.bgra[(100 * 320 + 10) * 4 + 2], 255, 3); // Entire display, no video crop.
     EXPECT_NEAR(image.bgra[(100 * 320 + 10) * 4], 0, 3);
     EXPECT_FALSE(scaler.scale(source, 319, 200, DXGI_FORMAT_NV12, &nv12, &error));
+}
+
+TEST(GpuInputHardware, QsvSurfaceArrayAcceptsNonAlignedVisibleFrame) {
+    auto owner = create_device(D3D_DRIVER_TYPE_HARDWARE);
+    ASSERT_TRUE(owner);
+    auto source = make_frame(owner, 1, 1680, 1050);
+    ASSERT_TRUE(source.native_handle);
+    D3D11VideoProcessorScaler scaler;
+    CapturedFrame nv12;
+    std::string error;
+    ASSERT_TRUE(scaler.scale(source, 1584, 990, DXGI_FORMAT_NV12, &nv12, &error)) << error;
+    auto desc = describe_d3d11_encoder_pool(1584, 990, DXGI_FORMAT_NV12, true);
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> pool;
+    ASSERT_TRUE(SUCCEEDED(owner->device->CreateTexture2D(&desc, nullptr, &pool)));
+    EXPECT_EQ(desc.Width, 1584U); EXPECT_EQ(desc.Height, 992U);
+    EXPECT_EQ(desc.ArraySize, 32U);
+    const D3D11_BOX visible{0, 0, 0, 1584, 990, 1};
+    std::lock_guard lock(owner->mutex);
+    owner->context->CopySubresourceRegion(pool.Get(), 31, 0, 0, 0,
+        nv12.native_handle->d3d11_texture.Get(), 0, &visible);
+    desc.ArraySize = 1; desc.BindFlags = 0;
+    desc.Usage = D3D11_USAGE_STAGING; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    ASSERT_TRUE(SUCCEEDED(owner->device->CreateTexture2D(&desc, nullptr, &staging)));
+    owner->context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, pool.Get(), 31, nullptr);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    ASSERT_TRUE(SUCCEEDED(owner->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
+    const auto* bytes = static_cast<const std::uint8_t*>(mapped.pData);
+    EXPECT_NEAR(bytes[989 * mapped.RowPitch + 792], 81, 4); // Last visible row, outside padding.
+    EXPECT_NEAR(bytes[992 * mapped.RowPitch + 494 * mapped.RowPitch + 792], 90, 4); // U plane uses padded stride.
+    owner->context->Unmap(staging.Get(), 0);
 }
 
 TEST(GpuInputHardware, CodecUsesGpuOrLatchesCpuFallbackAcrossResizeAndRecovery) {
@@ -218,6 +267,71 @@ TEST(GpuInputHardware, CodecUsesGpuOrLatchesCpuFallbackAcrossResizeAndRecovery) 
     RecordProperty("gpu_fallbacks", std::to_string(encoder.diagnostics().hardware_input_fallback_count));
     RecordProperty("concurrent_copies", concurrent_copies.load());
     RecordProperty("concurrent_thumbnails", concurrent_thumbnails.load());
+    encoder.stop();
+}
+
+// Explicit Intel gate: fallback is a failure, not a successful hardware test.
+// Kept outside the portable CTest filter and the generic NVENC hardware cases.
+TEST(QsvInputHardware, MappedPoolPreservesVisibleCropAcrossResizeAndDeviceRecovery) {
+    auto owner = create_intel_device();
+    ASSERT_TRUE(owner) << "This developer-invoked gate requires an Intel D3D11/QSV device";
+    EncoderExecutionSession encoder;
+    EncoderBackendBridgeRequest bridge;
+    bridge.preferred_backend = EncoderBackendType::kQuickSync;
+    bridge.capture_adapter_vendor = CaptureAdapterVendor::kIntel;
+    bridge.allow_hardware_fallback = false;
+    EncoderBackendBridgePlan plan;
+    std::string error;
+    std::uint64_t timestamp = 1000;
+    std::uint32_t total_outputs = 0;
+    for (int phase = 0; phase < 3; ++phase) {
+        if (phase == 2) owner = create_intel_device(); // Old encoder retains its old owner.
+        ASSERT_TRUE(owner);
+        auto source = make_frame(owner, phase == 2 ? 2 : 1, 1680, 1050);
+        ASSERT_TRUE(source.native_handle);
+        EncoderProfileRequest request;
+        request.width = phase == 1 ? 1504 : 1584;
+        request.height = phase == 1 ? 938 : 990; // Both need padded QSV allocation.
+        request.fps = 30;
+        ASSERT_TRUE(start_encoder_execution_from_bridge(request, bridge, &encoder, &plan, &error)) << error;
+        ASSERT_EQ(plan.selected_backend, EncoderBackendType::kQuickSync);
+        redclaw::render::FfmpegVideoFrameDecoder decoder;
+        decoder.force_software_decode();
+        unsigned outputs = 0;
+        for (int i = 0; i < 20; ++i) {
+            EncodedFramePacket packet;
+            timestamp += 33;
+            const bool ready = encoder.encode_bgra_frame(source, timestamp, &packet, &error);
+            ASSERT_EQ(encoder.diagnostics().hardware_input_fallback_count, 0U)
+                << encoder.diagnostics().hardware_input_block_reason;
+            if (!ready) {
+                ASSERT_EQ(encoder.diagnostics().last_failure, EncoderExecutionFailureCategory::kOutputNotReady) << error;
+                continue;
+            }
+            ASSERT_TRUE(encoder.diagnostics().hardware_frame_input_confirmed);
+            EXPECT_NE(encoder.diagnostics().input_mode.find("map"), std::string::npos);
+            bool decoded_ready = false;
+            redclaw::render::DecodedVideoFrame decoded;
+            ASSERT_TRUE(decoder.decode_frame_view(redclaw::render::EncodedVideoCodec::kH264,
+                request.width, request.height, packet.timestamp_ms, packet.keyframe,
+                packet.payload.data(), packet.payload.size(), &decoded_ready, &decoded, &error)) << error;
+            ASSERT_TRUE(decoded_ready);
+            EXPECT_EQ(decoded.width, request.width);
+            EXPECT_EQ(decoded.height, request.height);
+            ASSERT_GE(decoded.pixels.size(), static_cast<std::size_t>(decoded.row_pitch) * decoded.height);
+            for (const auto y : {decoded.height / 2, decoded.height - 5}) {
+                const auto offset = static_cast<std::size_t>(y) * decoded.row_pitch + (decoded.width / 2) * 4;
+                EXPECT_GT(decoded.pixels[offset + 2], 210);
+                EXPECT_LT(decoded.pixels[offset], 25);
+            }
+            ++outputs;
+            source.data.clear(); source.row_pitch = 0; // Subsequent frames cannot silently use CPU input.
+        }
+        ASSERT_GT(outputs, 2U);
+        total_outputs += outputs;
+    }
+    RecordProperty("qsv_gpu_outputs", total_outputs);
+    RecordProperty("qsv_gpu_fallbacks", encoder.diagnostics().hardware_input_fallback_count);
     encoder.stop();
 }
 

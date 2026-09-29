@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Repair the QSV GPU surface bridge (X00-T27 P5)
+
+- QSV now allocates an aligned decoder-target NV12 pool, preserves visible crop/nominal timing metadata, and maps leased D3D11 surfaces into the derived QSV context. The former transfer API rejects derived contexts. Allocation errors preserve the driver HRESULT and surface description. CPU fallback remains generation-latched; no online protocol changes.
+- Two focused CTest suites and five local GPU cases passed, including actual padded-pool allocation/copy, NVENC encode/decode and WGC/DDA across three generations each with 18 GPU-only frames per backend and no main-video readback increments. Debug main build passed via `build.ps1`. A strict Intel QSV gate was compiled but cannot execute on the NVIDIA-only local machine; QSV activation and performance remain unverified.
+- Per the operator's new topology, push then build/publish the candidate and start local controlled Debug Host with existing credentials. The Client is already stopped. Wait for the operator's updated remote Client before remote testing. See the [P5 repair report](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
+
 ## 2026-09-29 — Deploy navigation repair and verify DISPLAY2 progress (X00-T27)
 
 - Pushed `8c4fc09`, then built/published the clean independent Debug candidate through `build.ps1`; all 336 candidate files and the command entry verify. The first controlled deployment exposed a stale launch port (55000 versus live 56000); Windows excludes 55000. Full rollback completed, and the old Client was relaunched on its prior effective 56000 port and reconnected. The second deployment verified matching effective/launch settings and succeeded, preserving a complete 330-file rollback and existing credentials. No system port exclusions changed.

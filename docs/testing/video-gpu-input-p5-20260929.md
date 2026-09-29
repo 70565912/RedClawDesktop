@@ -181,3 +181,48 @@ remain open; no new benchmark load was started. Evidence: `p5-navigation-pushed-
 `p5-navigation-publish-validation.json`, `p5-navigation-deployment-recovery.json`,
 `p5-navigation-deployed-manifests.json`, `p5-navigation-live-client-samples.json`, and
 `p5-navigation-acceptance.json`. Both deployment attempts retain their own receipts.
+
+## QSV surface-pool and mapping repair
+
+The operator now requests local Debug Host / remote Client. The local Client has
+already stopped. Complete this repair, push, build/publish clean pushed source,
+then start the existing controlled Host entry with the retained DPAPI credential.
+Wait for the operator's updated Client and picture confirmation before remote
+sampling. This role change requires a new matched baseline.
+
+Source inspection of the linked FFmpeg 8.1 implementation found two concrete
+bridge defects: the QSV child pool used exact visible dimensions without decoder
+binding, and the derived QSV context was fed through `av_hwframe_transfer_data`,
+which rejects derived hardware contexts. The pool now uses a 32-slice,
+16-aligned NV12 decoder texture. Its visible crop and codec dimensions remain
+unchanged (1584×990 uses 1584×992 allocation); QSV surface metadata retains the
+nominal frame rate. D3D11 pool frames are mapped into the derived QSV context,
+retaining each source lease until the encoder releases it. There is no CPU
+readback in this bridge. Allocation failure now includes HRESULT, dimensions,
+format, slices and binding flags. The generation-latched CPU fallback and IDR
+recovery remain available; no online protocol changed.
+
+Both focused CTest suites passed (GPU ownership/policy and encoder execution).
+Five developer GPU cases passed on the local NVIDIA device, including actual
+allocation/copy into slice 31 of the aligned NV12 pool and checking the last
+visible luma/chroma rows. Real NVENC encode/decode, resize/fallback/recovery and
+WGC/DDA capture passed. Each capture backend completed three generations and
+18 GPU-only frames without main-video readback increments. The Debug main build
+passed through `build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish`.
+
+The local machine has no Intel GPU, so these results do **not** establish QSV
+activation or latency improvement. A separate developer-invoked Intel gate
+requires actual QSV output with zero GPU-input fallbacks, software-decodes it,
+checks visible dimensions and bottom-row color, and repeats across resize and
+device replacement. It was compiled but not run locally:
+
+```powershell
+build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=QsvInputHardware.*
+```
+
+Evidence under `build/reports/x00-t27/`: `p5-qsv-fix-focused-build.txt`,
+`p5-qsv-fix-ctest.txt`, `p5-qsv-fix-local-gpu.json` and
+`p5-qsv-fix-main-build.txt`. Linked FFmpeg source paths inspected:
+`libavutil/hwcontext.c`, `hwcontext_d3d11va.c`, `hwcontext_qsv.c` and
+`libavcodec/qsvenc.c`. Intel execution, peer connection and matched performance
+remain separate acceptance items.

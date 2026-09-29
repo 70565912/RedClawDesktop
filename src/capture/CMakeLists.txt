@@ -37,6 +37,12 @@ if(WIN32)
 endif()
 
 if(FFMPEG_FOUND)
+  # FFmpeg's QSV public frame contract uses the SDK's mfxFrameSurface1 layout.
+  find_path(REDCLAW_QSV_INCLUDE_DIR mfxvideo.h
+    HINTS ${FFMPEG_INCLUDE_DIRS} PATH_SUFFIXES mfx vpl)
+  if(REDCLAW_QSV_INCLUDE_DIR)
+    target_include_directories(redclaw_capture PRIVATE ${REDCLAW_QSV_INCLUDE_DIR})
+  endif()
   target_include_directories(redclaw_capture
     PRIVATE
       ${FFMPEG_INCLUDE_DIRS}
