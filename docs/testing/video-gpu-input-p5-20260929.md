@@ -611,3 +611,151 @@ Receipts: `p5-wait-pushed-build.txt`, `p5-wait-candidate.json`,
 `p5-acceptance-wait-deployed.json` under the same local evidence root. The
 `p5-wait-pending-measurement-plan.json` retains false operator-confirmation flags
 and `executed=false`; it is preparation only.
+
+## Matched acceptance after the DDA repair (2026-09-30)
+
+The operator confirmed connection and normal picture on `a656ede`. The first
+collection was stopped because the actual encoder bitrate was 711 kbps instead
+of the references' 4267 kbps. It contains three completed Static windows, one
+completed Dynamic window and a partial second Dynamic window; all are retained
+in `p5-wait-candidate-20260930/` with `invalid.json` and excluded from comparisons.
+
+The GUI log shows viewport reconfiguration while the submission target was
+5 FPS, followed by nominal-30-FPS encoder initialization at 711 kbps. FFmpeg
+does not advertise the hot-update capability and the existing hardware-session
+policy suppresses live restart, retaining that lower bitrate. This is a separate
+quality/configuration issue, not proof of faster GPU encoding. The original
+preflight omitted configured bitrate; the candidate preflight/window checks now
+require 4267 kbps, and the final audit checks every in-window codec summary.
+
+The existing controlled reconnect rebuilt the same candidate's runtime, retaining
+the GUI, binary, credentials and settings. Real media recovered at 4267 kbps with
+the original geometry. Nine fresh windows then completed in
+`p5-wait-matched-20260930/`: seed 2700, 10 s minimum warmup plus the diagnostic
+barrier, 60 s trace, three repetitions of each scene. All codec summaries confirm
+DDA/NVENC, 1920×1080 capture, 1778×1000 encode, nominal 30 FPS, 1/30 time base,
+60-frame GOP and GPU input confirmed with zero fallback. The viewport remains
+1920×1001. Native-width policy and network settings are unchanged; adaptive
+submission/pacing and actual network timing are observed, not forced constant.
+
+### Three-run results
+
+Values are medians [minimum–maximum]. CPU is the Host runtime process, with
+100% equal to one logical core. Copy/preparation/codec diagnostics are weighted
+by their recorded capture/encode denominators; their ten-second windows may
+straddle sample boundaries. Frame age is local capture-ready to last send for
+successfully sent traced frames, not end-to-end display latency or source-poll
+waiting time. No peer clocks are subtracted.
+
+| Dynamic metric | P4 CPU reference | P5 before repair | P5 repaired |
+| --- | --- | --- | --- |
+| Sent FPS | 21.30 [21.30–21.33] | 15.78 [15.28–15.87] | 21.30 [21.30–21.38] |
+| Capture copy, ms/capture | 7.47 [7.42–7.53] | 4.23 [4.02–4.33] | 0.17 [0.17–0.17] |
+| Input preparation, ms/attempt | 11.48 [11.38–11.64] | 29.63 [29.40–30.24] | 0.22 [0.22–0.23] |
+| Codec submission, ms/attempt | 9.65 [9.63–9.69] | 27.85 [27.32–31.00] | 12.41 [12.35–12.46] |
+| Total encoding, ms/attempt | 21.17 [21.06–21.38] | 57.61 [57.30–60.68] | 12.68 [12.61–12.72] |
+| Host CPU, one-core % | 53.28 [53.18–53.49] | 10.53 [10.39–11.00] | 12.41 [12.39–13.20] |
+| Host frame-age P95, ms | 64.44 [63.60–66.35] | 156.15 [152.56–163.25] | 43.83 [35.81–45.87] |
+| Host frame-age P99, ms | 76.04 [73.50–85.88] | 180.26 [180.19–191.97] | 47.06 [46.78–55.88] |
+
+| Dynamic plus fixed log replay metric | P4 CPU reference | P5 before repair | P5 repaired |
+| --- | --- | --- | --- |
+| Sent FPS | 21.32 [21.30–21.33] | 15.55 [15.50–15.80] | 21.32 [20.98–21.35] |
+| Capture copy, ms/capture | 7.42 [7.41–7.47] | 4.17 [4.13–4.30] | 0.17 [0.16–0.17] |
+| Input preparation, ms/attempt | 11.39 [11.37–11.43] | 29.81 [29.34–30.62] | 0.22 [0.21–0.23] |
+| Codec submission, ms/attempt | 9.65 [9.57–9.66] | 29.05 [28.19–29.52] | 12.45 [12.44–12.50] |
+| Total encoding, ms/attempt | 21.07 [21.04–21.08] | 58.44 [58.05–60.18] | 12.72 [12.72–12.76] |
+| Host CPU, one-core % | 51.89 [51.32–52.12] | 10.28 [9.51–11.29] | 12.47 [12.37–13.48] |
+| Host frame-age P95, ms | 64.46 [63.72–65.66] | 156.62 [152.27–157.56] | 46.28 [43.02–47.55] |
+| Host frame-age P99, ms | 73.18 [70.69–77.44] | 184.35 [182.84–186.66] | 58.84 [46.66–74.87] |
+
+The GPU preparation/encoding regression is resolved in these matched windows.
+Dynamic P99 falls 73.9% versus the unrepaired GPU candidate and 38.1% versus the
+CPU reference, with disjoint observed ranges. Throughput returns to the desktop
+generator's approximately 21.3 FPS; it does not establish capacity beyond 30 FPS
+or a throughput improvement over CPU. Both dynamic scenes show lower total
+encoding cost than CPU, but GPU codec submission alone remains about 2.8 ms
+slower. Runtime CPU rises relative to the slow GPU candidate as output recovers,
+while remaining far below the CPU-input reference. DynamicLog P99 ranges overlap
+the CPU reference, so improvement over CPU for that specific tail metric is
+**unconfirmed**, despite the lower median. Host-side logs do not qualify remote
+Controller logging benefits or Intel performance.
+
+The effective pacer rate is a material comparison limit: repaired Dynamic and
+the first two DynamicLog windows use 8966 kbps, versus 5298 kbps in most CPU
+windows and about 3524–4870 kbps in the unrepaired GPU windows. The final repaired
+DynamicLog window has a 6644 kbps median. Recorded RTT ranges also differ. No
+bitrate/pacer policy or setting was manually changed, and the actual encoder
+remains 4267 kbps throughout, but this is not a fixed-pacer experiment. The
+observed frame-age benefit includes adaptation and network conditions; it must
+not all be attributed to the DDA change. The large preparation/copy/encoding
+reductions, combined with the earlier isolated device-wait probes, provide the
+direct mechanism evidence. Exact per-window rates are retained in the context
+artifact.
+
+### Retained sender exception and trace accounting
+
+The nine windows retain 7659 trace rows: 7658 sent, one failed/dropped, zero
+cancelled, zero overflow and zero missing capture timing. All sent-row timelines,
+fragment counts and exclusive sender-wait accounting pass. The dropped row is
+an observed outcome, not malformed data; it is preserved and counted separately
+from successful-send latency distributions. The initial audit's all-sent check
+flagged it; outcome-aware accounting retains rather than removes that exception.
+
+In DynamicLog-2, ordinary frame 14176 spends 1023.429 ms in the in-flight wait
+and sends no fragment. The next recorded frame is a successfully sent IDR.
+The gap between neighboring successful last sends is 1101.005 ms; the next IDR
+finishes sending 46.912 ms after the failed frame finishes. Capture, encode and
+transmit-failure summary deltas remain zero, showing why those aggregate counters
+alone are insufficient. P99 improvement does not mean that this approximately
+one-second sending interruption disappeared. The trace localizes the wait to
+in-flight admission; peer ACK or network root cause is not established, and no
+sender policy was changed or bad window rerun to remove the event.
+
+Main-video CPU readback, CPU frame copy and large CPU-buffer allocation increments
+are zero in every retained diagnostic interval; no frame-pool exhaustion occurs.
+GPU frame copies remain, so this is not a claim of zero total copying. Thumbnail
+small-image GPU readbacks remain separate. CPU pool storage stays bounded at
+24883200 bytes. The three Static windows send no frames and have no per-frame
+latency quantiles.
+
+Local recomputation uses `analyze_baseline.py`, `compare_p5_wait_acceptance.py`,
+`check_p5_wait_context.py` and `audit_p5_wait_traces.py` under
+`build/reports/x00-t27/`. Derived evidence is `p5-wait-matched-comparison.json`,
+`p5-wait-rate-context.json`, `p5-wait-trace-audit.json` and
+`p5-wait-send-drop.json`. Raw baseline/candidate windows are unchanged.
+
+### Five-minute continuity and completion boundary
+
+The repaired candidate completed 301.82 s of continuous dynamic load, with 142
+status samples, 6404 captures and 6403 transmitted frames. Capture/encode/transmit
+failure, reconnect, capture-recovery, main-video CPU readback and buffer-exhaustion
+increments are zero. GPU input remains confirmed without fallback at 4267 kbps.
+Two bounded 60 s traces contain 1283 and 1280 sent frames, zero drops/overflow and
+valid sender accounting. Their Host frame-age P99 values are 60.68 and 61.84 ms;
+P95 moves from 45.54 to 49.67 ms. These samples do not show accumulating frame-age
+tails, but are not a trace of the entire five-minute interval.
+
+Host runtime working set is 63.14–64.80 MiB and private memory 486.50–487.66 MiB;
+the first/last 30 s private-memory medians are both 487.66 MiB. CPU is 12.88% of
+one logical core. These are process measurements, not total GPU memory or a
+general leak-free guarantee. All 289 thumbnail sends succeed; their bounded
+small-image readbacks remain separate from the main-video counter.
+
+The operator confirms normal fixed text, fine lines, color blocks and cursor.
+This is visual acceptance, not an objective decoded-pixel comparison. The earlier
+focused tests and clean pushed Debug build/publication for `a656ede` are reused;
+no production source, protocol or configuration changed during this acceptance,
+so no redundant rebuild or test matrix was run.
+
+P5's measured local NVIDIA preparation/encoding regression and source-rate
+throughput regression are resolved. The same-scene/continuity/visual checks are
+complete with the retained sender exception, rather than a zero-stall claim.
+Track the low-cadence reconfiguration bitrate issue as X00-T29 and the isolated
+in-flight stall as X00-T30; neither is addressed by silently tuning bitrate,
+burst, queue, priority or congestion controls. P1 remote Controller tail benefit,
+isolated P2/P4 gains and Intel matched performance are not established by this run.
+
+Continuity evidence: `p5-wait-soak-20260930/` with raw samples, complete fixed-prefix
+stage summaries, two traces and `analysis.json`; recompute with
+`python build/reports/x00-t27/analyze_p5_wait_soak.py`.
