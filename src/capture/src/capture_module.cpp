@@ -1714,7 +1714,8 @@ public:
                 profile_.height,
                 gpu_format,
                 &gpu_scaled_frame,
-                &gpu_scale_error);
+                &gpu_scale_error,
+                &diagnostics_.gpu_input_timing);
             if (!gpu_scaled) {
                 if (hardware_frame_input_active_) {
                     (void)reopen_cpu_fallback_after_hardware_failure(gpu_scale_error, error_detail);
@@ -2757,6 +2758,8 @@ private:
                 error_detail);
         }
 
+        ++diagnostics_.gpu_input_timing.frames;
+        D3D11TimingCheckpoint bridge_clock;
         if (hardware_frame_mapping_required_) {
             if (source_hw_frame_ == nullptr || base_d3d11_frames_context_ == nullptr) {
                 return fail(
@@ -2766,7 +2769,9 @@ private:
             }
 
             av_frame_unref(source_hw_frame_);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_release_us);
             const int source_buffer_result = av_hwframe_get_buffer(base_d3d11_frames_context_, source_hw_frame_, 0);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_pool_us);
             if (source_buffer_result < 0) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
@@ -2778,8 +2783,9 @@ private:
             if (!copy_d3d11_native_texture_to_frame(frame, source_hw_frame_, error_detail)) {
                 return false;
             }
-
+            bridge_clock.record(nullptr);
             av_frame_unref(frame_);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_release_us);
             frame_->format = hardware_input_plan_->pixel_format;
             frame_->hw_frames_ctx = av_buffer_ref(encoder_hw_frames_context_);
             if (frame_->hw_frames_ctx == nullptr) {
@@ -2792,6 +2798,7 @@ private:
             // A derived context maps this exact pool surface, retaining its
             // lease. FFmpeg rejects HW->HW transfer into a derived context.
             const int map_result = av_hwframe_map(frame_, source_hw_frame_, AV_HWFRAME_MAP_READ | AV_HWFRAME_MAP_DIRECT);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_map_us);
             if (map_result < 0) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
@@ -2799,9 +2806,12 @@ private:
                     error_detail);
             }
             av_frame_unref(source_hw_frame_);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_release_us);
         } else {
             av_frame_unref(frame_);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_release_us);
             const int encoder_buffer_result = av_hwframe_get_buffer(encoder_hw_frames_context_, frame_, 0);
+            bridge_clock.record(&diagnostics_.gpu_input_timing.frame_pool_us);
             if (encoder_buffer_result < 0) {
                 return fail(
                     EncoderExecutionFailureCategory::kEncodeFailed,
@@ -2985,7 +2995,9 @@ private:
                 error_detail);
         }
 
+        D3D11TimingCheckpoint copy_clock;
         std::lock_guard context_lock(native->owner->mutex);
+        copy_clock.record(&diagnostics_.gpu_input_timing.copy_lock_wait_us);
         const D3D11_BOX visible{0, 0, 0, frame.width, frame.height, 1};
         immediate_context->CopySubresourceRegion(
             destination_texture,
@@ -2996,6 +3008,7 @@ private:
             native->d3d11_texture.Get(),
             native->d3d11_subresource_index,
             &visible);
+        copy_clock.record(&diagnostics_.gpu_input_timing.copy_submit_us);
 
         if (error_detail != nullptr) {
             error_detail->clear();

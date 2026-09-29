@@ -18,9 +18,15 @@ comparison completed 18 windows. Dynamic three-run medians changed from 21.30 to
 eliminated and Host CPU decreased, but preparation/encoding became slower.
 DynamicLog reproduces the regression. A five-minute GPU run sent 4842 frames
 without stream failures or reconnects; private memory remained stable over that
-interval. Next: separate GPU context-lock wait, video processing, surface/copy and
-encoder submit costs, then fix and repeat the affected comparison. Do not mark P5
-complete or substitute the separate pacer task for this regression. See the
+interval. Subsequent local probes identify the principal mechanism: concurrent
+DDA `AcquireNextFrame(50)` blocks shared `ID3D11Multithread` entry for 32.13 ms on
+average, versus 0.0044 ms with immediate-return acquisition. Our own scale mutex
+wait is only 0.025 ms. Three-run preparation/codec submission falls from
+35.74/53.40 ms to 0.047/9.71 ms in that diagnostic contrast. Next: repair DDA wait
+scheduling while retaining device protection and validating CPU/wakeup cost,
+then repeat the affected cross-LAN comparison. The probes do not qualify a
+deployed scheduling fix. See the [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
+Do not mark P5 complete or substitute the separate pacer task for this regression. See the
 [matched results and limits](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
 
 The QSV bridge maps leased D3D11 surfaces into the derived QSV context and keeps

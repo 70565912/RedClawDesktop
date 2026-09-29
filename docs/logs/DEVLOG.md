@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-29 — Locate shared DDA-device waiting behind GPU input cost (X00-T27 P5)
+
+- Added cumulative local GPU preparation timing fields (v1) and two developer-only diagnostic probes; no online protocol, production acquisition policy or per-frame disk output changed. Application mutex wait, video state/blit, frame pool/release/map and texture-copy calls have separate wall-clock counters. Main orchestration was not expanded.
+- Nine same-size real-DDA/NVENC stage runs reproduced the mechanism: concurrent 50 ms acquisition gives median preparation/codec submission 35.74/53.40 ms; immediate-return acquisition gives 0.047/9.71 ms. Video-context state calls account for about 30.49 ms while our scale mutex averages 0.025 ms. A further six runs removed scaling/encoding and directly timed protected-device entry: `ID3D11Multithread::Enter()` averages 32.13 ms with DDA 50 ms waiting versus 0.0044 ms with immediate return. This establishes shared-device internal contention on the local NVIDIA driver; proprietary NVENC call splits, other backends and deployed performance remain separate.
+- Debug NoPublish main build through `build.ps1`, both affected CTest suites and three GPU functional cases passed. The first CTest command did not launch because PATH lacked ctest; the configured VS2022 executable passed. The active f5dac5d Host was preserved. Next is a bounded DDA wait-scheduling repair with CPU/wakeup/stop/recovery checks, then controlled deployment and matched comparison. Immediate-return polling is a diagnostic contrast, not an accepted runtime policy. See the [diagnosis, ranges and reproducible probes](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
+
 ## 2026-09-29 — Measure P5 and retain the NVENC latency regression (X00-T27)
 
 - Re-established local Host / remote Client comparison after operator picture and viewport confirmation for each replacement. Reused pushed P4 `af637da` CPU publication; built/published pushed `f5dac5d` through `build.ps1`, passed two focused suites and five local GPU/real-capture cases, and verified complete candidates/rollbacks. Independent recovery workers preserved the controlled rollout sequence. The local Host remains f5dac5d; no formal release or production-code change was made in this acceptance.

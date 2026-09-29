@@ -195,6 +195,16 @@ struct EncodedFramePacket {
 	std::size_t payload_limit_bytes = 0;
 };
 
+// Cumulative CPU wall time, not GPU execution time. Local diagnostic schema v1.
+// Scale sub-stages and bridge sub-stages are exclusive; scale_us includes its sub-stages.
+struct GpuInputPreparationTiming {
+    std::uint64_t frames = 0, scale_calls = 0, scale_us = 0;
+    std::uint64_t scale_lock_wait_us = 0, scale_setup_us = 0;
+    std::uint64_t scale_input_view_us = 0, scale_state_us = 0, scale_blt_us = 0;
+    std::uint64_t frame_release_us = 0, frame_pool_us = 0, frame_map_us = 0;
+    std::uint64_t copy_lock_wait_us = 0, copy_submit_us = 0;
+};
+
 struct EncoderExecutionDiagnostics {
 	bool initialized = false;
 	bool qsv_low_delay_brc = false;
@@ -235,6 +245,7 @@ struct EncoderExecutionDiagnostics {
 	std::uint64_t total_receive_packet_us = 0;
 	std::uint64_t total_payload_copy_us = 0;
 	std::uint64_t total_encode_us = 0;
+    GpuInputPreparationTiming gpu_input_timing;
 	EncoderExecutionFailureCategory last_failure = EncoderExecutionFailureCategory::kNone;
 	std::string last_error_detail;
 };

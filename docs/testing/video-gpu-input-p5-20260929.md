@@ -8,6 +8,9 @@ run completed without stream failures or reconnects. See the
 [matched acceptance below](#matched-local-host-performance-acceptance).
 Earlier implementation, publication and role-specific receipts follow in order;
 their waiting states do not describe the current connected Host.
+The subsequent [input-cost diagnosis](#dda-shared-device-wait-diagnosis) reproduces
+the regression in local probes and identifies DDA waiting under the shared
+device's internal multithread protection. Runtime scheduling is not yet repaired.
 
 ## Ownership and behavior
 
@@ -417,3 +420,99 @@ for nearest-rank distributions and send accounting. Diagnostic means have
 explicit capture/attempt denominators and may straddle status boundaries.
 No uncalibrated peer timestamps are subtracted. This acceptance changes only
 documentation and local measurement artifacts, not production behavior.
+
+## DDA shared-device wait diagnosis
+
+**The principal local NVIDIA regression is shared-device synchronization during
+`AcquireNextFrame(50)`.** The capture thread waits outside our recursive mutex,
+but on this DDA/driver path the wait occupies the device's internal
+`ID3D11Multithread` protection. GPU input shares that device with capture, so
+video-context calls and encoder input submission can wait for desktop acquisition.
+Moving acquisition outside the application mutex was therefore insufficient.
+The CPU-input branch does not attach the capture device as the encoder's hardware
+context, which explains why eliminating CPU readback exposed this coupling.
+
+### Controlled local evidence
+
+Added cumulative preparation sub-stage wall clocks, with a local v1 diagnostic
+contract and no per-frame disk output. They separate the application mutex,
+pipeline setup, input-view creation, video-context state setters, blit submission,
+frame release/pool/map and copy lock/submission. These are CPU-observed call
+durations, not GPU execution timestamps. Existing codec send/receive timers remain.
+No media/control protocol, capture wait policy, bitrate, frame size or runtime
+synchronization policy changed.
+
+The developer-only `GpuInputProfile` probe uses real DDA 1920×1080 capture,
+1778×1000 NVENC encoding, 30 nominal FPS / 60-frame GOP and 4267 kbps. It uses the
+same seed-2700 moving desktop, warms for 3 s, measures about 8 s and repeats each
+case three times. Concurrent cases have one latest pending frame and the existing
+three-slot capture pool. GPU input stays confirmed with zero fallback. The
+existing Host remains running as background load in every case; probes do not
+send network media. These are mechanism comparisons, not replacements for the
+earlier cross-LAN acceptance.
+
+| Per-attempt ms, median [three-run range] | Serial capture then encode, 50 ms timeout | Concurrent capture, 50 ms timeout | Concurrent capture, 0 ms timeout |
+| --- | --- | --- | --- |
+| Input preparation | 0.038 [0.037–0.041] | 35.737 [33.782–36.279] | 0.047 [0.047–0.052] |
+| Application scale-lock wait | <0.001 | 0.025 [0.019–0.027] | <0.001 |
+| Video-context state setters | 0.002 [0.002–0.002] | 30.486 [29.019–30.595] | 0.008 [0.008–0.010] |
+| VideoProcessorBlt call | 0.001 [0.001–0.002] | 0.004 [0.004–0.390] | 0.002 [0.002–0.002] |
+| Encoder-surface copy call | <0.001 | 4.940 [4.567–5.200] | 0.001 [0.001–0.001] |
+| `avcodec_send_frame` | 13.434 [12.737–13.916] | 53.400 [51.002–55.534] | 9.706 [9.261–9.939] |
+| Codec output FPS | 21.427 [21.395–21.436] | 11.336 [10.796–11.469] | 21.439 [21.369–21.461] |
+
+Frame release and pool lease costs are about 0.002 ms each in all cases. The
+large preparation cost is not in our mutex or the measured blit submission;
+it appears in calls that need the protected device. The driver may defer GPU
+work, so a small blit call duration does not measure shader execution cost.
+
+A second probe removes scaling and encoding entirely. While a capture worker
+acquires frames, the probe obtains our mutex first, then times only
+`ID3D11Multithread::Enter()` / `Leave()`. Thus application-mutex wait and actual
+encoder work are excluded. Three 5 s repetitions produce:
+
+| Protected-device entry | DDA 50 ms acquisition | DDA 0 ms acquisition |
+| --- | --- | --- |
+| Mean ms, three-run median [range] | 32.135 [31.174–32.402] | 0.0044 [0.0037–0.0051] |
+| P95 ms, three-run median [range] | 47.134 [47.016–48.366] | 0.036 [0.012–0.039] |
+
+This directly confirms internal protected-device contention on the local driver,
+independent of encoder complexity, input-view allocation, network pacing or
+frame-pool release. The 0 ms comparison uses a 1 ms requested sleep after an
+empty poll; its actual wake cadence is controlled by the OS. It is a diagnostic
+contrast, not a production scheduling recommendation or a CPU/power acceptance.
+
+The linked FFmpeg NVENC source routes D3D11 frames through resource registration,
+mapping and encode submission within the existing send call. This run did not
+instrument proprietary `nvEnc*` calls separately; their exact internal split and
+the residual 9–14 ms submission cost remain unqualified. Intel/QSV and WGC have
+not been measured by these DDA-specific probes.
+
+### Verification and next change
+
+The 9 stage-profile runs and 6 device-entry runs passed with zero capture failures
+and no observed GPU fallback. The two directly affected CTest suites and three
+existing GPU conversion/real-codec/fallback cases passed. The main program passed
+`build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish`.
+The first CTest shell lacked `ctest` on PATH and ran no tests; using the configured
+VS2022 executable completed the check. Both diagnostic suites are excluded from
+the unattended CTest filter and print a versioned JSON record via GoogleTest.
+
+Next within P5: change DDA scheduling so long waits do not occupy the device
+shared by capture and encoder, while preserving multithread protection, bounded
+ownership, stop/recovery behavior and reasonable idle CPU/wakeup cost. Measure
+short/bounded acquisition and waiting outside that device before choosing a
+runtime policy. Do not disable D3D11 protection, add an unbounded queue or infer
+that zero-timeout polling is already suitable for deployment. After a fix, follow
+push → clean Debug publication → controlled Host replacement → operator picture
+confirmation, then repeat the affected matched acceptance. P5 remains open.
+
+Local evidence: `build/reports/x00-t27/p5-input-profile-20260929/`,
+`p5-device-entry-profile-20260929/`, `p5-input-diagnosis.json`,
+`p5-profile-focused-build.txt`, `p5-profile-main-build.txt`, `p5-profile-ctest.txt`
+and `p5-profile-hardware.json`. Reproduce explicitly with a moving desktop:
+
+```powershell
+build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=LocalDiagnostic/GpuInputProfile.* --gtest_output=json:build/reports/gpu-input-profile.json
+build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=LocalDiagnostic/DdaDeviceWaitProfile.* --gtest_output=json:build/reports/d3d11-entry-profile.json
+```
