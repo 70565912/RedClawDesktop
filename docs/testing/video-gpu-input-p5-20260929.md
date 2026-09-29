@@ -210,11 +210,14 @@ WGC/DDA capture passed. Each capture backend completed three generations and
 18 GPU-only frames without main-video readback increments. The Debug main build
 passed through `build.ps1 -Configuration Debug -SkipConfigure -Target redclaw_desktop -NoPublish`.
 
-The local machine has no Intel GPU, so these results do **not** establish QSV
-activation or latency improvement. A separate developer-invoked Intel gate
-requires actual QSV output with zero GPU-input fallbacks, software-decodes it,
-checks visible dimensions and bottom-row color, and repeats across resize and
-device replacement. It was compiled but not run locally:
+On Intel HD Graphics 530 the decoder-target array produced a real bitstream with
+zero CPU fallback, but software decode was black: the driver encoded slice 0
+while the pool filled a later slice. Each QSV surface is now its own
+render-target NV12 texture. The same developer-invoked gate then passed
+(1584×990, 1504×938, and a replaced device) with decoded center and near-bottom
+red above 210. That run does not measure latency.
+
+The gate was first compiled here and not run on the earlier NVIDIA-only machine:
 
 ```powershell
 build/ninja-x64/tests/Debug/redclaw_capture_gpu_input_tests.exe --gtest_filter=QsvInputHardware.*

@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-09-29 — Encode the filled QSV surface (X00-T27 P5)
+
+- Intel HD Graphics 530 encoded a real bitstream with zero CPU fallback, but software decode was black. The video processor and the copied NV12 were not black. FFmpeg's decoder-target pool is one texture array, and the driver encoded slice 0 while the pool filled a later slice.
+- QSV now uses one render-target NV12 texture per surface, still 16-aligned, with the visible crop unchanged. `QsvInputHardware.MappedPoolPreservesVisibleCropAcrossResizeAndDeviceRecovery` passed on this Intel device (1584×990, 1504×938, and a replaced device): no GPU-input fallback, and decoded center and near-bottom red stayed above 210. No online protocol changes.
+
 ## 2026-09-29 — Repair the QSV GPU surface bridge (X00-T27 P5)
 
 - QSV now allocates an aligned decoder-target NV12 pool, preserves visible crop/nominal timing metadata, and maps leased D3D11 surfaces into the derived QSV context. The former transfer API rejects derived contexts. Allocation errors preserve the driver HRESULT and surface description. CPU fallback remains generation-latched; no online protocol changes.

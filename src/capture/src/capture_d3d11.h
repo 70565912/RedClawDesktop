@@ -29,7 +29,7 @@ std::shared_ptr<CapturedFrameNativeHandle> make_d3d11_native_handle(
     std::shared_ptr<D3D11CaptureDevice> owner, ID3D11Texture2D* texture,
     DXGI_FORMAT format, std::uint32_t subresource_index);
 
-// Physical allocation only; QSV crop and codec dimensions remain visible-sized.
+// Aligned size and pool depth. Each QSV surface is a separate texture; crop stays visible-sized.
 D3D11_TEXTURE2D_DESC describe_d3d11_encoder_pool(
     std::uint32_t width, std::uint32_t height, DXGI_FORMAT format, bool qsv);
 

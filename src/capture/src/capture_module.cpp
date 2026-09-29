@@ -2911,28 +2911,12 @@ private:
         hw_frames_context->height = static_cast<int>(desc.Height);
         hw_frames_context->initial_pool_size = static_cast<int>(desc.ArraySize);
         auto* d3d11_frames = static_cast<AVD3D11VAFramesContext*>(hw_frames_context->hwctx);
-        // A fixed QSV NV12 array is a decoder-target pool, not a render-target
-        // array (which FFmpeg maps without array-slice indices).
-        d3d11_frames->BindFlags = desc.BindFlags;
-        if (qsv) {
-            const auto* device = reinterpret_cast<AVHWDeviceContext*>(device_context->data);
-            const auto* d3d11 = static_cast<AVD3D11VADeviceContext*>(device->hwctx);
-            // Supply the one pool texture to FFmpeg, retaining the driver HRESULT
-            // that av_hwframe_ctx_init otherwise reduces to AVERROR_UNKNOWN.
-            const HRESULT hr = d3d11->device->CreateTexture2D(&desc, nullptr, &d3d11_frames->texture);
-            if (FAILED(hr)) {
-                av_buffer_unref(&frames_context);
-                if (error_detail != nullptr) {
-                    *error_detail = "D3D11 encoder surface pool allocation failed hr="
-                        + format_hex_u32(static_cast<std::uint32_t>(hr))
-                        + " size=" + std::to_string(desc.Width) + "x" + std::to_string(desc.Height)
-                        + " format=" + std::to_string(desc.Format)
-                        + " slices=" + std::to_string(desc.ArraySize)
-                        + " bind=" + std::to_string(desc.BindFlags);
-                }
-                return nullptr;
-            }
-        }
+        // One NV12 texture per surface. A decoder-target array records a slice
+        // index, but this Intel driver encodes slice 0 of that array, so the
+        // filled slice is never the one that gets encoded. Render-target
+        // allocation makes FFmpeg create ArraySize=1 textures and map each QSV
+        // surface by texture pointer.
+        d3d11_frames->BindFlags = qsv ? D3D11_BIND_RENDER_TARGET : desc.BindFlags;
 
         const int init_result = av_hwframe_ctx_init(frames_context);
         if (init_result < 0) {

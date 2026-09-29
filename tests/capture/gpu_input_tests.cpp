@@ -139,7 +139,7 @@ TEST(GpuInputHardware, Nv12CropAndBoundedThumbnailPreserveColor) {
     EXPECT_FALSE(scaler.scale(source, 319, 200, DXGI_FORMAT_NV12, &nv12, &error));
 }
 
-TEST(GpuInputHardware, QsvSurfaceArrayAcceptsNonAlignedVisibleFrame) {
+TEST(GpuInputHardware, QsvSurfaceAcceptsNonAlignedVisibleFrame) {
     auto owner = create_device(D3D_DRIVER_TYPE_HARDWARE);
     ASSERT_TRUE(owner);
     auto source = make_frame(owner, 1, 1680, 1050);
@@ -149,19 +149,21 @@ TEST(GpuInputHardware, QsvSurfaceArrayAcceptsNonAlignedVisibleFrame) {
     std::string error;
     ASSERT_TRUE(scaler.scale(source, 1584, 990, DXGI_FORMAT_NV12, &nv12, &error)) << error;
     auto desc = describe_d3d11_encoder_pool(1584, 990, DXGI_FORMAT_NV12, true);
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> pool;
-    ASSERT_TRUE(SUCCEEDED(owner->device->CreateTexture2D(&desc, nullptr, &pool)));
     EXPECT_EQ(desc.Width, 1584U); EXPECT_EQ(desc.Height, 992U);
     EXPECT_EQ(desc.ArraySize, 32U);
+    EXPECT_EQ(desc.BindFlags, static_cast<UINT>(D3D11_BIND_RENDER_TARGET));
+    desc.ArraySize = 1;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> surface;
+    ASSERT_TRUE(SUCCEEDED(owner->device->CreateTexture2D(&desc, nullptr, &surface)));
     const D3D11_BOX visible{0, 0, 0, 1584, 990, 1};
     std::lock_guard lock(owner->mutex);
-    owner->context->CopySubresourceRegion(pool.Get(), 31, 0, 0, 0,
+    owner->context->CopySubresourceRegion(surface.Get(), 0, 0, 0, 0,
         nv12.native_handle->d3d11_texture.Get(), 0, &visible);
-    desc.ArraySize = 1; desc.BindFlags = 0;
+    desc.BindFlags = 0;
     desc.Usage = D3D11_USAGE_STAGING; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
     ASSERT_TRUE(SUCCEEDED(owner->device->CreateTexture2D(&desc, nullptr, &staging)));
-    owner->context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, pool.Get(), 31, nullptr);
+    owner->context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, surface.Get(), 0, nullptr);
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ASSERT_TRUE(SUCCEEDED(owner->context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
     const auto* bytes = static_cast<const std::uint8_t*>(mapped.pData);
@@ -407,6 +409,7 @@ TEST_P(GpuInputRealCapture, ConfirmedFramesAvoidDesktopReadbackAcrossRestart) {
     RecordProperty("device_generations", 3);
     encoder.stop();
 }
+
 INSTANTIATE_TEST_SUITE_P(RealDesktop, GpuInputRealCapture,
     ::testing::Values(CaptureBackendType::kWindowsGraphicsCapture, CaptureBackendType::kDesktopDuplication));
 #endif
