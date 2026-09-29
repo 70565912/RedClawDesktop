@@ -11295,6 +11295,9 @@ int run_runtime_mode(
                           << " capture_failure_kind=" << static_cast<int>(capture_telemetry.last_failure.kind)
                           << " capture_failure_hresult=" << capture_telemetry.last_failure.hresult
                           << " capture_dda_rebuilds=" << capture_telemetry.dda_rebuild_count
+                          << " capture_dda_wait_stats_version=1"
+                          << " capture_dda_acquire_polls=" << capture_telemetry.dda_acquire_poll_count
+                          << " capture_dda_external_waits=" << capture_telemetry.dda_external_wait_count
                           << " capture_backend_switches=" << capture_telemetry.backend_switch_count
                           << " capture_fallback_attempts=" << capture_telemetry.fallback_attempt_count
                           << " capture_fallback_reason=" << std::quoted(capture_telemetry.last_fallback_reason)

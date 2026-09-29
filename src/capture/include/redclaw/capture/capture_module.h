@@ -423,6 +423,8 @@ struct CaptureBackendTelemetry {
 	std::uint64_t total_accumulated_frames = 0;
 	std::uint32_t last_accumulated_frames = 0;
 	std::uint64_t total_capture_wait_us = 0;
+    // Local DDA wait diagnostics v1: driver probes and waits outside the device.
+    std::uint64_t dda_acquire_poll_count = 0, dda_external_wait_count = 0;
 	std::uint64_t total_capture_copy_us = 0;
 	std::uint64_t native_texture_pool_create_count = 0;
 	std::uint64_t native_texture_pool_reuse_count = 0;

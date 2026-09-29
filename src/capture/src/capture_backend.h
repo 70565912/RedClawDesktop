@@ -5,6 +5,7 @@
 
 namespace redclaw::capture {
 struct CaptureFrameStageTelemetry {
+    std::uint32_t dda_acquire_polls = 0, dda_external_waits = 0;
     std::uint64_t wait_us = 0, copy_us = 0;
     std::uint32_t accumulated_frames = 0;
     bool native_texture_pool_created = false, native_texture_pool_reused = false;
