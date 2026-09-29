@@ -52,7 +52,9 @@ D3D11_TEXTURE2D_DESC describe_d3d11_encoder_pool(
     desc.Format = format;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = qsv ? D3D11_BIND_DECODER : 0U;
+    // QSV surfaces are separate textures. An array with only D3D11_BIND_DECODER
+    // makes the driver encode slice 0 while the pool fills a later slice.
+    desc.BindFlags = qsv ? D3D11_BIND_RENDER_TARGET : 0U;
     return desc;
 }
 

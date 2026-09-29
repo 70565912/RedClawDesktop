@@ -14,11 +14,11 @@ reachable, listener ready, current-generation publication successful, and phase
 is `dht_waiting` / `offer_ready`. Do not start remote load or sampling until the
 operator connects the updated Client and confirms video.
 
-The QSV bridge repair uses an aligned decoder-target NV12 array and maps leased
-D3D11 surfaces into the derived QSV context, preserving visible crop dimensions.
-Both focused CTest suites, five local GPU/real-capture cases and the Debug main
-build pass. Local NVIDIA tests cannot qualify Intel QSV: the strict Intel
-encode/decode/resize/recovery gate is compiled but still needs Intel execution.
+The QSV bridge maps leased D3D11 surfaces into the derived QSV context and keeps
+the visible crop. Each surface is its own 16-aligned render-target NV12 texture;
+a decoder-target array encoded slice 0 on Intel HD Graphics 530 and produced a
+black picture. The strict Intel gate now passes on that device, including
+resize and device replacement, with zero GPU-input fallbacks.
 See the [repair and validation limits](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
 The immediate next step is the operator's remote Client connection; see the
 [Host readiness receipt](../testing/video-gpu-input-p5-20260929.md#pushed-debug-publication-and-local-host-readiness).
