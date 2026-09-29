@@ -582,3 +582,32 @@ Local artifacts: `build/reports/x00-t27/p5-wait-{before,after}-{dynamic,static}/
 `p5-wait-hardware/`, `p5-wait-comparison.json`, `p5-wait-ctest.txt`,
 `p5-wait-focused-build.txt` and `p5-wait-main-build.txt`. Recompute medians/ranges
 with `python build/reports/x00-t27/compare_p5_wait.py`.
+
+### Pushed candidate and controlled Host readiness
+
+Pushed implementation `a656edeeb58901bf4e60f9cad1b7811aa1f4e56f`, then built the
+clean independent checkout through `build.ps1 -Configuration Debug -Target
+redclaw_desktop` and published all 336 files. Published/build executables match;
+the command-entry check passes. SHA256:
+`de340ee7859f233e9a8c4d9fea9a8b033d8c1d4bdb8b391338803b00f554cd39`.
+
+The first independent upgrade timed out during pending-directory verification
+before handoff; the old Host was not stopped and remained connected. A separate
+full 336-file hash check passed in 50.70 s. A new operation repeated the complete
+checks and succeeded, retaining the failed receipt. Formal and rollback 336-file
+manifests both verify. No check was skipped and no timeout was relaxed.
+
+The local controlled Debug Host now runs the candidate from `release/Debug` with
+existing protected credentials and effective/launch ICE port 56000 retained.
+Fresh status shows DHT listener ready, reachable and published, phase
+`dht_waiting`, no connected Client and no captured/transmitted media yet. The
+operator has been asked to reconnect and confirm normal picture/unchanged
+1920×1001 viewport. No candidate cross-LAN benchmark load or sampling has begun;
+P5's deployed FPS/latency improvement remains pending that confirmation and the
+affected matched comparison. The prior Intel functional evidence is unchanged.
+
+Receipts: `p5-wait-pushed-build.txt`, `p5-wait-candidate.json`,
+`p5-wait-candidate-manifest.json`, `p5-acceptance-wait-deployment/` and
+`p5-acceptance-wait-deployed.json` under the same local evidence root. The
+`p5-wait-pending-measurement-plan.json` retains false operator-confirmation flags
+and `executed=false`; it is preparation only.
