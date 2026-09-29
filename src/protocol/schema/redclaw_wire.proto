@@ -327,6 +327,8 @@ message WorkspaceControlV1 {
   // Owner-local source descriptor and result reference; rejected from peers.
   bytes clipboard_source = 25;
   string snapshot_path = 26;
+  // Capability 4: Host clipboard change and the requested source revision.
+  uint32 clipboard_revision = 27;
 }
 
 message ClipboardSourceV1 {

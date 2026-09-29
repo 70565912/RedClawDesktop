@@ -1,11 +1,14 @@
 #include "ui/transfer_coordinator.h"
 #include "redclaw/workspace/transfer_result_journal.h"
+#include "redclaw/workspace/clipboard_payload.h"
 #include "redclaw_wire.pb.h"
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
 #include <QFutureWatcher>
 #include <QRegularExpression>
+#include <QTimer>
+#include <QUuid>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
 
@@ -22,7 +25,26 @@ TransferCoordinator::Control request(Action action, const QString& id) {
     result.request_id = utf8(id); result.workspace.emplace(); result.workspace->action = action; return result;
 }
 }
-TransferCoordinator::TransferCoordinator(Send send, QObject* parent) : QObject(parent), send_(std::move(send)) {}
+TransferCoordinator::TransferCoordinator(Send send, QObject* parent, std::function<std::uint32_t()> clipboard_sequence)
+    : QObject(parent), send_(std::move(send)), clipboard_sequence_(clipboard_sequence
+        ? std::move(clipboard_sequence) : workspace::clipboard_sequence_number) {}
+void TransferCoordinator::schedule_clipboard_return() {
+    if (!pending_clipboard_return_ || busy() || clipboard_return_scheduled_) return;
+    clipboard_return_scheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        clipboard_return_scheduled_ = false;
+        if (!pending_clipboard_return_ || busy()) return;
+        auto copy = std::move(*pending_clipboard_return_); pending_clipboard_return_.reset();
+        if (clipboard_version_ < 4 || !return_local_sequence_ || clipboard_sequence_() != return_local_sequence_) return;
+        auto message = request(Action::kPrepare, "clipboard-return-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+        auto& data = *message.workspace;
+        data.purpose = Purpose::kClipboard; data.direction = Direction::kToController; data.clipboard_mode = 2;
+        data.clipboard_revision = copy.workspace->clipboard_revision;
+        data.clipboard_sequence = return_local_sequence_;
+        QString error;
+        (void)submit(message, &error);
+    });
+}
 void TransferCoordinator::notify(const QString& id) { if (event && operations_.contains(id)) event(id, operations_[id].state); }
 bool TransferCoordinator::submit(const Control& message, QString* error) {
     if (!message.workspace || !protocol::validate_workspace_control_v1(*message.workspace)) {
@@ -78,7 +100,16 @@ void TransferCoordinator::receive(const Control& message) {
     if (!message.workspace) return;
     const auto& value = *message.workspace;
     if (value.action == Action::kAvailability) {
-        file_version_ = message.file_transfer_version; clipboard_version_ = message.clipboard_version; runtime_busy_ = value.active; return;
+        file_version_ = message.file_transfer_version; clipboard_version_ = message.clipboard_version; runtime_busy_ = value.active;
+        if (clipboard_version_ < 4) { pending_clipboard_return_.reset(); last_clipboard_revision_ = 0; clipboard_epoch_.clear(); }
+        schedule_clipboard_return(); return;
+    }
+    if (value.action == Action::kClipboardChanged) {
+        if (clipboard_version_ < 4 || !protocol::validate_workspace_control_v1(value)
+            || (clipboard_epoch_ == message.session_epoch && last_clipboard_revision_ == value.clipboard_revision)) return;
+        clipboard_epoch_ = message.session_epoch; last_clipboard_revision_ = value.clipboard_revision;
+        pending_clipboard_return_ = message; return_local_sequence_ = clipboard_sequence_();
+        schedule_clipboard_return(); return;
     }
     const auto id = QString::fromStdString(message.request_id);
     if (!operations_.contains(id)) return;
@@ -136,8 +167,10 @@ void TransferCoordinator::receive(const Control& message) {
     state["total_bytes"] = QString::number(value.bytes); state["completed_files"] = QString::number(value.completed_files);
     state["skipped_entries"] = QString::number(value.skipped_entries); state["total_files"] = QString::number(value.files);
     notify(id);
+    schedule_clipboard_return();
 }
 void TransferCoordinator::disconnected() {
+    pending_clipboard_return_.reset(); last_clipboard_revision_ = 0; clipboard_epoch_.clear();
     file_version_ = clipboard_version_ = 0; runtime_busy_ = false;
     for (auto it = operations_.begin(); it != operations_.end(); ++it) {
         const auto state = it->state.value("state").toString();

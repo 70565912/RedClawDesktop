@@ -19,6 +19,44 @@ namespace {
 using namespace redclaw::ui;
 using namespace redclaw::protocol;
 using namespace redclaw::workspace;
+StreamControlMessageV1 clipboard_availability(std::uint32_t version, bool busy = false) {
+    StreamControlMessageV1 state; state.type = StreamControlMessageTypeV1::kWorkspace;
+    state.file_transfer_version = 1; state.clipboard_version = version;
+    state.workspace.emplace(); state.workspace->action = WorkspaceActionV1::kAvailability; state.workspace->active = busy;
+    return state;
+}
+StreamControlMessageV1 clipboard_change(std::uint32_t revision) {
+    StreamControlMessageV1 changed; changed.type = StreamControlMessageTypeV1::kWorkspace;
+    changed.session_epoch = "host"; changed.request_id = "clipboard-change";
+    auto& data = changed.workspace.emplace(); data.action = WorkspaceActionV1::kClipboardChanged;
+    data.purpose = WorkspaceTransferPurposeV1::kClipboard; data.direction = TransferDirectionV1::kToController;
+    data.clipboard_mode = 2; data.clipboard_revision = revision; return changed;
+}
+TEST(ClipboardReturnCoordinator, CoalescesCopiesBehindExistingTransferAndSuppressesDuplicates) {
+    std::vector<StreamControlMessageV1> sent;
+    TransferCoordinator coordinator([&](const auto& message, auto*) { sent.push_back(message); return true; }, nullptr, [] { return 50U; });
+    coordinator.receive(clipboard_availability(4, true));
+    coordinator.receive(clipboard_change(101)); coordinator.receive(clipboard_change(102));
+    QApplication::processEvents(); EXPECT_TRUE(sent.empty());
+    coordinator.receive(clipboard_availability(4)); QApplication::processEvents();
+    ASSERT_EQ(sent.size(), 1U);
+    EXPECT_EQ(sent[0].workspace->clipboard_revision, 102U); EXPECT_EQ(sent[0].workspace->clipboard_sequence, 50U);
+    EXPECT_EQ(sent[0].workspace->direction, TransferDirectionV1::kToController);
+    auto finished = sent[0]; finished.workspace->action = WorkspaceActionV1::kFinished; finished.workspace->clipboard_sequence = 0;
+    coordinator.receive(finished); coordinator.receive(clipboard_change(102)); QApplication::processEvents();
+    EXPECT_EQ(sent.size(), 1U);
+}
+TEST(ClipboardReturnCoordinator, LocalCopyDisconnectAndOldCapabilityDiscardPendingReturn) {
+    for (const int reason : {0, 1, 2}) {
+        std::uint32_t local_sequence = 50; int sends = 0;
+        TransferCoordinator coordinator([&](const auto&, auto*) { ++sends; return true; }, nullptr, [&] { return local_sequence; });
+        coordinator.receive(clipboard_availability(4, true)); coordinator.receive(clipboard_change(101));
+        if (reason == 0) ++local_sequence;
+        if (reason == 1) coordinator.disconnected();
+        coordinator.receive(clipboard_availability(reason == 2 ? 3 : 4));
+        QApplication::processEvents(); EXPECT_EQ(sends, 0) << reason;
+    }
+}
 bool spin(const std::function<bool()>& done, int timeout = 15000) {
     QElapsedTimer timer; timer.start();
     while (timer.elapsed() < timeout) {

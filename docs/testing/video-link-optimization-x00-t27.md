@@ -8,7 +8,7 @@ natural 1.58 FPS scene are reference observations, not the new-role baseline.
 
 ## Execution sequence
 
-For every phase requiring two machines: finish local implementation/checks, commit
+For the original local-Host deployment workflow: finish local checks, commit
 and push the relevant source and required dependencies, then use `build.ps1
 -Configuration Debug` to build/publish that pushed source. Bring up the local
 controlled Debug Host with its existing credential. Record DHT publication and
@@ -17,6 +17,13 @@ media before starting load or sampling. Prepare a complete rollback artifact and
 a session-independent recovery task before replacing a serving Host. Preserve the
 connected-Host exit confirmation. Older capable Clients may connect; identical
 versions are not a gate. Controller log benefits require a Client containing P1.
+
+The operator subsequently selected local Client / remote Host on 2026-09-29.
+Use that running topology for the new-role baseline; do not automatically switch
+roles or deploy a remote Host. See the current [task ledger](../runtime/MODULE_KANBAN.md).
+P6 can independently reuse earlier same-Host recordings for
+[offline attribution](video-send-attribution-20260929.md); those results do not
+qualify the current remote Host.
 
 ## Phases
 

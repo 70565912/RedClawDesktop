@@ -17,7 +17,7 @@ The unit workflow stores compiled vcpkg packages in a GitHub Actions cache keyed
 1. checks out the exact release tag;
 2. downloads the published Windows x64 ZIP and `SHA256SUMS.txt`;
 3. verifies the archive SHA256 and rejects unsafe archive paths;
-4. checks the portable package for the executable, Qt Windows plugin, README files, license, and release manifest;
+4. checks the portable package for the executable, Qt Windows plugin, MSVC desktop runtime DLLs, README files, license, and release manifest;
 5. executes `redclaw_desktop.exe --help` from the extracted archive and requires exit code zero plus the expected usage output.
 
 This package smoke does not rebuild dependencies. It verifies the actual uploaded asset and detects archive damage, missing load-time DLLs, or a broken command entry point.

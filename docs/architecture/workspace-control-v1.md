@@ -116,7 +116,11 @@ deterministic tests without altering the user's clipboard or injecting keys.
 `clipboard.copies.list/open/cleanup` accept `target: remote|local` (default remote)
 and retain existing received-copy behavior;
 cleanup accepts only existing opaque copy IDs, never arbitrary paths.
-There is no continuous clipboard synchronization.
+Local-to-remote clipboard transfer remains on demand. The separate capability-4
+GUI return flow automatically receives new Host copies, including menu copies,
+through the same verified transfer and mutation gate. It never injects a local
+paste or overwrites a newer local copy. API `clipboard.read` continues to export
+without publishing. See the [clipboard product contract](remote-workspace-v013.md#product-contract).
 
 One file/clipboard batch per connection remains the shared rule. Terminal
 input and new Agent mutations are blocked during that batch; media and
@@ -129,6 +133,12 @@ messages/semantics are sent only at their negotiated common version. Older
 peers keep their original terminal stream, file transfer and clipboard paste.
 Unsupported new calls fail explicitly. Neither connection nor acceptance
 requires equal versions, commits or executable hashes.
+
+The 2026-09-28 working-tree extension advertises clipboard 4. Both endpoints must
+negotiate 4 before using `ClipboardChanged` and the optional Host source revision;
+common 1/2/3 connections retain their previous operations without change notices.
+The reverse publication reuses capability-3 mode 2 and the existing file channel.
+This extension does not change the published v0.1.5 package.
 
 Qualification uses isolated local fixtures, injected clipboard/focus adapters
 and supported-capability direction/reconnect tests. Actual application paste

@@ -7,13 +7,15 @@
 #include <QStringList>
 #include <functional>
 #include <deque>
+#include <optional>
 
 namespace redclaw::ui {
 class TransferCoordinator final : public QObject {
 public:
     using Control = protocol::StreamControlMessageV1;
     using Send = std::function<bool(const Control&, QString*)>;
-    explicit TransferCoordinator(Send send, QObject* parent = nullptr);
+    explicit TransferCoordinator(Send send, QObject* parent = nullptr,
+        std::function<std::uint32_t()> clipboard_sequence = {});
     bool submit(const Control& message, QString* error);
     bool start_files(Control request, const QStringList& sources, QString* error);
     void receive(const Control& message);
@@ -26,6 +28,7 @@ public:
 private:
     void next_source();
     void notify(const QString& id);
+    void schedule_clipboard_return();
     struct Operation { Control request; QJsonObject state; QJsonArray entries; std::uint64_t first = 0, next = 0; };
     Send send_;
     QMap<QString, Operation> operations_;
@@ -35,5 +38,10 @@ private:
     qsizetype source_index_ = 0;
     bool selection_sent_ = false, runtime_busy_ = false;
     std::uint32_t file_version_ = 0, clipboard_version_ = 0;
+    std::function<std::uint32_t()> clipboard_sequence_;
+    std::optional<Control> pending_clipboard_return_;
+    std::uint32_t return_local_sequence_ = 0, last_clipboard_revision_ = 0;
+    std::string clipboard_epoch_;
+    bool clipboard_return_scheduled_ = false;
 };
 }

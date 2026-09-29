@@ -138,6 +138,7 @@ function Copy-ReleaseRuntime {
     foreach ($dll in @(Get-ChildItem -LiteralPath $releaseDirectory -File -Filter '*.dll')) {
         Copy-Item -LiteralPath $dll.FullName -Destination $stagingDirectory -Force
     }
+    & (Join-Path $scriptRoot 'copy-msvc-desktop-runtime.ps1') -DestinationDirectory $stagingDirectory
 
     foreach ($pluginDirectoryName in @(
         'iconengines',
@@ -218,6 +219,14 @@ function Assert-StagingContent {
     if (-not ($files | Where-Object { $_ -eq 'platforms/qwindows.dll' })) {
         throw 'Staging validation failed: platforms/qwindows.dll is missing.'
     }
+    foreach ($runtimeDll in @(
+        'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll',
+        'vcruntime140.dll', 'vcruntime140_1.dll'
+    )) {
+        if ($files -notcontains $runtimeDll) {
+            throw "Staging validation failed: $runtimeDll is missing from the package root."
+        }
+    }
 
     $violations = @($files | Where-Object {
         $_ -match '(?i)(^|/)(redclaw_host_service|redclaw_debug_bridge)\.exe$' -or
@@ -234,8 +243,13 @@ function Assert-StagingContent {
 function Write-InnerManifest {
     Push-Location $repoRoot
     try {
-        $gitSha = (& git rev-parse HEAD).Trim()
-        Assert-LastExitCode -Name 'git rev-parse HEAD'
+        $taggedCommit = Invoke-CapturedCommand -FilePath 'git' -ArgumentList @('rev-parse', '--verify', "$tagName^{commit}")
+        if ($taggedCommit.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($taggedCommit.Output)) {
+            $gitSha = ($taggedCommit.Output -split '\r?\n' | Select-Object -First 1).Trim()
+        } else {
+            $gitSha = (& git rev-parse HEAD).Trim()
+            Assert-LastExitCode -Name 'git rev-parse HEAD'
+        }
     } finally {
         Pop-Location
     }

@@ -16,13 +16,16 @@ bool reject(std::string* error, const char* code) { if (error) *error = code; re
 }
 bool validate_workspace_control_v1(const WorkspaceControlV1& m, std::string* error) {
     if (m.schema_version != 1) return reject(error, "protocol_version_incompatible");
-    if (m.action < WorkspaceActionV1::kPrepare || m.action > WorkspaceActionV1::kBrowseClipboardCopies
+    if (m.action < WorkspaceActionV1::kPrepare || m.action > WorkspaceActionV1::kClipboardChanged
         || m.direction < TransferDirectionV1::kToHost || m.direction > TransferDirectionV1::kToController
         || m.purpose < WorkspaceTransferPurposeV1::kFiles || m.purpose > WorkspaceTransferPurposeV1::kClipboardOpenCopy
         || m.conflict < TransferConflictV1::kKeepBoth || m.conflict > TransferConflictV1::kSkip)
         return reject(error, "workspace_unknown_value");
     const bool clipboard = m.purpose == WorkspaceTransferPurposeV1::kClipboard;
     const bool copy_action = m.purpose == WorkspaceTransferPurposeV1::kClipboardCleanup || m.purpose == WorkspaceTransferPurposeV1::kClipboardOpenCopy;
+    if ((m.clipboard_revision && (!clipboard || m.clipboard_mode != 2 || m.direction != TransferDirectionV1::kToController))
+        || (m.action == WorkspaceActionV1::kClipboardChanged && !m.clipboard_revision))
+        return reject(error, "workspace_invalid_clipboard_revision");
     if ((clipboard && !m.clipboard_mode && m.direction != TransferDirectionV1::kToHost)
         || (m.clipboard_sequence && (!clipboard || m.action != WorkspaceActionV1::kPrepare))
         || (m.paste_submitted && (!clipboard || m.action != WorkspaceActionV1::kFinished))

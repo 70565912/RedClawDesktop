@@ -21,6 +21,13 @@
 #endif
 
 namespace redclaw::workspace {
+std::uint32_t clipboard_sequence_number() {
+#ifdef _WIN32
+    return GetClipboardSequenceNumber();
+#else
+    return 0;
+#endif
+}
 namespace {
 constexpr std::size_t kChunk = 64U * 1024U;
 bool fail(std::string* error, const char* code) { if (error) *error = code; return false; }

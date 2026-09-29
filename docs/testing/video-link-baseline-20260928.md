@@ -168,3 +168,43 @@ still limits the measured rate to about 21.3 FPS. Evidence is retained under
 `build/reports/x00-t27/p3-comparison-20260929/`, including `analysis.json`,
 `trace-integrity.json`, `gui-validation.json`, geometry/counter snapshots and raw
 traces. P4–P6 and the final 5-minute quality run remain.
+
+## Role reversal on 2026-09-29: local Client observation
+
+The operator confirmed normal replaced video with this machine acting as Client
+and the peer as Host. Current local artifact identity is P4 `af637da`. The old
+local-Host status is stale; its B0/P2/P3 measurements remain specific to that
+machine and role and are not a comparison baseline for the remote Host.
+
+A natural-scene 60-second GUI trace recorded 1,749 displayed frames (29.15 FPS),
+zero trace overflow and dispatch-wait P95/P99 7.990/19.644 ms. Present-call P95/P99
+was 0.305/0.375 ms. Surrounding playback snapshots reported advancing D3D11 decoded
+surfaces with no additional decode/present failures, CPU transfers, software
+frames, surface fallbacks or resizes. The decoded visible image stayed 1584×990
+and the Client output viewport stayed 1920×991. The runtime's own decoded/rendered
+counters are zero on this GUI presentation route; GUI playback/trace counters
+provide the actual evidence, not those runtime-only counters.
+
+Remote Agent preflight was concurrent. This is a connectivity and observation
+check, not a fixed-scene comparison, maximum-throughput result or P1 improvement
+claim. Host-side build/feature identity and capture geometry must come from the
+remote endpoint's sanitized result before a new fixed-scene contract is set.
+No source, network, viewport or runtime replacement occurred in this observation.
+Evidence: `build/reports/x00-t27/client-natural-preflight-20260929/`.
+
+The existing remote Agent task completed after one provider-error recovery. Its
+sanitized result reports capture 1680×1050 / encode 1584×990 and P2 present;
+running Host commit and P3/P4 presence remain unknown. Binary hash, network
+configuration digest and diagnostic interval were not established, so fixed-scene
+baseline readiness is unconfirmed. No scene or load was started. The GUI result
+API retained only the final 100 streamed chunks; a concise restatement recovered
+these result fields without repeating diagnostics. The endpoint retained raw
+evidence under opaque reference `97283b6b13bd43b0b04382d6c757fe29`; the received
+short result is `build/reports/x00-t27/remote-role-preflight-short-result.txt`.
+
+## Sending wait attribution
+
+The [P6 attribution report](video-send-attribution-20260929.md) reuses all 27 B0/P2/P3
+windows and separates key/ordinary frames, exclusive waits, wake overshoot, send
+calls, queue time and frame age. It preserves this former-local-Host scope and
+records the independently scoped X00-T28 follow-up. No new live load was used.

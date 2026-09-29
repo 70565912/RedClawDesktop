@@ -312,6 +312,8 @@ FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(paren
         impl_->clipboard_mode = message.workspace->clipboard_mode;
         impl_->results_path.clear(); impl_->result_visible = true;
         impl_->cancel->setEnabled(true); impl_->progress->setRange(0, 0); impl_->refresh();
+        if (impl_->purpose == Purpose::kClipboard && impl_->direction == Direction::kToController && impl_->clipboard_mode == 2)
+            impl_->status->setText(QString::fromUtf8("正在接收对端剪贴板，完成后可在本机粘贴…"));
     };
     impl_->coordinator.local_event = [this](const Control& message) { receive(message); };
 }
@@ -408,6 +410,8 @@ void FileTransferPanel::receive(const Control& message) {
             : QString::fromUtf8("传送已结束：") + qtext(details.error_code))
             + QString::fromUtf8(" 已校验 %1；完成 %2 / %3 个文件，跳过 %4 项。")
                 .arg(amount(details.committed_bytes)).arg(details.completed_files).arg(details.files).arg(details.skipped_entries));
+        if (impl_->purpose == Purpose::kClipboard && impl_->direction == Direction::kToController && impl_->clipboard_mode == 2
+            && details.error_code.empty()) impl_->status->setText(QString::fromUtf8("对端剪贴板已接收，可以在本机粘贴。"));
         if (impl_->purpose == Purpose::kClipboard && (impl_->clipboard_mode == 0 || impl_->clipboard_mode == 3)) impl_->status->setText(
             details.error_code.empty() && details.paste_submitted
                 ? QString::fromUtf8("剪贴板已送达，已向原对端窗口提交一次粘贴。")

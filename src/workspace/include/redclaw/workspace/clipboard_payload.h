@@ -8,6 +8,7 @@
 #include <string>
 
 namespace redclaw::workspace {
+[[nodiscard]] std::uint32_t clipboard_sequence_number();
 enum class ClipboardPayloadFormat : std::uint32_t { kUnicodeText = 1, kHtml, kRtf, kPng, kDibV5, kDib };
 struct ClipboardFileSelection {
     std::filesystem::path source;
