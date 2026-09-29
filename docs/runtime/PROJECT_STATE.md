@@ -5,14 +5,23 @@ Updated: 2026-09-29
 ## Current optimization work
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
-[phase plan](../testing/video-link-optimization-x00-t27.md). The operator now
-requests **local Debug Host / remote Client**. QSV repair `e1c915a` is pushed,
-clean-source Debug built/published and deployed to `release/Debug`, with complete
-336-file candidate and rollback verification. Local controlled Host is running
-with the existing protected credential and verified ICE port 56000. DHT is
-reachable, listener ready, current-generation publication successful, and phase
-is `dht_waiting` / `offer_ready`. Do not start remote load or sampling until the
-operator connects the updated Client and confirms video.
+[phase plan](../testing/video-link-optimization-x00-t27.md). Current roles are
+**local Debug Host / remote Client**. Pushed `f5dac5d` is clean-source Debug
+built/published and running from `release/Debug`, with complete 336-file candidate
+and rollback verification, retained protected credentials and effective ICE port
+56000. The operator confirmed normal pictures and unchanged viewport after both
+CPU-reference and GPU-candidate replacements; real-media measurement is complete.
+
+**P5's local NVIDIA FPS/latency acceptance failed.** The fresh P4 CPU versus P5 GPU
+comparison completed 18 windows. Dynamic three-run medians changed from 21.30 to
+15.78 FPS and from 76.04 to 180.26 ms Host frame-age P99. Main-video readbacks were
+eliminated and Host CPU decreased, but preparation/encoding became slower.
+DynamicLog reproduces the regression. A five-minute GPU run sent 4842 frames
+without stream failures or reconnects; private memory remained stable over that
+interval. Next: separate GPU context-lock wait, video processing, surface/copy and
+encoder submit costs, then fix and repeat the affected comparison. Do not mark P5
+complete or substitute the separate pacer task for this regression. See the
+[matched results and limits](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
 
 The QSV bridge maps leased D3D11 surfaces into the derived QSV context and keeps
 the visible crop. Each surface is its own 16-aligned render-target NV12 texture;
@@ -20,8 +29,8 @@ a decoder-target array encoded slice 0 on Intel HD Graphics 530 and produced a
 black picture. The strict Intel gate now passes on that device, including
 resize and device replacement, with zero GPU-input fallbacks.
 See the [repair and validation limits](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
-The immediate next step is the operator's remote Client connection; see the
-[Host readiness receipt](../testing/video-gpu-input-p5-20260929.md#pushed-debug-publication-and-local-host-readiness).
+Intel functional success does not establish Intel performance improvement; the
+new measured regression applies to the local NVIDIA Host.
 
 The previous local-Client/remote-Host run confirmed normal video and the DISPLAY2
 thumbnail repair: deployed `8c4fc09`, advancing revisions 1761→1777 and no failures.
@@ -31,13 +40,14 @@ That baseline contains nine valid windows / 15980 sent frames, no overflow or
 sampled failure increments, capture-copy 4.36 ms/frame and input preparation
 12.90 ms/attempt. The [earlier local-Host evidence](../testing/video-link-baseline-20260928.md)
 and this remote-Host baseline remain historical; changing roles requires a new
-matched baseline. Neither local NVENC results nor the role change establish
-QSV activation or an attributable performance improvement.
+matched baseline, now recorded in the P5 acceptance above. This historical run
+does not establish QSV performance improvement.
 
 [P6 offline attribution](../testing/video-send-attribution-20260929.md) is complete
 for the former local Host. X00-T28 retains the separately scoped wake-lateness
-follow-up. Intel GPU activation, matched performance and final five-minute
-quality acceptance remain open on the task ledger.
+follow-up. P5 throughput/tail regression, Intel matched performance and detailed
+remote visual comparison remain open on the task ledger. The current five-minute
+run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
