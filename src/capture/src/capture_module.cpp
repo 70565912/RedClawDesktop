@@ -3,6 +3,7 @@
 #include <chrono>
 #include "redclaw/capture/capture_cursor.h"
 #include "capture_cursor_d3d11.h"
+#include "capture_d3d11.h"
 #include "capture_backend.h"
 #include "redclaw/capture/captured_frame_pool.h"
 #include "capture_failure_evidence.h"
@@ -79,12 +80,6 @@ namespace redclaw::capture {
 #ifdef _WIN32
 using Microsoft::WRL::ComPtr;
 
-struct CapturedFrameNativeHandle {
-    ComPtr<ID3D11Device> d3d11_device;
-    ComPtr<ID3D11Texture2D> d3d11_texture;
-    DXGI_FORMAT d3d11_format = DXGI_FORMAT_UNKNOWN;
-    std::uint32_t d3d11_subresource_index = 0;
-};
 #else
 struct CapturedFrameNativeHandle {};
 #endif
@@ -136,28 +131,6 @@ bool captured_frame_has_cpu_bgra_pixels(const CapturedFrame& frame) {
 }
 
 #ifdef _WIN32
-CapturedFrameNativeHandle* unwrap_d3d11_native_handle(const CapturedFrame& frame) {
-    if (frame.native_handle_type != CapturedFrameNativeHandleType::kD3D11Texture2D
-        || frame.native_handle == nullptr) {
-        return nullptr;
-    }
-
-    return frame.native_handle.get();
-}
-
-std::shared_ptr<CapturedFrameNativeHandle> make_d3d11_native_handle(
-    ID3D11Device* device,
-    ID3D11Texture2D* texture,
-    DXGI_FORMAT format,
-    std::uint32_t subresource_index) {
-    auto handle = std::make_shared<CapturedFrameNativeHandle>();
-    handle->d3d11_device = device;
-    handle->d3d11_texture = texture;
-    handle->d3d11_format = format;
-    handle->d3d11_subresource_index = subresource_index;
-    return handle;
-}
-
 std::string describe_encoder_backend(EncoderBackendType backend);
 
 constexpr std::uint32_t kDxgiVendorIdIntel = 0x8086U;
@@ -165,7 +138,8 @@ constexpr std::uint32_t kDxgiVendorIdNvidia = 0x10DEU;
 constexpr std::uint32_t kDxgiVendorIdAmd = 0x1002U;
 constexpr int kD3D11HardwareFramePoolSize = 32;
 constexpr std::size_t kDdaNativeTexturePoolSize = 4;
-constexpr std::size_t kWgcNativeTexturePoolSize = 2;
+// Capture, latest pending and encoding may each retain a distinct frame.
+constexpr std::size_t kWgcNativeTexturePoolSize = 3;
 constexpr std::int32_t kWgcFramePoolSize = 2;
 constexpr std::uint32_t kMaxWgcFramePoolRecreatesPerCapture = 4;
 
@@ -363,263 +337,6 @@ bool is_native_frame_backend_vendor_compatible(
     return false;
 }
 
-class D3D11VideoProcessorScaler final {
-public:
-    bool scale(
-        const CapturedFrame& source,
-        std::uint32_t output_width,
-        std::uint32_t output_height,
-        CapturedFrame* output,
-        std::string* error_detail) {
-        auto* native = unwrap_d3d11_native_handle(source);
-        if (native == nullptr || native->d3d11_device == nullptr
-            || native->d3d11_texture == nullptr || output == nullptr) {
-            assign_error("D3D11 video processor scaling requires a native texture", error_detail);
-            return false;
-        }
-        if (output_width < 2 || output_height < 2) {
-            assign_error("D3D11 video processor output dimensions are invalid", error_detail);
-            return false;
-        }
-
-        D3D11_TEXTURE2D_DESC source_desc{};
-        native->d3d11_texture->GetDesc(&source_desc);
-        if (!ensure_pipeline(
-                native->d3d11_device.Get(),
-                source_desc,
-                output_width,
-                output_height,
-                error_detail)) {
-            return false;
-        }
-
-        ComPtr<ID3D11VideoProcessorInputView> input_view;
-        D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_desc{};
-        input_desc.FourCC = 0;
-        input_desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
-        input_desc.Texture2D.MipSlice = 0;
-        input_desc.Texture2D.ArraySlice = 0;
-        const HRESULT input_view_hr = video_device_->CreateVideoProcessorInputView(
-            native->d3d11_texture.Get(),
-            enumerator_.Get(),
-            &input_desc,
-            &input_view);
-        if (FAILED(input_view_hr) || input_view == nullptr) {
-            assign_error(
-                "CreateVideoProcessorInputView failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(input_view_hr)),
-                error_detail);
-            return false;
-        }
-
-        const CaptureRegion source_region = normalize_capture_region(
-            source.source_region,
-            source.width,
-            source.height);
-        const EncoderContentRect content_rect = resolve_capture_region_content_rect(
-            source_region,
-            output_width,
-            output_height);
-        if (source_region.width == 0 || source_region.height == 0
-            || content_rect.width == 0 || content_rect.height == 0) {
-            assign_error("D3D11 video processor crop geometry is invalid", error_detail);
-            return false;
-        }
-        const RECT source_rect{
-            static_cast<LONG>(source_region.x),
-            static_cast<LONG>(source_region.y),
-            static_cast<LONG>(source_region.x + source_region.width),
-            static_cast<LONG>(source_region.y + source_region.height)};
-        const RECT output_rect{
-            0, 0, static_cast<LONG>(output_width), static_cast<LONG>(output_height)};
-        const RECT destination_rect{
-            static_cast<LONG>(content_rect.x),
-            static_cast<LONG>(content_rect.y),
-            static_cast<LONG>(content_rect.x + content_rect.width),
-            static_cast<LONG>(content_rect.y + content_rect.height)};
-        D3D11_VIDEO_COLOR background{};
-        background.RGBA.A = 1.0F;
-        video_context_->VideoProcessorSetOutputBackgroundColor(
-            processor_.Get(), FALSE, &background);
-        video_context_->VideoProcessorSetOutputTargetRect(processor_.Get(), TRUE, &output_rect);
-        video_context_->VideoProcessorSetStreamSourceRect(processor_.Get(), 0, TRUE, &source_rect);
-        video_context_->VideoProcessorSetStreamDestRect(processor_.Get(), 0, TRUE, &destination_rect);
-        video_context_->VideoProcessorSetStreamAutoProcessingMode(processor_.Get(), 0, FALSE);
-
-        D3D11_VIDEO_PROCESSOR_STREAM stream{};
-        stream.Enable = TRUE;
-        stream.pInputSurface = input_view.Get();
-        const HRESULT blit_hr = video_context_->VideoProcessorBlt(
-            processor_.Get(), output_view_.Get(), 0, 1, &stream);
-        if (FAILED(blit_hr)) {
-            assign_error(
-                "VideoProcessorBlt failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(blit_hr)),
-                error_detail);
-            return false;
-        }
-
-        output->width = output_width;
-        output->height = output_height;
-        output->row_pitch = 0;
-        output->bgra = true;
-        output->data.clear();
-        output->source_region = CaptureRegion{
-            .x = 0,
-            .y = 0,
-            .width = output_width,
-            .height = output_height,
-            .revision = source_region.revision,
-        };
-        output->desktop_origin_x = source.desktop_origin_x;
-        output->desktop_origin_y = source.desktop_origin_y;
-        output->desktop_width = source.desktop_width;
-        output->desktop_height = source.desktop_height;
-        output->desktop_rotation = source.desktop_rotation;
-        output->native_handle_type = CapturedFrameNativeHandleType::kD3D11Texture2D;
-        output->native_handle = make_d3d11_native_handle(
-            native->d3d11_device.Get(),
-            output_texture_.Get(),
-            source_desc.Format,
-            0);
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
-        return true;
-    }
-
-    void reset() {
-        output_view_.Reset();
-        output_texture_.Reset();
-        processor_.Reset();
-        enumerator_.Reset();
-        video_context_.Reset();
-        video_device_.Reset();
-        device_.Reset();
-        source_width_ = 0;
-        source_height_ = 0;
-        output_width_ = 0;
-        output_height_ = 0;
-        format_ = DXGI_FORMAT_UNKNOWN;
-    }
-
-private:
-    bool ensure_pipeline(
-        ID3D11Device* device,
-        const D3D11_TEXTURE2D_DESC& source_desc,
-        std::uint32_t output_width,
-        std::uint32_t output_height,
-        std::string* error_detail) {
-        if (device_.Get() == device
-            && source_width_ == source_desc.Width
-            && source_height_ == source_desc.Height
-            && output_width_ == output_width
-            && output_height_ == output_height
-            && format_ == source_desc.Format
-            && processor_ != nullptr && output_view_ != nullptr) {
-            return true;
-        }
-
-        reset();
-        device_ = device;
-        if (FAILED(device_->QueryInterface(IID_PPV_ARGS(&video_device_)))
-            || video_device_ == nullptr) {
-            assign_error("ID3D11VideoDevice is unavailable", error_detail);
-            reset();
-            return false;
-        }
-        ComPtr<ID3D11DeviceContext> immediate_context;
-        device_->GetImmediateContext(&immediate_context);
-        if (immediate_context == nullptr
-            || FAILED(immediate_context.As(&video_context_))
-            || video_context_ == nullptr) {
-            assign_error("ID3D11VideoContext is unavailable", error_detail);
-            reset();
-            return false;
-        }
-
-        D3D11_VIDEO_PROCESSOR_CONTENT_DESC content{};
-        content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
-        content.InputFrameRate = {30, 1};
-        content.InputWidth = source_desc.Width;
-        content.InputHeight = source_desc.Height;
-        content.OutputFrameRate = {30, 1};
-        content.OutputWidth = output_width;
-        content.OutputHeight = output_height;
-        content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
-        HRESULT hr = video_device_->CreateVideoProcessorEnumerator(&content, &enumerator_);
-        if (FAILED(hr) || enumerator_ == nullptr) {
-            assign_error(
-                "CreateVideoProcessorEnumerator failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(hr)),
-                error_detail);
-            reset();
-            return false;
-        }
-        hr = video_device_->CreateVideoProcessor(enumerator_.Get(), 0, &processor_);
-        if (FAILED(hr) || processor_ == nullptr) {
-            assign_error(
-                "CreateVideoProcessor failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(hr)),
-                error_detail);
-            reset();
-            return false;
-        }
-
-        D3D11_TEXTURE2D_DESC output_desc{};
-        output_desc.Width = output_width;
-        output_desc.Height = output_height;
-        output_desc.MipLevels = 1;
-        output_desc.ArraySize = 1;
-        output_desc.Format = source_desc.Format;
-        output_desc.SampleDesc.Count = 1;
-        output_desc.Usage = D3D11_USAGE_DEFAULT;
-        output_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-        hr = device_->CreateTexture2D(&output_desc, nullptr, &output_texture_);
-        if (FAILED(hr) || output_texture_ == nullptr) {
-            assign_error(
-                "D3D11 video processor output texture creation failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(hr)),
-                error_detail);
-            reset();
-            return false;
-        }
-
-        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output_view_desc{};
-        output_view_desc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
-        output_view_desc.Texture2D.MipSlice = 0;
-        hr = video_device_->CreateVideoProcessorOutputView(
-            output_texture_.Get(), enumerator_.Get(), &output_view_desc, &output_view_);
-        if (FAILED(hr) || output_view_ == nullptr) {
-            assign_error(
-                "CreateVideoProcessorOutputView failed hr="
-                    + format_hex_u32(static_cast<std::uint32_t>(hr)),
-                error_detail);
-            reset();
-            return false;
-        }
-
-        source_width_ = source_desc.Width;
-        source_height_ = source_desc.Height;
-        output_width_ = output_width;
-        output_height_ = output_height;
-        format_ = source_desc.Format;
-        return true;
-    }
-
-    ComPtr<ID3D11Device> device_;
-    ComPtr<ID3D11VideoDevice> video_device_;
-    ComPtr<ID3D11VideoContext> video_context_;
-    ComPtr<ID3D11VideoProcessorEnumerator> enumerator_;
-    ComPtr<ID3D11VideoProcessor> processor_;
-    ComPtr<ID3D11Texture2D> output_texture_;
-    ComPtr<ID3D11VideoProcessorOutputView> output_view_;
-    std::uint32_t source_width_ = 0;
-    std::uint32_t source_height_ = 0;
-    std::uint32_t output_width_ = 0;
-    std::uint32_t output_height_ = 0;
-    DXGI_FORMAT format_ = DXGI_FORMAT_UNKNOWN;
-};
 #else
 CapturedFrameNativeHandle* unwrap_d3d11_native_handle(const CapturedFrame&) {
     return nullptr;
@@ -1837,13 +1554,16 @@ public:
         const EncoderBackendBridgePlan& bridge_plan,
         std::string* error_detail) {
         const auto previous_fps = profile_.fps;
+        const auto blocked_reason = hardware_input_policy_.blocked()
+            ? diagnostics_.hardware_input_block_reason : std::string{};
         stop();
 
         diagnostics_ = EncoderExecutionDiagnostics{};
+        diagnostics_.hardware_input_block_reason = blocked_reason;
         diagnostics_.backend = bridge_plan.selected_backend;
         selected_backend_ = bridge_plan.selected_backend;
         hardware_frame_input_allowed_ = bridge_plan.allow_hardware_frame_input;
-        hardware_frame_input_activation_failed_ = !hardware_frame_input_allowed_;
+
 
         if (profile.width == 0 || profile.height == 0 || profile.fps == 0) {
             return fail(
@@ -1883,6 +1603,7 @@ public:
                 error_detail);
         }
         hardware_input_plan_ = resolve_encoder_hardware_input_plan(codec_, selected_backend_);
+        hardware_input_policy_.configure(hardware_frame_input_allowed_ && hardware_input_plan_.has_value());
         const bool opened = open_runtime_context(false, nullptr, error_detail);
         if (opened && !hardware_frame_input_allowed_) {
             diagnostics_.hardware_input_block_reason =
@@ -1927,7 +1648,17 @@ public:
                 error_detail);
         }
 
+        const bool capture_generation_changed = hardware_input_policy_.observe_generation(frame.capture_generation);
+        if (capture_generation_changed) {
+            // Recovery may initially deliver CPU pixels (or select GDI). Retire
+            // the old GPU context without marking this new device as failed.
+            if (hardware_frame_input_active_ && !unwrap_d3d11_native_handle(frame)) {
+                if (!open_runtime_context(false, nullptr, error_detail)) return false;
+            }
+            request_keyframe();
+        }
         const auto encode_start = std::chrono::steady_clock::now();
+        const auto input_prepare_start = encode_start;
         const CaptureRegion source_region = normalize_capture_region(
             frame.source_region,
             frame.width,
@@ -1939,7 +1670,7 @@ public:
         const bool has_cpu_pixels = captured_frame_has_cpu_bgra_pixels(frame);
         const bool has_native_texture = unwrap_d3d11_native_handle(frame) != nullptr;
         if (!hardware_frame_input_active_
-            && !hardware_frame_input_activation_failed_
+            && !hardware_input_policy_.blocked()
             && has_native_texture
             && hardware_input_plan_.has_value()) {
             std::string capture_adapter_summary;
@@ -1949,7 +1680,7 @@ public:
                     selected_backend_,
                     &capture_adapter_summary,
                     &hardware_input_block_reason)) {
-                hardware_frame_input_activation_failed_ = true;
+                hardware_input_policy_.fail_generation();
                 diagnostics_.hardware_input_block_reason = hardware_input_block_reason;
             }
             if (!capture_adapter_summary.empty()) {
@@ -1960,20 +1691,33 @@ public:
         bool gpu_scaled = false;
         std::string gpu_scale_error;
 #ifdef _WIN32
-        if ((input_scaled || source_cropped)
+        const auto gpu_format = selected_backend_ == EncoderBackendType::kQuickSync
+            ? DXGI_FORMAT_NV12
+            : encoder_supports_pixel_format(codec_, AV_PIX_FMT_BGRA) ? DXGI_FORMAT_B8G8R8A8_UNORM
+            : encoder_supports_pixel_format(codec_, AV_PIX_FMT_NV12) ? DXGI_FORMAT_NV12 : DXGI_FORMAT_UNKNOWN;
+        const bool format_conversion = gpu_format != DXGI_FORMAT_B8G8R8A8_UNORM;
+        if ((input_scaled || source_cropped || format_conversion)
             && has_native_texture
-            && !hardware_frame_input_activation_failed_
+            && !hardware_input_policy_.blocked()
             && hardware_input_plan_.has_value()) {
             gpu_scaled = d3d11_scaler_.scale(
                 frame,
                 profile_.width,
                 profile_.height,
+                gpu_format,
                 &gpu_scaled_frame,
                 &gpu_scale_error);
-            if (!gpu_scaled && !gpu_scale_error.empty()) {
-                diagnostics_.hardware_input_block_reason =
-                    "D3D11 video processor scaling unavailable; CPU swscale/readback fallback: "
-                    + gpu_scale_error;
+            if (!gpu_scaled) {
+                if (hardware_frame_input_active_) {
+                    (void)reopen_cpu_fallback_after_hardware_failure(gpu_scale_error, error_detail);
+                } else {
+                    hardware_input_policy_.fail_generation();
+                    diagnostics_.hardware_input_block_reason = "GPU input conversion unavailable: " + gpu_scale_error;
+                    request_keyframe();
+                    fail(EncoderExecutionFailureCategory::kOutputNotReady,
+                        "GPU conversion failed; waiting for the next CPU capture", error_detail);
+                }
+                return false;
             }
         }
 #endif
@@ -1984,15 +1728,17 @@ public:
             || (source_cropped && !gpu_scaled);
 
         if ((!hardware_frame_input_active_ || hardware_input_device_changed(hardware_candidate))
-            && !hardware_frame_input_activation_failed_
+            && !hardware_input_policy_.blocked()
             && !hardware_candidate_scaled
             && unwrap_d3d11_native_handle(hardware_candidate) != nullptr
             && hardware_input_plan_.has_value()) {
             diagnostics_.hardware_input_block_reason.clear();
             const std::uint64_t saved_pts = next_pts_;
             std::string hardware_error;
+            hardware_input_policy_.begin_attempt();
             if (open_runtime_context(true, &hardware_candidate, &hardware_error)) {
                 next_pts_ = saved_pts;
+                request_keyframe();
             } else {
                 const std::string reopen_error = hardware_error;
                 if (!open_runtime_context(false, nullptr, &hardware_error)) {
@@ -2008,22 +1754,22 @@ public:
                         error_detail);
                 }
                 next_pts_ = saved_pts;
-                hardware_frame_input_activation_failed_ = true;
+                hardware_input_policy_.fail_generation();
                 diagnostics_.hardware_input_block_reason =
                     "D3D11 video-processor output could not activate hardware-frame encoding; "
                     "CPU swscale/readback fallback: " + reopen_error;
-                diagnostics_.last_error_detail = reopen_error;
+                request_keyframe();
+                return fail(EncoderExecutionFailureCategory::kOutputNotReady,
+                    "GPU activation failed; waiting for the next CPU capture: " + reopen_error, error_detail);
             }
         }
 
         if (hardware_frame_input_active_ && (input_scaled || source_cropped) && !gpu_scaled) {
-            if (reopen_cpu_fallback_after_hardware_failure(
+            (void)reopen_cpu_fallback_after_hardware_failure(
                     gpu_scale_error.empty()
                         ? "D3D11 video processor scaling became unavailable"
                         : gpu_scale_error,
-                    error_detail)) {
-                return encode_bgra_frame(frame, timestamp_ms, packet, error_detail);
-            }
+                    error_detail);
             return false;
         }
 
@@ -2036,7 +1782,6 @@ public:
             && unwrap_d3d11_native_handle(frame) != nullptr;
 
         std::string convert_error;
-        const auto input_prepare_start = std::chrono::steady_clock::now();
         bool prepared_frame = false;
         if (hardware_frame_input_active_) {
             prepared_frame = prepare_hardware_input_frame(hardware_candidate, &convert_error);
@@ -2098,7 +1843,7 @@ public:
             const std::string failure_detail = convert_error.empty() ? "input frame preparation failed" : convert_error;
             if (hardware_frame_input_active_) {
                 if (reopen_cpu_fallback_after_hardware_failure(failure_detail, error_detail)) {
-                    return encode_bgra_frame(frame, timestamp_ms, packet, error_detail);
+                    return false;
                 }
                 ++diagnostics_.dropped_frame_count;
                 return false;
@@ -2190,7 +1935,7 @@ public:
             if (hardware_frame_input_active_) {
                 av_frame_unref(frame_);
                 if (reopen_cpu_fallback_after_hardware_failure(failure_detail, error_detail)) {
-                    return encode_bgra_frame(frame, timestamp_ms, packet, error_detail);
+                    return false;
                 }
                 ++diagnostics_.dropped_frame_count;
                 return false;
@@ -2206,7 +1951,6 @@ public:
             av_frame_unref(frame_);
         }
 
-        const bool hardware_input_was_active = hardware_frame_input_active_;
         const ReceivePacketResult receive_result = try_receive_encoded_packet(
             packet,
             timestamp_ms,
@@ -2220,9 +1964,6 @@ public:
         }
         if (receive_result == ReceivePacketResult::kNeedInput) {
             return false;
-        }
-        if (hardware_input_was_active && !hardware_frame_input_active_) {
-            return encode_bgra_frame(frame, timestamp_ms, packet, error_detail);
         }
         return false;
 #else
@@ -2289,7 +2030,7 @@ public:
         direct_bgra_input_ = false;
         hardware_frame_input_active_ = false;
         hardware_frame_input_allowed_ = true;
-        hardware_frame_input_activation_failed_ = false;
+        hardware_input_policy_.invalidate_context();
         hardware_frame_transfer_required_ = false;
         hardware_input_plan_.reset();
         selected_backend_ = EncoderBackendType::kSoftware;
@@ -2310,6 +2051,11 @@ public:
     [[nodiscard]] EncoderExecutionDiagnostics diagnostics() const {
         EncoderExecutionDiagnostics snapshot = diagnostics_;
         snapshot.keyframe_request_count = keyframe_request_count_.load();
+        snapshot.hardware_frame_input_confirmed = hardware_input_policy_.confirmed();
+        snapshot.requested_capture_delivery = is_running()
+            ? hardware_input_policy_.delivery() : CaptureFrameDelivery::kCpu;
+        snapshot.hardware_input_attempt_count = hardware_input_policy_.attempts();
+        snapshot.hardware_input_fallback_count = hardware_input_policy_.fallbacks();
         return snapshot;
     }
 
@@ -2520,6 +2266,7 @@ private:
         diagnostics_.last_failure = EncoderExecutionFailureCategory::kNone;
         diagnostics_.last_error_detail.clear();
         if (hardware_frame_input_active_) {
+            hardware_input_policy_.confirm_output();
             diagnostics_.hardware_input_block_reason.clear();
         }
         if (error_detail != nullptr) {
@@ -2536,7 +2283,7 @@ private:
         }
 
         const std::uint64_t saved_pts = next_pts_;
-        hardware_frame_input_activation_failed_ = true;
+        hardware_input_policy_.fail_generation();
         std::string fallback_error;
         if (!open_runtime_context(false, nullptr, &fallback_error)) {
             next_pts_ = saved_pts;
@@ -2549,11 +2296,9 @@ private:
 
         next_pts_ = saved_pts;
         diagnostics_.hardware_input_block_reason = "hardware-frame input disabled after encode failure: " + failure_detail;
-        diagnostics_.last_failure = EncoderExecutionFailureCategory::kNone;
-        diagnostics_.last_error_detail.clear();
-        if (error_detail != nullptr) {
-            error_detail->clear();
-        }
+        request_keyframe();
+        fail(EncoderExecutionFailureCategory::kOutputNotReady,
+            "GPU input failed; waiting for the next CPU capture: " + failure_detail, error_detail);
         return true;
     }
 
@@ -2561,6 +2306,7 @@ private:
         bool prefer_hardware_frame_input,
         const CapturedFrame* native_frame,
         std::string* error_detail) {
+        hardware_input_policy_.invalidate_context();
         if (codec_ == nullptr) {
             return fail(
                 EncoderExecutionFailureCategory::kEncoderInitFailed,
@@ -2896,7 +2642,7 @@ private:
         }
 
         base_d3d11_device_context_ = create_d3d11_device_context_from_existing_device(
-            native->d3d11_device.Get(),
+            native->owner,
             error_detail);
         if (base_d3d11_device_context_ == nullptr) {
             return false;
@@ -2907,7 +2653,7 @@ private:
             profile_.width,
             profile_.height,
             AV_PIX_FMT_D3D11,
-            AV_PIX_FMT_BGRA,
+            native->d3d11_format == DXGI_FORMAT_NV12 ? AV_PIX_FMT_NV12 : AV_PIX_FMT_BGRA,
             error_detail);
         if (base_d3d11_frames_context_ == nullptr) {
             return false;
@@ -3043,8 +2789,9 @@ private:
 
 #if defined(_WIN32) && REDCLAW_CAPTURE_HAS_D3D11_HWCONTEXT
     AVBufferRef* create_d3d11_device_context_from_existing_device(
-        ID3D11Device* device,
+        const std::shared_ptr<D3D11CaptureDevice>& owner,
         std::string* error_detail) {
+        ID3D11Device* device = owner ? owner->device.Get() : nullptr;
         if (device == nullptr) {
             if (error_detail != nullptr) {
                 *error_detail = "D3D11 hardware-frame bridge requires a non-null device";
@@ -3062,6 +2809,13 @@ private:
 
         auto* hw_device_context = reinterpret_cast<AVHWDeviceContext*>(device_context->data);
         auto* d3d11_hw_context = reinterpret_cast<AVD3D11VADeviceContext*>(hw_device_context->hwctx);
+        hw_device_context->user_opaque = new std::shared_ptr<D3D11CaptureDevice>(owner);
+        hw_device_context->free = [](AVHWDeviceContext* context) {
+            delete static_cast<std::shared_ptr<D3D11CaptureDevice>*>(context->user_opaque);
+        };
+        d3d11_hw_context->lock_ctx = owner.get();
+        d3d11_hw_context->lock = [](void* value) { static_cast<D3D11CaptureDevice*>(value)->mutex.lock(); };
+        d3d11_hw_context->unlock = [](void* value) { static_cast<D3D11CaptureDevice*>(value)->mutex.unlock(); };
         device->AddRef();
         d3d11_hw_context->device = device;
 
@@ -3168,7 +2922,9 @@ private:
         native->d3d11_texture->GetDesc(&source_desc);
         D3D11_TEXTURE2D_DESC destination_desc{};
         destination_texture->GetDesc(&destination_desc);
-        if (source_desc.Width != destination_desc.Width || source_desc.Height != destination_desc.Height) {
+        if (source_desc.Format != destination_desc.Format
+            || frame.width > source_desc.Width || frame.height > source_desc.Height
+            || frame.width > destination_desc.Width || frame.height > destination_desc.Height) {
             return fail(
                 EncoderExecutionFailureCategory::kEncodeFailed,
                 "source and destination D3D11 texture dimensions differ",
@@ -3184,6 +2940,8 @@ private:
                 error_detail);
         }
 
+        std::lock_guard context_lock(native->owner->mutex);
+        const D3D11_BOX visible{0, 0, 0, frame.width, frame.height, 1};
         immediate_context->CopySubresourceRegion(
             destination_texture,
             destination_subresource,
@@ -3192,7 +2950,7 @@ private:
             0,
             native->d3d11_texture.Get(),
             native->d3d11_subresource_index,
-            nullptr);
+            &visible);
 
         if (error_detail != nullptr) {
             error_detail->clear();
@@ -3209,7 +2967,7 @@ private:
     bool direct_bgra_input_ = false;
     bool hardware_frame_input_active_ = false;
     bool hardware_frame_input_allowed_ = true;
-    bool hardware_frame_input_activation_failed_ = false;
+    HardwareInputPolicy hardware_input_policy_;
     bool hardware_frame_transfer_required_ = false;
 #ifdef _WIN32
     D3D11VideoProcessorScaler d3d11_scaler_;
@@ -3645,6 +3403,11 @@ public:
             return false;
         }
 
+        device_owner_ = D3D11CaptureDevice::create(device.Get());
+        if (!device_owner_) {
+            assign_error("D3D11 shared context protection unavailable", error_detail);
+            return false;
+        }
         device_ = std::move(device);
         context_ = std::move(context);
         duplication_ = std::move(duplication);
@@ -3724,6 +3487,7 @@ public:
         }
 
         const auto copy_start = std::chrono::steady_clock::now();
+        std::lock_guard context_lock(device_owner_->mutex);
         auto store_copy_us = [&]() {
             if (stage_telemetry != nullptr) {
                 stage_telemetry->copy_us = static_cast<std::uint64_t>(
@@ -3939,6 +3703,7 @@ public:
         duplication_.Reset();
         context_.Reset();
         device_.Reset();
+        device_owner_.reset();
         staging_texture_width_ = 0;
         staging_texture_height_ = 0;
         staging_texture_format_ = DXGI_FORMAT_UNKNOWN;
@@ -3996,7 +3761,7 @@ private:
         }
 
         auto handle = make_d3d11_native_handle(
-            device_.Get(), native_texture.Get(), desc.Format, 0);
+            device_owner_, native_texture.Get(), desc.Format, 0);
         native_frame_pool_.push_back(handle);
         if (stage_telemetry != nullptr) {
             stage_telemetry->native_texture_pool_created = true;
@@ -4004,6 +3769,7 @@ private:
         return handle;
     }
 
+    std::shared_ptr<D3D11CaptureDevice> device_owner_;
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutputDuplication> duplication_;
@@ -4135,6 +3901,8 @@ public:
                 &device,
                 &feature_level,
                 &context));
+            device_owner_ = D3D11CaptureDevice::create(device.Get());
+            if (!device_owner_) throw winrt::hresult_error(E_NOINTERFACE, L"D3D11 context protection unavailable");
             ComPtr<IDXGIDevice> dxgi_device;
             winrt::check_hresult(device.As(&dxgi_device));
 
@@ -4392,6 +4160,7 @@ public:
         }
 
         const auto copy_start = std::chrono::steady_clock::now();
+        std::lock_guard context_lock(device_owner_->mutex);
         auto close_frame = [&]() noexcept {
             if (captured_frame != nullptr) {
                 try {
@@ -4572,6 +4341,7 @@ public:
             native_frame_pool_.clear();
             context_.Reset();
             device_.Reset();
+            device_owner_.reset();
         }
         frame_pool_width_ = 0;
         frame_pool_height_ = 0;
@@ -4775,7 +4545,7 @@ private:
             return nullptr;
         }
         auto handle = make_d3d11_native_handle(
-            device_.Get(), native_texture.Get(), desc.Format, 0);
+            device_owner_, native_texture.Get(), desc.Format, 0);
         native_frame_pool_.push_back(handle);
         if (stage_telemetry != nullptr) {
             stage_telemetry->native_texture_pool_created = true;
@@ -4815,6 +4585,7 @@ private:
         staging_texture_format_ = DXGI_FORMAT_UNKNOWN;
     }
 
+    std::shared_ptr<D3D11CaptureDevice> device_owner_;
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutput> output_;

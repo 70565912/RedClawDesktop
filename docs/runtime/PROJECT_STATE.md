@@ -12,18 +12,28 @@ must not be reused as a remote-Host comparison baseline. The remote Agent now
 reports a verified running binary (SHA256 prefix `332CB8193DC4`, commit unknown),
 P3/P4 present, capture 1680×1050 / encode 1584×990, 10-second diagnostics, main
 log visible and mirror hidden. Full hash and network evidence stay on the peer.
-The existing Agent task is executing nine current-role fixed-scene windows;
-verify its completion and sanitized metrics before treating this as a baseline.
-The operator additionally authorized the remote terminal; it is available for
-read-only progress/result queries, with no duplicate sampling task.
+The [current-role baseline](../testing/video-link-remote-host-baseline-20260929.md)
+is complete: nine valid windows, 15980 sent traced frames, zero overflow or failure
+increments. After explicit Agent handoff, the authorized terminal finished two
+replacement windows and the result checks. Dynamic capture copying averages
+4.36 ms/frame and input preparation 12.90 ms/attempt; main-video CPU readback
+remains. Adaptive pacing differs in the two replacements and no same-peer pre-P4
+recording exists, so this establishes current behavior, not an improvement claim.
+The Client observer advanced 51575 decoded surfaces in 30 minutes with no failure
+or fallback increments. Host log replay is stopped; both endpoints remain streaming.
 Keep the current connection and Client viewport 1920×991. No remote replacement
 is requested. Local Client observation and previous results are in the
 [measurement report](../testing/video-link-baseline-20260928.md).
 
 [P6 offline attribution](../testing/video-send-attribution-20260929.md) is complete
 for the former local Host; it does not qualify the current peer. X00-T28 records
-the separately scoped wake-lateness follow-up. P5 and final acceptance remain
-on the [task ledger](MODULE_KANBAN.md).
+the separately scoped wake-lateness follow-up. [P5 implementation and local gates](../testing/video-gpu-input-p5-20260929.md)
+are complete: shared D3D11 synchronization, NV12 conversion, first-output GPU
+confirmation, generation-latched CPU fallback and small GPU thumbnail readback.
+Debug NoPublish build and focused tests passed; WGC/DDA each passed three device
+generations, totaling 36 GPU-only frames without additional desktop readback on
+local NVENC. The candidate is not published or deployed. Peer QSV activation,
+matched performance and final quality acceptance remain on the [task ledger](MODULE_KANBAN.md).
 
 ## Current release
 

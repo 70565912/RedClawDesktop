@@ -7,6 +7,7 @@ namespace redclaw::runtime {
 struct NavigationThumbnailStats {
     std::uint64_t submitted = 0, replaced = 0, sent = 0, failed = 0, discarded = 0;
     std::uint64_t prepare_us = 0, encode_us = 0, send_us = 0;
+    std::uint64_t gpu_readbacks = 0, gpu_readback_bytes = 0;
     std::size_t pending_bytes = 0;
     bool active = false;
 };

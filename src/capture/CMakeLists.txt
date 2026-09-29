@@ -1,5 +1,6 @@
 add_library(redclaw_capture STATIC
   src/capture_module.cpp
+  src/capture_d3d11.cpp
   src/captured_frame_pool.cpp
   src/navigation_thumbnail.cpp
   src/capture_recovery.cpp

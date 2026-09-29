@@ -5987,7 +5987,6 @@ int run_runtime_mode(
         auto& captured_frame = *latest_frame;
         std::string capture_error;
         const std::uint64_t navigation_now_ms = now_steady_ms();
-        const bool navigation_thumbnail_due = navigation_thumbnails.wants_frame(navigation_now_ms);
         set_stream_worker_stage(
             &stream_capture_worker_stage,
             &stream_capture_worker_stage_since_ms,
@@ -5997,7 +5996,7 @@ int run_runtime_mode(
             stream_source_activity_tracker.on_capture_poll_started(now_steady_ms());
         }
         const auto capture_start = std::chrono::steady_clock::now();
-        if (!stream_capture_session.captureFrame(&captured_frame, &capture_error, navigation_thumbnail_due)) {
+        if (!stream_capture_session.captureFrame(&captured_frame, &capture_error)) {
             set_stream_worker_stage(
                 &stream_capture_worker_stage,
                 &stream_capture_worker_stage_since_ms,
@@ -6602,11 +6601,7 @@ int run_runtime_mode(
             bridge_request.codec = redclaw::capture::EncoderCodec::kH264;
             bridge_request.preferred_backend = redclaw::capture::EncoderBackendType::kAuto;
             bridge_request.allow_hardware_fallback = true;
-            // Desktop Duplication capture and D3D11 hardware-frame encoding otherwise share
-            // an immediate context across worker threads. Keep the hardware codec backend,
-            // but use its CPU BGRA upload path so reconnect cannot strand both workers in the
-            // display driver.
-            bridge_request.allow_hardware_frame_input = false;
+            bridge_request.allow_hardware_frame_input = true;
             bridge_request.capture_adapter_vendor =
                 redclaw::capture::detect_captured_frame_adapter_vendor(*captured_frame);
 
@@ -6635,13 +6630,7 @@ int run_runtime_mode(
             stream_encoder_started = true;
             stream_encoder_start_retry_after_ms = 0;
             const auto encoder_diagnostics = stream_encoder_session.diagnostics();
-            const bool prefer_native_capture_only = encoder_diagnostics.hardware_frame_input_active
-                && ((encode_width == captured_frame->width
-                     && encode_height == captured_frame->height)
-                    || encoder_diagnostics.d3d11_video_processor_scaling_active);
-            stream_capture_session.configureFrameDelivery(prefer_native_capture_only
-                ? redclaw::capture::CaptureFrameDelivery::kGpu
-                : redclaw::capture::CaptureFrameDelivery::kCpu);
+            stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 const bool encoder_target_changed = encoder_resolution_changed
@@ -6772,16 +6761,11 @@ int run_runtime_mode(
             const bool output_not_ready =
                 encoder_diagnostics.last_failure
                 == redclaw::capture::EncoderExecutionFailureCategory::kOutputNotReady;
-            const bool prefer_native_capture_only = encoder_diagnostics.hardware_frame_input_active
-                && ((encode_width == captured_frame->width
-                     && encode_height == captured_frame->height)
-                    || encoder_diagnostics.d3d11_video_processor_scaling_active);
-            stream_capture_session.configureFrameDelivery(prefer_native_capture_only
-                ? redclaw::capture::CaptureFrameDelivery::kGpu
-                : redclaw::capture::CaptureFrameDelivery::kCpu);
+            stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
             if (output_not_ready) {
+                stream_last_encoded_capture_sequence = capture_sequence;
                 ++stream_host_stage_telemetry_snapshot.encode_output_not_ready_count;
                 return;
             }
@@ -6804,13 +6788,7 @@ int run_runtime_mode(
         encoded_frame.keyframe = encoded_packet.keyframe;
         encoded_frame.payload = std::move(encoded_packet.payload);
         const auto encoder_diagnostics = stream_encoder_session.diagnostics();
-        const bool prefer_native_capture_only = encoder_diagnostics.hardware_frame_input_active
-            && ((encode_width == captured_frame->width
-                 && encode_height == captured_frame->height)
-                || encoder_diagnostics.d3d11_video_processor_scaling_active);
-        stream_capture_session.configureFrameDelivery(prefer_native_capture_only
-            ? redclaw::capture::CaptureFrameDelivery::kGpu
-            : redclaw::capture::CaptureFrameDelivery::kCpu);
+        stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
@@ -11326,13 +11304,15 @@ int run_runtime_mode(
                           << " capture_black_frame_ratio=" << format_stream_stage_ms(capture_telemetry.black_frame_ratio * 100.0)
                           << " capture_attempt_total=" << capture_telemetry.total_capture_attempt_count
                           << " capture_timeout_total=" << capture_telemetry.total_timeout_count
-                          << " thumbnail_stats_version=1"
+                          << " thumbnail_stats_version=2"
                           << " thumbnail_submitted=" << thumbnail_stats.submitted
                           << " thumbnail_replaced=" << thumbnail_stats.replaced
                           << " thumbnail_sent=" << thumbnail_stats.sent
                           << " thumbnail_failed=" << thumbnail_stats.failed
                           << " thumbnail_discarded=" << thumbnail_stats.discarded
                           << " thumbnail_prepare_us=" << thumbnail_stats.prepare_us
+                          << " thumbnail_gpu_readbacks=" << thumbnail_stats.gpu_readbacks
+                          << " thumbnail_gpu_readback_bytes=" << thumbnail_stats.gpu_readback_bytes
                           << " thumbnail_encode_us=" << thumbnail_stats.encode_us
                           << " thumbnail_send_us=" << thumbnail_stats.send_us
                           << " thumbnail_pending_bytes=" << thumbnail_stats.pending_bytes
@@ -11656,6 +11636,10 @@ int run_runtime_mode(
                 if (options.role == RuntimeRole::kHost) {
                     std::cout << "Runtime host stream diagnostics role=" << role_name
                               << " encoder_backend=" << encoder_backend_to_string(encoder_diagnostics.backend)
+                              << " encoder_gpu_input_stats_version=1"
+                              << " encoder_gpu_input_confirmed=" << (encoder_diagnostics.hardware_frame_input_confirmed ? "true" : "false")
+                              << " encoder_gpu_input_attempts=" << encoder_diagnostics.hardware_input_attempt_count
+                              << " encoder_gpu_input_fallbacks=" << encoder_diagnostics.hardware_input_fallback_count
                               << " encoder_name="
                               << (encoder_diagnostics.encoder_name.empty() ? "n/a" : encoder_diagnostics.encoder_name)
                               << " encoder_configured_fps=" << encoder_diagnostics.configured_fps

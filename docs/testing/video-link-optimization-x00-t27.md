@@ -25,6 +25,14 @@ P6 can independently reuse earlier same-Host recordings for
 [offline attribution](video-send-attribution-20260929.md); those results do not
 qualify the current remote Host.
 
+The [new-role baseline](video-link-remote-host-baseline-20260929.md) now records
+nine valid windows and current readback/input-preparation cost. The authorized
+terminal finished results and two replacements after Agent handoff. The
+[P5 candidate](video-gpu-input-p5-20260929.md) is now implemented and locally
+validated; current measurements do not establish same-peer P4/P5 improvement.
+Preserve both endpoint roles and the running connection; candidate rollout and
+peer QSV validation remain separate stages.
+
 ## Phases
 
 | Phase | Scope | Evidence |
