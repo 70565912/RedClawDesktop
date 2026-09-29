@@ -1,43 +1,47 @@
 # Project State
 
-Updated: 2026-09-29
+Updated: 2026-09-30
 
 ## Current optimization work
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
-[phase plan](../testing/video-link-optimization-x00-t27.md). Current roles are
-**local Debug Host / remote Client**. Pushed `a656ede` is clean-source Debug
-built/published and running from `release/Debug`, with complete 336-file candidate
-and rollback verification, retained protected credentials and effective ICE port
-56000. The first upgrade preflight timed out without stopping the old Host; the
-complete retry passed. The new Host has published DHT and is waiting for the
-remote Client. Wait for operator picture/unchanged-viewport confirmation before
-candidate load or sampling. Earlier CPU-reference/f5dac5d measurements remain
-the comparison evidence, not acceptance of this repaired candidate.
+[phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
+**local controlled Debug Host / remote Client**. Pushed `a656ede` is clean-source
+Debug built/published and running from `release/Debug`, with complete 336-file
+candidate/rollback verification, retained credentials and effective ICE port 56000.
 
-**P5's local NVIDIA FPS/latency acceptance failed.** The fresh P4 CPU versus P5 GPU
-comparison completed 18 windows. Dynamic three-run medians changed from 21.30 to
-15.78 FPS and from 76.04 to 180.26 ms Host frame-age P99. Main-video readbacks were
-eliminated and Host CPU decreased, but preparation/encoding became slower.
-DynamicLog reproduces the regression. A five-minute GPU run sent 4842 frames
-without stream failures or reconnects; private memory remained stable over that
-interval. Subsequent local probes identify the principal mechanism: concurrent
-DDA `AcquireNextFrame(50)` blocks shared `ID3D11Multithread` entry for 32.13 ms on
-average, versus 0.0044 ms with immediate-return acquisition. Our own scale mutex
-wait is only 0.025 ms. Three-run preparation/codec submission falls from
-35.74/53.40 ms to 0.047/9.71 ms in that diagnostic contrast. The bounded wait
-repair is now implemented: nonblocking DXGI probes with up to 8 ms waits outside
-the device, retaining the original total acquisition budget and protection.
-Fresh local three-run preparation/submission medians improve from 33.762/60.635
-to 0.054/10.474 ms; probe throughput recovers from 10.49 to 21.28 FPS. CPU ranges
-overlap, stop join stays within the observed 50 ms acquisition budget, and three
-automatic suites plus seven real hardware cases pass. Push, clean Debug publication
-and controlled replacement are complete. Next: operator picture confirmation and
-live geometry/configuration preflight, then affected cross-LAN measurements.
-These local probes do not qualify
-deployed performance. See the [repair and validation](../testing/video-gpu-input-p5-20260929.md#bounded-dda-wait-repair).
-Do not mark P5 complete or substitute the separate pacer task for this regression. See the
-[matched results and limits](../testing/video-gpu-input-p5-20260929.md#matched-local-host-performance-acceptance).
+**The local NVIDIA P5 GPU preparation/encoding regression is resolved.** After
+operator picture confirmation, an initial 711 kbps batch was rejected because the
+CPU/unrepaired-GPU references use 4267 kbps. A controlled reconnect of the same
+candidate restored the matched codec budget. All nine fresh fixed-scene windows
+then passed configuration checks. Dynamic three-run medians for CPU / unrepaired
+GPU / repaired GPU are 21.30 / 15.78 / 21.30 FPS, 11.48 / 29.63 / 0.22 ms input
+preparation, 21.17 / 57.61 / 12.68 ms total encoding and 76.04 / 180.26 / 47.06 ms
+Host capture-ready-to-last-send P99. Runtime CPU is 53.28 / 10.53 / 12.41% of one
+logical core. Main-video CPU readback/copy/allocation increments remain zero.
+
+DynamicLog confirms the stage regression is removed; its P99 improvement over
+CPU is unconfirmed because three-run ranges overlap. Effective pacer rates and
+RTT differ across runs despite unchanged policy, so not all frame-age improvement
+can be attributed to the DDA change. GPU codec submission alone remains about
+2.8 ms slower than CPU, even though total encoding is lower. Earlier isolated
+probes establish the shared-device wait mechanism.
+
+The 7659-row candidate trace has 7658 sent frames, one in-flight-wait drop and
+zero missing timing/overflow. The drop causes a 1.10 s successful-send gap and
+then recovers with IDR; aggregate failure counters stay zero. A subsequent
+301.82 s dynamic run sends 6403 frames with no failure/reconnect/recovery increments,
+stable runtime private memory and two clean 60 s traces. The operator confirms
+normal fixed text, fine lines, color blocks and cursor. These are local Host
+performance and human visual results, not end-to-end clock or pixel-diff proof.
+
+Next: **X00-T29**, the low-FPS viewport reconfiguration retaining 711 kbps when
+hardware hot update/restart is unavailable. **X00-T30** separately investigates
+the observed one-second in-flight wait; do not conflate it with X00-T28's historic
+pacer wake-lateness observation or preemptively tune network/queue policy.
+P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
+performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
+and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
 
 The QSV bridge maps leased D3D11 surfaces into the derived QSV context and keeps
 the visible crop. Each surface is its own 16-aligned render-target NV12 texture;
