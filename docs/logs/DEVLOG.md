@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-30 — Trace in-flight admission and feedback refresh (X00-T30)
+
+- Interface scope: extend local Host frame trace to v2 with first-block/final admission snapshots and wake counts. Pass the estimator snapshot provenance through existing pacer budget updates; no wire protocol, admission rule, deadline, congestion policy or queue capacity changes. Bounded capture stays opt-in and writes only after the window completes. Historical v1 trace cannot identify the missing ACK/refresh sequence; controlled local cases will distinguish ACK release, expiry release and delayed refresh.
+- Four focused CTest suites and four offline analysis cases pass; the retained window's metric arithmetic is identical under supported v1/v2 headers. Debug NoPublish build through `build.ps1` passes. Local tests reproduce expiry without budget refresh causing an in-flight deadline drop and distinguish it from successful ACK/expiry release. An obsolete probe-cancellation assertion failed identically on clean `532f1a0`; corrected that fixture to the existing tagged-probe-byte cap and continuing-media contract, without production policy changes.
+- Historical frame 14176 remains unattributed beyond in-flight admission: old logs have rotated and v1 lacks snapshot provenance. X00-T30 remains open for bounded v2 live evidence after pushed-source publication and operator picture confirmation. See [mechanism, limits and validation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
+
 ## 2026-09-30 — Check the reconnected Host across source cadence recovery (X00-T29)
 
 - Operator confirms reconnection. Real deployed `532f1a0` media passes 90 s low-source / 60 s dynamic / 30 s low-source validation. Fifteen complete unique diagnostic windows show output 1.0 → 21.2–21.4 → 1.0 FPS while 1778×1000 / 4267 kbps, nominal clock/GOP and confirmed GPU input stay unchanged. Capture/encode/transmit failure deltas and GPU fallback remain zero; the runtime and connection stay intact.

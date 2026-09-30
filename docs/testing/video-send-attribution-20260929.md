@@ -110,3 +110,110 @@ invalid timing/fragment/wait rejection and three-run variation. No application
 source changed; no main-program rebuild or live test load was needed. Raw data
 remain local. The current-role P4 comparison, P5 GPU input and final quality run
 remain separate work; no cross-machine clocks were subtracted.
+
+## In-flight stall investigation (X00-T30, 2026-09-30)
+
+The retained P5 DynamicLog-2 trace identifies frame 14176 as an in-flight
+admission drop: 16063 wire bytes, zero sent fragments, 1023.429 ms of in-flight
+wait and 1027.583 ms from pacer entry to completion. Neighboring sent frames
+14175 and 14178 are separated by 1101.005 ms; 14178 is an IDR and completes
+46.912 ms after the drop. Initial RTT is 9 ms; the next frame records 125 ms.
+The failed frame has no token, buffered or channel wait and no send call. These
+are exclusive blocking-predicate observations, not a diagnosis of peer/network loss.
+
+The original trace SHA256 is
+`f24b035c982eabe8914df16428a1bc6e77bf0a80e7c3d3e6d5cefe0ef158eacc`.
+Recomputed neighbors, the full failed row and derived guards are retained in
+`build/reports/x00-t27/x30-historical-attribution.json`. The original runtime's
+remaining rotating logs begin after 04:51, while this incident occurred around
+00:38. The baseline copied capture/codec summaries, not transport-feedback
+history. GUI samples cache diagnostic counters and cannot reconstruct each ACK.
+Missing initial/final in-flight bytes, policy horizon and refresh timestamps
+prevent assigning the historical event to an ACK outage or a state-update race.
+
+### Locally established mechanism
+
+`MediaTransportEstimator::snapshot()` performs expiry; the pacer holds a copy
+of its in-flight byte count. The runtime refreshes that copy on feedback and
+approximately one-second Host heartbeats. At RTT 9 ms, expiry is 750 ms. Without
+new feedback, a packet that has just missed a heartbeat's expiry check can stay
+in the pacer's budget until the following heartbeat. Wall-clock passage alone
+does not expire that copied budget.
+
+For 16063 bytes at 8966 kbps the initial pacing allowance is 15 ms and the guard
+250 ms. With a nonzero initial in-flight count, the expiry extension produces
+1015 ms before any larger feedback-horizon guard or subsequent rate/RTT update.
+This is consistent with the observed duration but does not prove the event's
+actual deadline. For example, a packet sent at 0.5 s remains live at the 1.0 s
+heartbeat and is expired at 2.0 s; a frame admitted at 0.6 s with a 1015 ms
+deadline can drop at 1.615 s before that refresh.
+
+The isolated fixture uses the real estimator and pacer with an open channel:
+
+| Event while blocked | Result | Evidence in the new trace |
+| --- | --- | --- |
+| Media ACK followed by budget refresh | Sends the frame | ACK sequence advances; expiry count unchanged |
+| Expiry snapshot followed by budget refresh | Sends the frame | Expiry count advances; ACK sequence stays zero |
+| No snapshot until after the deadline | Drops without sending | Final estimate timestamp remains old; later snapshot retires the packet |
+
+The last case establishes a local failure mechanism, not that the remote peer
+stopped acknowledging the historical frame. No congestion, deadline, rate,
+queue-size or wake policy has been changed.
+
+### Bounded trace v2
+
+Completed CSV exports now identify `redclaw.host-frame-trace.v2`. Existing
+columns retain their meaning. Added counters distinguish predicate-notified
+wakes (including lifecycle cancellation) from wait timeouts. Each frame retains
+the first in-flight block and final admission snapshots: Host observation,
+budget-update and estimate times; latest current-revision feedback time/id;
+ACK and last-recorded-send sequences; oldest retained packet send time;
+expired-packet count; estimator and pacer byte counts; byte limit; accepted
+budget-update count, rejected older-policy count and policy revision.
+`blocked_wire_bytes` identifies the actual fragment that failed admission.
+
+Snapshot fields are internally consistent under their owner's mutex, but the
+estimator and pacer snapshots are not one atomic network observation. A difference
+in their byte counts alone does not prove a race. Zero estimate provenance means
+that update carried no estimator snapshot. First-block fields stay zero if no
+in-flight wait occurred. Intermediate ACK/update events are not a full packet
+history, and stale-revision feedback can retire bytes without updating the
+current-revision timing fields. Do not infer one-way latency from peer clocks.
+
+Capture remains opt-in, at most 4096 rows and 120 s, with the existing late-frame
+completion allowance. The row storage is checked to remain below 4 MiB; no
+per-frame disk writes occur while sampling is off. Existing v1 arm requests
+remain accepted and the baseline analyzer accepts both export versions. No
+media/control protocol changes or equal-version Client requirement are added.
+
+### Verification and next evidence
+
+The focused suites cover trace bounds/export and disabled behavior, ACK/expiry/
+missing-refresh attribution, old-policy rejection, media packet/feedback
+accounting, adaptive sending and recovery. During validation, the existing
+`UnconfirmedProbeHasHardByteLimitAndCanBeCancelled` assertion also failed on the
+unchanged `532f1a0` checkout with the same 114688-versus-65536-byte result. It
+expected cancellation to drop all media, contrary to the established sender
+behavior. The fixture now checks that probe-tagged bytes stay capped while a
+sendable frame continues and completes after probe cancellation. Production
+probe policy is unchanged. Pre-change evidence is `x30-before-probe.xml` under
+the same local report directory.
+
+All four affected CTest targets pass (`redclaw_host_frame_trace_tests`,
+`redclaw_net_video_frame_transport_tests`, `redclaw_adaptive_media_sender_tests`,
+`redclaw_transport_recovery_regression_tests`, 34.39 s total), along with the
+four cases in `python scripts/capture/test-analyze-video-link-baseline.py`.
+The retained DynamicLog-2 metric arithmetic is identical when replayed with a
+synthetic v2 header; this checks reader compatibility, not live v2 evidence.
+Main Debug NoPublish compilation passes through `build.ps1`. Receipts are
+`x30-ctest.xml`, `x30-ctest.txt`, `x30-reader-check.json` and `x30-main-build.txt`
+under the report directory. The first build invocations used an incompatible
+PowerShell/compiler environment; explicit Windows PowerShell and the existing
+VS2022 environment entry corrected that without changing build policy.
+Publication/replacement follows the existing pushed-source controlled-Host procedure.
+
+Next, after the candidate is published and the operator confirms remote Client
+picture, record a bounded DynamicLog window with v2 trace and retain transport
+summaries immediately. Compare blocked/final snapshot age, ACK progress, expiry
+and update counters before choosing a repair. X00-T30 remains open until that
+live attribution is available; no measured latency improvement is claimed.

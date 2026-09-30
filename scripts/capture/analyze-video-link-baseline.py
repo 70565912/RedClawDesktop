@@ -78,7 +78,7 @@ def summarize_window(path, log_timezone):
     with (path / "host-frames.csv").open(encoding="utf-8-sig", newline="") as f:
         header = f.readline().strip()
         rows = [{k: int(v) for k, v in r.items()} for r in csv.DictReader(f)]
-    if not header.startswith("# redclaw.host-frame-trace.v1 "):
+    if not header.startswith(("# redclaw.host-frame-trace.v1 ", "# redclaw.host-frame-trace.v2 ")):
         raise ValueError(f"Unsupported trace schema: {path.name}")
     timing = parse_fields(header)
     seconds = (timing["ended_us"] - timing["started_us"]) / 1e6

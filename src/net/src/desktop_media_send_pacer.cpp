@@ -23,16 +23,6 @@ std::uint64_t steady_now_us() {
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
 }
-struct TraceCompletion final {
-    MediaFrameTraceRecorder* recorder;
-    MediaFrameTrace& trace;
-    ~TraceCompletion() {
-        if (recorder && trace.enabled) {
-            trace.finish_us = steady_now_us();
-            recorder->record(trace);
-        }
-    }
-};
 }  // namespace
 
 struct DesktopMediaSendPacer::Impl {
@@ -68,6 +58,29 @@ struct DesktopMediaSendPacer::Impl {
     MediaPacingBudget budget;
     MediaFrameTraceRecorder* trace_recorder = nullptr; // Outlives the stopped pacer.
     MediaPacerTelemetry telemetry;
+    MediaAdmissionTrace admission_trace;
+    MediaAdmissionTrace admission_trace_locked() const {
+        auto result = admission_trace;
+        result.observed_us = steady_now_us();
+        result.in_flight_bytes = telemetry.in_flight_bytes;
+        result.limit_bytes = telemetry.in_flight_limit_bytes;
+        result.policy_revision = policy.decision_revision;
+        return result;
+    }
+    struct TraceCompletion final {
+        Impl& owner;
+        MediaFrameTrace& trace;
+        ~TraceCompletion() {
+            if (owner.trace_recorder && trace.enabled) {
+                {
+                    std::lock_guard lock(owner.mutex);
+                    trace.final_admission = owner.admission_trace_locked();
+                }
+                trace.finish_us = steady_now_us();
+                owner.trace_recorder->record(trace);
+            }
+        }
+    };
     std::size_t retained_bytes() const {
         std::size_t bytes = active_capacity;
         for (const auto& frame : pending) bytes += frame.payload.capacity();
@@ -217,7 +230,7 @@ struct DesktopMediaSendPacer::Impl {
     void send_frame(PacedEncodedVideoFrame& frame, std::uint64_t frame_generation) {
         auto trace = frame.trace;
         const bool tracing = trace_recorder && trace.enabled;
-        TraceCompletion trace_completion{trace_recorder, trace};
+        TraceCompletion trace_completion{*this, trace};
         if (tracing) {
             trace.pacer_begin_us = steady_now_us();
             trace.outcome = 3;
@@ -467,6 +480,11 @@ struct DesktopMediaSendPacer::Impl {
                 } else {
                     deadline_reason = "pacer_token_deadline";
                 }
+                if (tracing && transport_state.open && !in_flight_available
+                    && trace.first_in_flight_block.observed_us == 0) {
+                    trace.first_in_flight_block = admission_trace_locked();
+                    trace.blocked_wire_bytes = wire_bytes;
+                }
                 const std::uint64_t observed_writable_revision = writable_revision;
                 const std::uint64_t remaining_us = deadline_us - now_us;
                 std::uint64_t wait_us = delay_us == 0
@@ -474,7 +492,7 @@ struct DesktopMediaSendPacer::Impl {
                     ? remaining_us
                     : std::min(remaining_us, delay_us);
                 const auto wait_begin_us = steady_now_us();
-                cv.wait_for(
+                const bool notified = cv.wait_for(
                     lock,
                     std::chrono::microseconds(wait_us),
                     [&]() {
@@ -492,6 +510,9 @@ struct DesktopMediaSendPacer::Impl {
                     budget.suspend(wake_us);
                 }
                 if (tracing) {
+                    ++trace.wait_count;
+                    if (notified) ++trace.notified_wakes;
+                    else ++trace.timeout_wakes;
                     trace.wait_requested_us += wait_us;
                     trace.wait_elapsed_us += elapsed;
                     const auto overshoot = elapsed > wait_us ? elapsed - wait_us : 0;
@@ -821,6 +842,7 @@ void DesktopMediaSendPacer::reset(bool reset_transport_sequence) {
         impl_->budget.reset();
         impl_->telemetry.in_flight_bytes = 0;
         impl_->acknowledged_packets = 0;
+        impl_->admission_trace = {};
         impl_->policy = {};
         impl_->normal_service.reset();
         impl_->key_service.reset();
@@ -841,13 +863,17 @@ void DesktopMediaSendPacer::update_budget(
     std::uint32_t smoothed_rtt_ms,
     std::size_t in_flight_bytes,
     const MediaRecoveryProbe* recovery_probe,
-    const MediaCongestionDecision* policy) {
+    const MediaCongestionDecision* policy,
+    const MediaTransportEstimate* estimate) {
     const std::uint64_t now_us = steady_now_us();
     bool admission_changed = false;
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         if (policy != nullptr) {
-            if (policy->decision_revision < impl_->policy.decision_revision) return;
+            if (policy->decision_revision < impl_->policy.decision_revision) {
+                ++impl_->admission_trace.rejected_policy_updates;
+                return;
+            }
             impl_->policy = *policy;
             impl_->telemetry.congested = policy->pressure != MediaNetworkPressure::kStable;
         } else if (impl_->policy.decision_revision != 0) {
@@ -875,6 +901,17 @@ void DesktopMediaSendPacer::update_budget(
         impl_->telemetry.pacing_bitrate_kbps = pacing_bitrate_kbps;
         impl_->telemetry.smoothed_rtt_ms = smoothed_rtt_ms;
         impl_->telemetry.in_flight_bytes = in_flight_bytes;
+        auto& provenance = impl_->admission_trace;
+        provenance.budget_update_us = now_us;
+        ++provenance.budget_updates;
+        provenance.estimate_us = estimate ? estimate->sampled_host_us : 0;
+        provenance.feedback_host_us = estimate ? estimate->last_feedback_host_us : 0;
+        provenance.feedback_id = estimate ? estimate->feedback_sample_id : 0;
+        provenance.acknowledged_sequence = estimate ? estimate->latest_acknowledged_sequence : 0;
+        provenance.last_sent_sequence = estimate ? estimate->last_sent_sequence : 0;
+        provenance.oldest_sent_us = estimate ? estimate->oldest_in_flight_sent_us : 0;
+        provenance.expired_packets = estimate ? estimate->expired_in_flight_packets : 0;
+        provenance.estimated_bytes = in_flight_bytes;
         impl_->telemetry.in_flight_limit_bytes = impl_->policy.in_flight_limit_bytes != 0
             ? impl_->policy.in_flight_limit_bytes
             : resolve_pacer_window_bytes(pacing_bitrate_kbps, smoothed_rtt_ms);
@@ -889,10 +926,11 @@ void DesktopMediaSendPacer::update_budget(
 }
 
 void DesktopMediaSendPacer::update_policy(const MediaCongestionDecision& decision,
-    std::uint32_t smoothed_rtt_ms, std::size_t in_flight_bytes) {
+    std::uint32_t smoothed_rtt_ms, std::size_t in_flight_bytes,
+    const MediaTransportEstimate* estimate) {
     if (decision.pacing_bitrate_kbps != 0)
         update_budget(decision.pacing_bitrate_kbps, smoothed_rtt_ms, in_flight_bytes,
-            &decision.recovery_probe, &decision);
+            &decision.recovery_probe, &decision, estimate);
 }
 
 void DesktopMediaSendPacer::observe_ack_progress(std::uint64_t acknowledged_packets) {

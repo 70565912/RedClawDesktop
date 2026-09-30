@@ -10,6 +10,16 @@ namespace redclaw::net {
 
 std::uint64_t media_trace_now_us();
 
+// All timestamps use the Host steady clock. Zero provenance means no estimate
+// accompanied this budget update, not a confirmed absence of peer feedback.
+struct MediaAdmissionTrace {
+    std::uint64_t observed_us = 0, budget_update_us = 0, estimate_us = 0;
+    std::uint64_t feedback_host_us = 0, feedback_id = 0, acknowledged_sequence = 0;
+    std::uint64_t last_sent_sequence = 0, oldest_sent_us = 0, expired_packets = 0;
+    std::uint64_t estimated_bytes = 0, in_flight_bytes = 0, limit_bytes = 0;
+    std::uint64_t budget_updates = 0, rejected_policy_updates = 0, policy_revision = 0;
+};
+
 // Local diagnostics only. Never serialized into media/control messages.
 struct MediaFrameTrace {
     bool enabled = false;
@@ -26,6 +36,8 @@ struct MediaFrameTrace {
     std::uint32_t width = 0, height = 0, target_fps = 0, pacing_kbps = 0, rtt_ms = 0;
     std::uint32_t outcome = 0; // 1 sent, 2 failed/dropped, 3 cancelled by local lifecycle.
     bool keyframe = false;
+    std::uint64_t blocked_wire_bytes = 0, wait_count = 0, timeout_wakes = 0, notified_wakes = 0;
+    MediaAdmissionTrace first_in_flight_block, final_admission;
 };
 
 struct MediaFrameTraceBatch {
