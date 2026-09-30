@@ -6,7 +6,7 @@ Updated: 2026-09-30
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
-**local controlled Debug Host / remote Client**. Pushed `a656ede` is clean-source
+**local controlled Debug Host / remote Client**. Pushed X00-T29 `532f1a0` is clean-source
 Debug built/published and running from `release/Debug`, with complete 336-file
 candidate/rollback verification, retained credentials and effective ICE port 56000.
 
@@ -40,9 +40,13 @@ geometry rebuild and adaptation share a nominal-30-FPS geometry-based codec
 budget; a 5-FPS 1778×1000 rebuild now gets 4267 instead of 711 kbps. Submission
 cadence remains independent and hardware live-restart protection is unchanged.
 The old-code regression fails as expected; four focused suites, software/NVENC
-resize/reconnect roundtrips and Debug NoPublish main build pass. Next delivery
-step: commit/push, clean Debug publication and controlled Host replacement with
-independent recovery. The existing serving Host is still preserved at this point.
+resize/reconnect roundtrips and Debug NoPublish main build pass. Commit `532f1a0`
+is pushed, clean Debug built/published and deployed through the independent
+lifecycle worker with complete rollback. DHT publication and automatic Client
+reconnection are confirmed. The active 1778×1000 NVENC session reports 4267 kbps,
+nominal 30 FPS, 1/30 time base, GOP 60 and confirmed GPU input without fallback.
+No post-replacement benchmark load or remote viewport manipulation has started.
+Operator picture confirmation is pending for any further cross-LAN evaluation.
 See [repair scope and validation](../testing/video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
 
 **X00-T30** separately investigates

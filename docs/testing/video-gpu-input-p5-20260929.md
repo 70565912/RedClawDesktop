@@ -803,3 +803,29 @@ fixture uses CPU input and does not repeat GPU data-flow, remote visual quality 
 weak-network performance acceptance. Clean pushed-source publication and controlled
 Host replacement are the next delivery steps. The serving Host remains unchanged
 at this source-validation checkpoint.
+
+### Pushed X00-T29 candidate and controlled Host
+
+Commit `532f1a0` was pushed before a clean `build.ps1 -Configuration Debug`
+build/publication in the existing independent candidate checkout. All 336 files,
+build/publication executable correspondence and a directly owned command-entry
+process pass. Executable SHA256:
+`c400bc8c5efadc0b4d73e610dc6fc598b67c0868195c761f76c287370cde0841`.
+
+The existing independent lifecycle worker completed local controlled Host
+replacement with a full 336-file rollback. Both formal/rollback manifests pass;
+credentials and effective ICE port 56000 are retained. The first readiness read
+preceded DHT publication; the later check confirms listener/reachability/publication
+and an automatically reconnected Client with open channels and advancing real
+capture/send counters. No benchmark load was started after replacement.
+
+The deployed summary confirms DDA/NVENC, 1920×1080 capture, 1778×1000 encode,
+4267 kbps, nominal 30 FPS, 1/30 time base, GOP 60, confirmed GPU input and zero
+fallbacks. This is deployed configuration/media smoke, not a second reproduction
+of low-FPS remote viewport reconfiguration. Operator picture confirmation for the
+replacement and any further cross-LAN evaluation remain separate from the passed
+local regressions.
+
+Receipts: `x29-pushed-build.txt`, `x29-candidate.json`,
+`p5-acceptance-x29-deployed.json` and `x29-deployed-codec.json` under the same local
+evidence root. No remote machine was upgraded or configured by this task.
