@@ -363,3 +363,27 @@ The serving Host is still the X00-T30 reference at this implementation checkpoin
 Candidate publication and controlled replacement follow push; matched DynamicLog
 sampling awaits the operator's new-candidate picture confirmation. X00-T30's
 historical in-flight cause remains unresolved and its diagnostic fields remain.
+
+### Pushed candidate and controlled Host readiness
+
+Pushed implementation `e787ca5a485135609edc23e9410fefdade24bfa7` to the existing
+`origin/main`, then built and published that clean checkout with
+`build.ps1 -Configuration Debug -Target redclaw_desktop`. The first push met a
+transient TLS handshake failure; the unchanged retry succeeded. Candidate
+entry check and all 336 manifest entries pass; the published executable matches
+the build, SHA256
+`4b52b24b5260b352cfb7f9358889e3a6417f2aa622c412eb35f03b991395d3f4`.
+
+The independent lifecycle worker completed replacement into `release/Debug`.
+Formal and rollback manifests each verify 336 files. Existing credentials and
+ICE port 56000 are retained; the new Host's DHT listener, reachability and
+publication pass. At the readiness receipt it is `dht_waiting`, not connected,
+with zero new capture/transmit frames. No post-replacement performance workload
+or sampling has started. Operator reconnection/picture and fixed-viewport
+confirmation are pending before the three matched DynamicLog windows.
+
+Receipts are `x28-candidate.json`, `x28-candidate-manifest.json`,
+`x28-pushed-build.txt`, `p5-acceptance-x28-deployed.json` and the independent
+operation directory `p5-acceptance-x28-deployment/`, all below
+`build/reports/x00-t27/`. Implementation, local validation and controlled
+publication are complete; real-media improvement is not yet established.
