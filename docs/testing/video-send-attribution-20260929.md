@@ -217,3 +217,21 @@ picture, record a bounded DynamicLog window with v2 trace and retain transport
 summaries immediately. Compare blocked/final snapshot age, ACK progress, expiry
 and update counters before choosing a repair. X00-T30 remains open until that
 live attribution is available; no measured latency improvement is claimed.
+
+### Pushed diagnostic candidate and Host readiness
+
+`8301b4b40aea2e76e97539821131ebe133ffa6bb` is pushed to `origin/main` and
+clean-source Debug built/published through `build.ps1`. Candidate command entry
+and build/publication identity match; all 336 candidate files are verified.
+The independent lifecycle worker completed the local Host replacement with a
+complete 336-file rollback bundle. Formal and rollback manifests were verified
+afterward. The deployed executable SHA256 is
+`9cb68a7ce5392bf8eb2f780b59bd9f0be3e943575ebc11c1511efc2dca93a77d`.
+
+Fresh readiness is `dht_waiting`, published DHT, retained ICE port 56000,
+`connected=false`, zero captured/transmitted frames. These prove readiness,
+not remote media acceptance. The operator has been asked to reconnect and
+confirm picture/unchanged viewport; no trace or dynamic load has started.
+Local receipts under `build/reports/x00-t27/` are `x30-candidate.json`,
+`x30-candidate-manifest.json`, `x30-pushed-build.txt`,
+`p5-acceptance-x30-dispatch.json` and `p5-acceptance-x30-deployed.json`.

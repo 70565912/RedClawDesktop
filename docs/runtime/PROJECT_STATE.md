@@ -6,7 +6,7 @@ Updated: 2026-09-30
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
-**local controlled Debug Host / remote Client**. Pushed X00-T29 `532f1a0` is clean-source
+**local controlled Debug Host / remote Client**. Pushed X00-T30 `8301b4b` is clean-source
 Debug built/published and running from `release/Debug`, with complete 336-file
 candidate/rollback verification, retained credentials and effective ICE port 56000.
 
@@ -59,8 +59,10 @@ See [repair scope and validation](../testing/video-gpu-input-p5-20260929.md#low-
 of expiry not releasing admission until the budget snapshot is refreshed. Four
 focused suites and the Debug main build pass. Historical ACK/refresh records
 are unavailable, so that mechanism is not yet the proven cause of frame 14176.
-Next is pushed-source candidate publication and controlled Host replacement,
-then operator picture confirmation before bounded live v2 sampling. See the
+The candidate is published and the controlled Host replacement is verified,
+with DHT waiting for the remote Client and 336-file formal/rollback manifests.
+Wait for operator reconnection/picture confirmation before bounded live v2
+sampling; no new remote load has started. See the
 [investigation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
 Do not conflate this with X00-T28's wake-lateness observation or preemptively
 tune network/queue policy.
