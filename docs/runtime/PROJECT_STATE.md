@@ -4,9 +4,20 @@ Updated: 2026-09-30
 
 ## Current optimization work
 
-The operator now prioritizes the remaining T27 checks and T30 while retaining
-the current Host/Client roles and proxy/network configuration. Network diagnosis
-has been interrupted. T30 repair `0d43f8c` and T27 profiler `d2930f0` are pushed.
+The operator now explicitly prioritizes **X00-T27 P1 and P5 acceptance** while
+retaining the current Host/Client roles and proxy/network configuration. Complete
+the real-Controller log comparison and the peer Intel CPU/GPU comparison before
+expanding follow-up diagnostics. T30's recorded anomaly is retained; X00-T31 is
+not being executed and is not an additional T27 completion gate. Network diagnosis
+remains stopped. T30 repair `0d43f8c` and T27 profiler `d2930f0` are pushed.
+The peer reconfirmed that P1's Client Debug Control access remains refused and
+its execution environment offers no normal approval channel. The operator chose
+to retain P1 as blocked and finish P5 first. The same peer task built the correct
+`d2930f0` QSV/CPU/GPU v2 profiler in isolation using existing dependencies.
+The first CPU/QSV run returned `0x80070005` from DDA `DuplicateOutput` before
+warmup; zero valid measurements exist and the remaining five runs did not start.
+Its profiler load has ended, Client is preserved, and no QSV performance or
+hardware-support conclusion is inferred. See the [capture-startup blocker](../testing/video-gpu-input-p5-20260929.md#resumed-intel-build-and-capture-startup-blocker).
 The exact pushed candidate passes the Debug build/publication, focused checks,
 336-file verification and command-entry check. The operator then authorized
 replacement/restart: `d2930f0` is now deployed, formal/rollback manifests pass,
@@ -33,10 +44,11 @@ log injection remains blocked by its prior local Debug Control access refusal.
 The [independent input profiler](../testing/video-gpu-input-p5-20260929.md#independent-cpugpu-profiler-for-the-remaining-intel-comparison)
 is locally validated. The peer's Intel measurement attempt and one same-Agent
 continuation ended with Provider exit 125, without a valid three-pair result or
-final cleanup receipt. The current peer/Codex task created no workload, completed
-the decoder-log check and left Intel profiling deferred; the older task's cleanup
-remains unverified. Current Host connection is intact and no network repair was
-attempted. T27/T30 are not declared fully accepted.
+final cleanup receipt. A later decoder-only turn created no workload and completed
+the decoder-log check. The resumed Intel attempt above supersedes that earlier
+deferral: correct tool build passes but capture startup is denied. Current Host
+connection is intact and no network repair was attempted. T27/T30 are not declared
+fully accepted.
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
