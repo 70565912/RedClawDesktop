@@ -60,12 +60,17 @@ of expiry not releasing admission until the budget snapshot is refreshed. Four
 focused suites and the Debug main build pass. Historical ACK/refresh records
 are unavailable, so that mechanism is not yet the proven cause of frame 14176.
 The candidate is published and the controlled Host replacement is verified,
-with DHT waiting for the remote Client and 336-file formal/rollback manifests.
-Wait for operator reconnection/picture confirmation before bounded live v2
-sampling; no new remote load has started. See the
+with 336-file formal/rollback manifests. The operator confirmed the reconnected
+picture and fixed viewport. Three DynamicLog v2 windows send all 3842 frames
+without in-flight blocking, drops or sampled failure/expiry increments. Load is
+stopped and the Host remains connected. Historical root-cause attribution stays
+unresolved; the incident did not recur and no improvement is claimed. See the
 [investigation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
-Do not conflate this with X00-T28's wake-lateness observation or preemptively
-tune network/queue policy.
+Next independently actionable work is **X00-T28**: the new matched baseline
+reproduces ordinary-frame overshoot at 5.947 ms/frame (60.14% of wait). Evaluate
+bounded wake behavior with CPU/frame-age/stop checks, holding network/queue
+policy fixed. Retain X00-T30 diagnostics for recurrence, without an ongoing
+background load or an unsupported historical root-cause conclusion.
 P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
 performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
 and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
