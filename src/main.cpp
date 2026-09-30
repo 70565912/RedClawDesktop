@@ -3700,7 +3700,10 @@ int run_runtime_mode(
         },
         [&]() {
             stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kTransportWritable);
-        }, &stream_frame_trace);
+        }, &stream_frame_trace,
+        [&stream_transport_estimator](std::uint64_t now_us, std::uint32_t rtt_ms) {
+            return stream_transport_estimator.snapshot(now_us, rtt_ms);
+        });
     if (!media_pacer_started) {
         std::cerr << "Runtime desktop media pacer failed to start" << '\n';
         return 1;

@@ -298,7 +298,7 @@ struct MediaTransportEstimate {
     std::uint32_t probe_delivery_bitrate_kbps = 0;
     std::size_t probe_acknowledged_bytes = 0;
     bool probe_rate_valid = false;
-    // Local snapshot provenance; never used to change congestion decisions.
+    // Local snapshot provenance; packet expiry also schedules blocked admission.
     std::uint64_t sampled_host_us = 0, last_feedback_host_us = 0;
     std::uint64_t last_sent_sequence = 0, oldest_in_flight_sent_us = 0;
 };
@@ -656,6 +656,10 @@ using MediaPacerTransportStateCallback = std::function<MediaPacerTransportState(
 using MediaPacerPacketSentCallback = std::function<void(const SentMediaTransportPacket&)>;
 using MediaPacerFrameEventCallback = std::function<void(const MediaPacerFrameEvent&)>;
 using MediaPacerCapacityCallback = std::function<void()>;
+// Called only for blocked in-flight admission, outside the pacer mutex. The
+// estimator and callback owner must outlive stop(); no network wait is allowed.
+using MediaPacerInFlightRefreshCallback =
+    std::function<MediaTransportEstimate(std::uint64_t, std::uint32_t)>;
 
 class DesktopMediaSendPacer final {
 public:
@@ -687,7 +691,8 @@ public:
         MediaPacerPacketSentCallback packet_sent_callback,
         MediaPacerFrameEventCallback frame_event_callback,
         MediaPacerCapacityCallback capacity_callback = {},
-        MediaFrameTraceRecorder* trace_recorder = nullptr);
+        MediaFrameTraceRecorder* trace_recorder = nullptr,
+        MediaPacerInFlightRefreshCallback in_flight_refresh_callback = {});
     void stop();
     // Source/capture recovery stays in the current feedback sequence space.
     // Pass true only when both transport feedback endpoints start a new epoch.

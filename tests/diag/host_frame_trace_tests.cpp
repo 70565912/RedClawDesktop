@@ -168,12 +168,13 @@ TEST(HostFrameTrace, BlockingPredicatesAreAttributedWithoutChangingDelivery) {
 }
 
 TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
-    for (int mode = 0; mode != 3; ++mode) {
-        SCOPED_TRACE(mode); // 0 ACK, 1 expiry snapshot, 2 no snapshot until after drop.
+    for (int mode = 0; mode != 4; ++mode) {
+        SCOPED_TRACE(mode); // 0 ACK, 1 external expiry, 2 stale copy, 3 scheduled expiry.
         std::mutex mutex;
         std::condition_variable cv;
         std::optional<MediaPacerFrameEvent> terminal;
         std::atomic<bool> queried{false};
+        std::atomic<unsigned> refreshes{0};
         MediaFrameTraceRecorder recorder;
         MediaTransportEstimator estimator;
         const auto start = media_trace_now_us();
@@ -190,7 +191,11 @@ TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
             if (event.type == MediaPacerFrameEventType::kKeyframeRequired) return;
             { std::lock_guard lock(mutex); terminal = event; }
             cv.notify_all();
-        }, {}, &recorder));
+        }, {}, &recorder, mode == 3 ? MediaPacerInFlightRefreshCallback{
+            [&](std::uint64_t now, std::uint32_t rtt) {
+                ++refreshes;
+                return estimator.snapshot(now, rtt);
+            }} : MediaPacerInFlightRefreshCallback{}));
         MediaCongestionDecision policy;
         policy.decision_revision = 2;
         policy.pacing_bitrate_kbps = 8966;
@@ -206,7 +211,7 @@ TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
         ASSERT_TRUE(pacer.submit(std::move(frame)));
         { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 1s, [&] { return queried.load(); })); }
         std::this_thread::sleep_for(30ms);
-        if (mode != 2) {
+        if (mode < 2) {
             const auto now = media_trace_now_us();
             if (mode == 0) ASSERT_TRUE(estimator.apply_feedback({1, 1, {{1, 9000000}}}, now, 1));
             estimate = estimator.snapshot(now, 9);
@@ -222,6 +227,8 @@ TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
         ASSERT_TRUE(batch); ASSERT_EQ(batch->frames.size(), 1U);
         const auto& f = batch->frames.front();
         EXPECT_EQ(f.blocked_wire_bytes, 16063U);
+        RecordProperty("admission_mode_" + std::to_string(mode) + "_elapsed_us",
+            std::to_string(f.finish_us - f.pacer_begin_us));
         EXPECT_GT(f.first_in_flight_block.observed_us, 0U);
         EXPECT_EQ(f.first_in_flight_block.estimated_bytes, 16000U);
         EXPECT_GT(f.first_in_flight_block.in_flight_bytes + f.blocked_wire_bytes,
@@ -239,7 +246,7 @@ TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
             const auto refreshed = estimator.snapshot(media_trace_now_us(), 9);
             EXPECT_EQ(refreshed.expired_in_flight_packets, 1U);
             EXPECT_EQ(refreshed.in_flight_bytes, 0U);
-        } else {
+        } else if (mode < 2) {
             EXPECT_EQ(f.outcome, 1U);
             EXPECT_EQ(f.sent_fragments, 1U);
             EXPECT_EQ(f.final_admission.expired_packets, mode == 1 ? 1U : 0U);
@@ -248,7 +255,108 @@ TEST(HostFrameTrace, AdmissionProvenanceSeparatesAckExpiryAndMissingRefresh) {
             EXPECT_EQ(f.final_admission.policy_revision, 2U);
             EXPECT_EQ(f.final_admission.budget_updates, 2U);
             EXPECT_GT(f.notified_wakes, 0U);
+        } else {
+            EXPECT_EQ(f.outcome, 1U);
+            EXPECT_EQ(f.sent_fragments, 1U);
+            EXPECT_EQ(f.final_admission.expired_packets, 1U);
+            EXPECT_EQ(f.final_admission.acknowledged_sequence, 0U);
+            EXPECT_EQ(f.final_admission.policy_revision, 2U);
+            EXPECT_EQ(pacer.telemetry().deadline_drops, 0U);
+            EXPECT_LT(f.finish_us - f.pacer_begin_us, 500000U);
+            EXPECT_GE(refreshes.load(), 1U);
+            EXPECT_LE(refreshes.load(), 2U); // No polling loop or heartbeat.
         }
+    }
+}
+
+TEST(HostFrameTrace, ExpiryRefreshAdvancesAcrossMultipleRetainedPackets) {
+    MediaTransportEstimator estimator;
+    const auto start = media_trace_now_us();
+    ASSERT_TRUE(estimator.record_sent({1, 1, start - 720000, 1, 8000}));
+    ASSERT_TRUE(estimator.record_sent({2, 1, start - 600000, 1, 8000}));
+    auto estimate = estimator.snapshot(start, 9);
+    MediaFrameTraceRecorder recorder;
+    ASSERT_TRUE(recorder.arm(start, 3));
+    std::atomic<unsigned> refreshes{0};
+    std::promise<MediaPacerFrameEvent> terminal;
+    auto done = terminal.get_future();
+    DesktopMediaSendPacer pacer;
+    ASSERT_TRUE(pacer.start([](auto) { return MediaPacerSendResult{.accepted = true}; },
+        [] { return MediaPacerTransportState{.open = true}; }, [](const auto&) {},
+        [&](const auto& event) {
+            if (event.type != MediaPacerFrameEventType::kKeyframeRequired) terminal.set_value(event);
+        }, {}, &recorder, [&](auto now, auto rtt) {
+            ++refreshes;
+            return estimator.snapshot(now, rtt);
+        }));
+    MediaCongestionDecision policy;
+    policy.decision_revision = 2; policy.pacing_bitrate_kbps = 8966;
+    policy.in_flight_limit_bytes = 16384; policy.feedback_horizon_us = 100000;
+    pacer.update_policy(policy, 9, estimate.in_flight_bytes, &estimate);
+    PacedEncodedVideoFrame frame;
+    frame.frame_id = 3; frame.rate_revision = 1; frame.codec = 1;
+    frame.width = 1778; frame.height = 1000; frame.target_fps = 30;
+    frame.target_bitrate_kbps = 4267; frame.keyframe = true;
+    frame.payload.assign(16063 - 80, 0x55); frame.trace.enabled = true;
+    frame.trace.encode_begin_us = start + 1;
+    ASSERT_TRUE(pacer.submit(std::move(frame)));
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(done.get().type, MediaPacerFrameEventType::kSent);
+    pacer.stop();
+    auto batch = recorder.take_completed(start + 14000000);
+    ASSERT_TRUE(batch); ASSERT_EQ(batch->frames.size(), 1U);
+    const auto& trace = batch->frames.front();
+    EXPECT_EQ(trace.outcome, 1U);
+    EXPECT_EQ(trace.final_admission.expired_packets, 2U);
+    EXPECT_EQ(trace.final_admission.acknowledged_sequence, 0U);
+    EXPECT_LT(trace.finish_us - trace.pacer_begin_us, 500000U);
+    EXPECT_LE(refreshes.load(), 3U);
+    EXPECT_EQ(estimator.snapshot(media_trace_now_us(), 9).lost_packets, 0U);
+}
+
+TEST(HostFrameTrace, RefreshCannotOverwriteConcurrentBudgetOrReset) {
+    for (bool reset : {false, true}) {
+        SCOPED_TRACE(reset);
+        std::atomic<unsigned> refreshes{0}, sent{0};
+        std::promise<void> completed;
+        auto done = completed.get_future();
+        DesktopMediaSendPacer pacer;
+        ASSERT_TRUE(pacer.start([&](auto) { ++sent; return MediaPacerSendResult{.accepted = true}; },
+            [] { return MediaPacerTransportState{.open = true}; }, [](const auto&) {},
+            [&](const auto& event) {
+                if (event.type == MediaPacerFrameEventType::kSent) completed.set_value();
+            }, {}, nullptr, [&](auto now, auto) {
+                ++refreshes;
+                // These calls also establish that the estimator callback does not
+                // run under the pacer mutex. Its stale result must be discarded.
+                if (reset) pacer.reset(true);
+                pacer.update_budget(8966, 9, 0);
+                return MediaTransportEstimate{.in_flight_bytes = 999999,
+                    .sampled_host_us = now, .oldest_in_flight_sent_us = now};
+            }));
+        pacer.update_budget(8966, 9, 999999);
+        auto submit = [&](std::uint64_t id) {
+            PacedEncodedVideoFrame frame;
+            frame.frame_id = id; frame.rate_revision = 1; frame.codec = 1;
+            frame.width = 16; frame.height = 16; frame.target_fps = 30;
+            frame.target_bitrate_kbps = 4267; frame.keyframe = true;
+            frame.payload.assign(100, 0x55);
+            return pacer.submit(std::move(frame));
+        };
+        ASSERT_TRUE(submit(1));
+        if (reset) {
+            const auto limit = std::chrono::steady_clock::now() + 1s;
+            while ((refreshes.load() == 0 || pacer.telemetry().active_depth != 0)
+                && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(1ms);
+            ASSERT_EQ(refreshes.load(), 1U);
+            EXPECT_EQ(sent.load(), 0U);
+            ASSERT_TRUE(submit(2));
+        }
+        ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+        pacer.stop();
+        EXPECT_EQ(refreshes.load(), 1U);
+        EXPECT_EQ(sent.load(), 1U);
+        EXPECT_EQ(pacer.telemetry().deadline_drops, 0U);
     }
 }
 } // namespace
