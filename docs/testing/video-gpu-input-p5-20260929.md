@@ -866,3 +866,54 @@ Evidence: `x29-live-recovery-20260930/invalid.json` and
 `x29-live-recovery-20260930-r2/{result.json,analysis.json}` under the same evidence
 root; recompute with `analyze_x29_live_recovery.py`. This turn reuses the candidate's
 passed build/tests and changes only documentation and ignored diagnostic helpers.
+
+## Independent CPU/GPU profiler for the remaining Intel comparison
+
+`LocalDiagnostic/GpuInputProfile.RealDesktopStageTimings` remains developer-only
+and excluded from CTest. The existing diagnostic now accepts the following
+process-local environment options; it does not update persistent settings or
+connect/replace a running Host/Client. Empty options retain the earlier NVIDIA
+probe defaults. Invalid values fail before capture starts.
+
+| Option prefix `REDCLAW_QA_INPUT_PROFILE_` | Values / default |
+| --- | --- |
+| `BACKEND` | `nvenc` (default), `qsv` |
+| `INPUT` | `gpu` (default), `cpu` |
+| `CAPTURE_WIDTH`, `CAPTURE_HEIGHT` | Required observed source geometry; defaults 1920, 1080; range 1–16384 |
+| `ENCODE_WIDTH`, `ENCODE_HEIGHT` | Fixed comparison geometry; defaults 1778, 1000; range 1–16384 |
+| `KBPS` | Same codec bitrate for both inputs; default 4267; range 1–200000 |
+| `WARMUP_SECONDS` | Default 3; range 1–30; use 10 for matched acceptance |
+| `SECONDS` | Measurement duration after warmup; default 8; range 1–120; use 60 for matched acceptance |
+
+The existing parameter cases retain serial capture, concurrent 50 ms acquisition
+and concurrent zero-timeout acquisition; the repaired capture path uses the last
+case. The real capture source must remain dynamic. Match source/encode geometry,
+bitrate, scene seed/trajectory, capture backend, acquisition mode and background
+workload between CPU/GPU runs. Alternate three pairs; do not compare Intel with
+NVIDIA, or a historical WGC run with this DDA diagnostic.
+
+XML properties use `redclaw.gpu-input-profile.v2`: effective encoder identity,
+FPS/time base/GOP/bitrate, measurement duration, encode attempts and outputs,
+capture count, stage time per attempt, measured-interval process CPU, readback,
+CPU-copy/allocation, pool-exhaustion and GPU-fallback deltas. Warmup counters are
+excluded from the new measured fields; legacy full-run counters remain explicitly
+labeled. Capture and encode counters use their respective boundaries, not an
+assumption that one capture always corresponds to one output.
+
+Strict checks require the requested hardware codec to remain selected and GPU
+mode to confirm hardware input with zero fallbacks. CPU mode must not confirm GPU
+input. This measures local capture/encode cost; it excludes network and remote
+GUI latency. Reuse the existing Intel decode/crop/resize/device-replacement gate
+instead of repeating that matrix. Preserving the serving Client means any active
+background decode workload must be recorded as a comparison limitation.
+
+Local tool validation passes for the two input modes on NVIDIA, using one short
+fixed dynamic scene and the concurrent zero-timeout case. CPU/GPU runs contain
+171/172 encode attempts and outputs over 8.003/8.024 measured seconds. CPU input
+records 170 measured capture readbacks/copies; GPU input records zero. Both have
+zero measured large allocations and zero fallback, with actual `h264_nvenc`,
+nominal 30 FPS, time base 1/30 and GOP 60. Capture and encode boundaries differ
+by the frame already captured at measurement start. These are representative
+tool checks, not a three-run performance acceptance or an Intel result.
+Receipts: `input-profile-v2-local-final/{cpu,gpu}.txt/xml` and
+`t27-profile-focused-build.txt` under `build/reports/x00-t27/`.

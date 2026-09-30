@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <algorithm>
+#include <charconv>
 
 #ifdef _WIN32
 #include "capture_d3d11.h"
@@ -14,6 +15,23 @@ using namespace redclaw::capture;
 namespace {
 struct ProfileCase { bool concurrent; std::uint32_t acquire_timeout_ms; };
 class GpuInputProfile : public ::testing::TestWithParam<ProfileCase> {};
+
+std::string profile_option(const char* name) {
+    char value[64]{};
+    const auto size = GetEnvironmentVariableA(name, value, sizeof(value));
+    if (size >= sizeof(value)) { ADD_FAILURE() << "Profile option too long: " << name; return {}; }
+    return {value, size};
+}
+std::uint32_t profile_number(const char* name, std::uint32_t fallback, std::uint32_t maximum) {
+    const auto text = profile_option(name);
+    if (text.empty()) return fallback;
+    std::uint32_t value = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value == 0 || value > maximum) {
+        ADD_FAILURE() << "Invalid profile option: " << name; return fallback;
+    }
+    return value;
+}
 double process_cpu_seconds() {
     FILETIME creation{}, exit{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
@@ -30,11 +48,25 @@ double process_cpu_seconds() {
 // No network, main-app replacement, timing threshold or changed encoder quality.
 TEST_P(GpuInputProfile, RealDesktopStageTimings) {
     using Clock = std::chrono::steady_clock;
+    const auto backend = profile_option("REDCLAW_QA_INPUT_PROFILE_BACKEND");
+    const auto input = profile_option("REDCLAW_QA_INPUT_PROFILE_INPUT");
+    ASSERT_TRUE(backend.empty() || backend == "nvenc" || backend == "qsv");
+    ASSERT_TRUE(input.empty() || input == "gpu" || input == "cpu");
+    const bool gpu = input != "cpu";
+    const auto selected_backend = backend == "qsv" ? EncoderBackendType::kQuickSync : EncoderBackendType::kNvenc;
+    const auto capture_width = profile_number("REDCLAW_QA_INPUT_PROFILE_CAPTURE_WIDTH", 1920, 16384);
+    const auto capture_height = profile_number("REDCLAW_QA_INPUT_PROFILE_CAPTURE_HEIGHT", 1080, 16384);
+    const auto encode_width = profile_number("REDCLAW_QA_INPUT_PROFILE_ENCODE_WIDTH", 1778, 16384);
+    const auto encode_height = profile_number("REDCLAW_QA_INPUT_PROFILE_ENCODE_HEIGHT", 1000, 16384);
+    const auto bitrate = profile_number("REDCLAW_QA_INPUT_PROFILE_KBPS", 4267, 200000);
+    const auto warmup_seconds = profile_number("REDCLAW_QA_INPUT_PROFILE_WARMUP_SECONDS", 3, 30);
+    const auto measure_seconds = profile_number("REDCLAW_QA_INPUT_PROFILE_SECONDS", 8, 120);
+    ASSERT_FALSE(HasFailure());
     WindowsCaptureSession capture;
     CaptureSessionConfig config;
     config.preferred_backend = CaptureBackendType::kDesktopDuplication;
     config.fallback_enabled = false;
-    config.frame_delivery = CaptureFrameDelivery::kCpuAndGpu;
+    config.frame_delivery = gpu ? CaptureFrameDelivery::kCpuAndGpu : CaptureFrameDelivery::kCpu;
     config.frame_acquire_timeout_ms = GetParam().acquire_timeout_ms;
     std::string error;
     ASSERT_TRUE(capture.start(config, &error)) << error;
@@ -64,11 +96,15 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
     EncoderExecutionSession encoder;
     bool started = false, measuring = false;
     EncoderExecutionDiagnostics before;
+    CaptureBackendTelemetry capture_before;
+    std::uint64_t captures_before = 0;
+    double measured_cpu_start = 0;
     std::uint64_t attempts = 0, outputs = 0;
     const auto start = Clock::now();
     const double cpu_start = process_cpu_seconds();
     auto measured_start = start;
-    while (Clock::now() - start < std::chrono::seconds(11)) {
+    while (measuring ? Clock::now() - measured_start < std::chrono::seconds(measure_seconds)
+                     : Clock::now() - start < std::chrono::seconds(warmup_seconds + measure_seconds)) {
         std::shared_ptr<CapturedFrame> frame;
         if (GetParam().concurrent) {
             std::unique_lock lock(mutex);
@@ -76,21 +112,23 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
             frame = std::move(latest);
         } else frame = acquire();
         if (!frame) continue;
-        ASSERT_EQ(frame->width, 1920U); ASSERT_EQ(frame->height, 1080U);
+        ASSERT_EQ(frame->width, capture_width); ASSERT_EQ(frame->height, capture_height);
         if (!started) {
             EncoderProfileRequest request;
-            request.width = 1778; request.height = 1000; request.fps = 30;
+            request.width = encode_width; request.height = encode_height; request.fps = 30;
             EncoderConfigProfile profile;
             ASSERT_TRUE(build_desktop_encoder_profile(request, &profile, &error)) << error;
-            profile.target_bitrate_kbps = 4267; profile.max_bitrate_kbps = 5120;
+            profile.target_bitrate_kbps = bitrate; profile.max_bitrate_kbps = bitrate * 6 / 5;
             EncoderBackendBridgePlan plan;
-            plan.selected_backend = EncoderBackendType::kNvenc;
-            plan.allow_hardware_frame_input = true;
+            plan.selected_backend = selected_backend;
+            plan.allow_hardware_frame_input = gpu;
             ASSERT_TRUE(encoder.start(profile, plan, &error)) << error;
             started = true;
         }
-        if (!measuring && Clock::now() - start >= std::chrono::seconds(3)) {
+        if (!measuring && Clock::now() - start >= std::chrono::seconds(warmup_seconds)) {
             before = encoder.diagnostics(); measured_start = Clock::now(); measuring = true;
+            capture_before = capture.telemetry(); captures_before = captured.load();
+            measured_cpu_start = process_cpu_seconds();
         }
         EncodedFramePacket packet;
         const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-start).count();
@@ -101,6 +139,9 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
         if (measuring) { ++attempts; if (output) ++outputs; }
     }
     const double seconds = std::chrono::duration<double>(Clock::now()-measured_start).count();
+    const double measured_cpu_percent = 100.0 * (process_cpu_seconds() - measured_cpu_start) / seconds;
+    const auto capture_after = capture.telemetry();
+    const auto measured_captures = captured.load() - captures_before;
     const double run_seconds = std::chrono::duration<double>(Clock::now()-start).count();
     const double cpu_percent = 100.0 * (process_cpu_seconds()-cpu_start) / run_seconds;
     const auto stopping = Clock::now();
@@ -108,11 +149,33 @@ TEST_P(GpuInputProfile, RealDesktopStageTimings) {
     RecordProperty("stop_join_ms", std::to_string(std::chrono::duration<double, std::milli>(Clock::now()-stopping).count()));
     ASSERT_TRUE(measuring); ASSERT_GT(attempts, 0U);
     const auto after = encoder.diagnostics();
-    EXPECT_TRUE(after.hardware_frame_input_confirmed);
+    EXPECT_EQ(after.backend, selected_backend);
+    EXPECT_EQ(after.configured_fps, 30U);
+    EXPECT_EQ(after.configured_bitrate_kbps, bitrate);
+    EXPECT_EQ(after.hardware_frame_input_confirmed, gpu);
     EXPECT_EQ(capture_failures.load(), 0U);
     const auto& a = after.gpu_input_timing;
     const auto& b = before.gpu_input_timing;
-    RecordProperty("schema", "redclaw.gpu-input-profile.v1");
+    RecordProperty("schema", "redclaw.gpu-input-profile.v2");
+    RecordProperty("backend", backend == "qsv" ? "qsv" : "nvenc");
+    RecordProperty("encoder_name", after.encoder_name);
+    RecordProperty("time_base_num", after.configured_time_base_num);
+    RecordProperty("time_base_den", after.configured_time_base_den);
+    RecordProperty("gop_frames", after.configured_gop_frames);
+    RecordProperty("input", gpu ? "gpu" : "cpu");
+    RecordProperty("capture_width", capture_width); RecordProperty("capture_height", capture_height);
+    RecordProperty("encode_width", encode_width); RecordProperty("encode_height", encode_height);
+    RecordProperty("configured_kbps", after.configured_bitrate_kbps); RecordProperty("nominal_fps", after.configured_fps);
+    RecordProperty("warmup_seconds", warmup_seconds);
+    RecordProperty("measurement_seconds", std::to_string(seconds));
+    RecordProperty("outputs", std::to_string(outputs));
+    RecordProperty("measured_captures", std::to_string(measured_captures));
+    RecordProperty("cpu_percent_one_core_measured", std::to_string(measured_cpu_percent));
+    RecordProperty("gpu_readbacks", std::to_string(capture_after.gpu_readback_count - capture_before.gpu_readback_count));
+    RecordProperty("cpu_frame_copies", std::to_string(capture_after.cpu_frame_copy_count - capture_before.cpu_frame_copy_count));
+    RecordProperty("cpu_allocations", std::to_string(capture_after.cpu_buffer_allocation_count - capture_before.cpu_buffer_allocation_count));
+    RecordProperty("pool_exhaustions", std::to_string(capture_after.cpu_frame_pool_exhaustion_count - capture_before.cpu_frame_pool_exhaustion_count));
+    RecordProperty("gpu_fallbacks", std::to_string(after.hardware_input_fallback_count));
     RecordProperty("concurrent", GetParam().concurrent ? 1 : 0);
     RecordProperty("acquire_timeout_ms", GetParam().acquire_timeout_ms);
     RecordProperty("attempts", std::to_string(attempts));

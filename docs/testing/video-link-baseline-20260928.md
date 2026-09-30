@@ -169,6 +169,41 @@ still limits the measured rate to about 21.3 FPS. Evidence is retained under
 `trace-integrity.json`, `gui-validation.json`, geometry/counter snapshots and raw
 traces. P4–P6 and the final 5-minute quality run remain.
 
+## P4 publication-stage audit from retained CPU recordings
+
+The later P5 CPU reference was built from unmodified P4 `af637da`, not the P5 GPU
+implementation. `b157e88..af637da` contains only the P4 implementation commit.
+It can therefore supply a same-machine CPU-path observation against P3 without
+restarting either currently connected endpoint. All twelve dynamic traces were
+reparsed and checked for timing order, geometry, successful outcomes and overflow:
+7,664 P3 frames and 7,673 P4 frames, with no failed or missing rows.
+
+| Capture return to main-frame publication, three-run median [range] | P3 | P4 |
+| --- | --- | --- |
+| Dynamic mean, ms/frame | 0.5410 [0.5372, 0.5440] | 0.00389 [0.00384, 0.00392] |
+| Dynamic P99, ms | 11.545 [11.101, 11.579] | 0.012 [0.012, 0.012] |
+| DynamicLog mean, ms/frame | 0.5534 [0.5288, 0.5706] | 0.00384 [0.00378, 0.00388] |
+| DynamicLog P99, ms | 11.575 [11.171, 11.602] | 0.012 [0.011, 0.012] |
+
+Publication delays above 1 ms fall from 175 to zero in each three-run scenario.
+This supports P4's specific removal of synchronous thumbnail work before main
+publication. It does not mean thumbnail work itself became free: bounded input
+preparation follows publication and JPEG/send work runs in the worker.
+
+Capture, viewport and encoded dimensions, DDA/CPU input, scene seed/cadence,
+warmup, measurement duration and log visibility match. **Network configuration
+identities differ across the intervening role changes**, and adaptive pacing also
+differs. This is a scoped publication-stage observation, not the originally
+specified fully matched network comparison. Total Host frame-age P99 is actually
+higher in this P4 recording (76.043/73.180 versus 65.075/63.467 ms for
+Dynamic/DynamicLog), so no total latency improvement is claimed. The existing
+five-minute P5 continuity/visual result remains separately scoped.
+
+Recompute with `python build/reports/x00-t27/analyze_p4_publication.py`;
+`p4-publication-audit.json` retains per-window denominators, hashes, matched
+conditions and limits. Original recordings remain under
+`p3-comparison-20260929/` and `p5-cpu-reference-20260929/` in that report directory.
+
 ## Role reversal on 2026-09-29: local Client observation
 
 The operator confirmed normal replaced video with this machine acting as Client
