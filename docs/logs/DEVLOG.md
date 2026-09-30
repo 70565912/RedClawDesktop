@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-09-30 — Check the reconnected Host across source cadence recovery (X00-T29)
+
+- Operator confirms reconnection. Real deployed `532f1a0` media passes 90 s low-source / 60 s dynamic / 30 s low-source validation. Fifteen complete unique diagnostic windows show output 1.0 → 21.2–21.4 → 1.0 FPS while 1778×1000 / 4267 kbps, nominal clock/GOP and confirmed GPU input stay unchanged. Capture/encode/transmit failure deltas and GPU fallback remain zero; the runtime and connection stay intact.
+- Adaptive target stays 30 FPS; no geometry change or resolution-reconfigure increment is observed. This is source-cadence recovery evidence, not live reproduction of the target-5-FPS resize, which remains covered locally. First collection is retained as invalid due to sampler serialization; scalar/plain-text retry succeeds, all owned scenes are closed, and no production code or runtime configuration changed. Reuse the passed Debug build/tests. See [evidence and limits](../testing/video-gpu-input-p5-20260929.md#reconnected-live-cadence-recovery).
+
 ## 2026-09-30 — Keep the desktop codec budget across low-cadence resize (X00-T29)
 
 - Contract change: `build_desktop_encoder_profile` sizes the codec budget from actual encoded pixels at nominal 30 FPS. Runtime initialization, geometry rebuild and adaptation share this policy; 1–30 FPS submission remains independent. Removed duplicate runtime bitrate overrides and retain the actual applied cadence after start. This supersedes P2's cadence-dependent bitrate calculation for the desktop path; the generic low-latency profile, hardware live-restart protection and network policy remain unchanged.
