@@ -356,6 +356,138 @@ wrapper initially failed while printing an absent deployment-only status field;
 the stored PlanOnly receipt and plan hash were then checked successfully. This
 did not dispatch an upgrade. Live acceptance of the repair remains unperformed.
 
+### Authorized repair deployment and real-media readiness
+
+The operator explicitly authorized replacement/restart after the PlanOnly
+checkpoint. Reused the exact pushed `d2930f0` package and its passed Debug build
+and focused tests; no new production code or rebuild was required. A current-user
+Task Scheduler supervisor launched the existing independent directory-upgrade
+worker and checked DHT publication separately from process health. The prepared
+fallback restores the original bundle if publication fails; it was not needed.
+
+Replacement into `release/Debug` is complete. Formal and rollback manifests each
+verify all 336 files; the executable matches the candidate hash above. The actual
+GUI launch arguments match the preserved plan, including the Host role,
+credentials reference and ICE port 56000, with only the source revision updated.
+Both one-shot scheduled tasks have removed themselves.
+
+The fresh Host has a ready DHT listener, successful publication, connected/open
+channels and advancing real capture/encode/send counters. A readiness receipt
+contains 4424 captures, 3057 encodes and 3056 sends, with zero synthetic frames.
+Effective settings remain DDA 1920×1080 capture, NVENC 1778×1000 encoding,
+4267 kbps, nominal 30 FPS, time base 1/30 and GOP 60; GPU input is confirmed with
+zero fallback. These are deployment/media-smoke facts, not a performance trial
+or proof of remote display quality.
+
+The old task's confirmation turn also exited with Provider code 125. A separate
+read-only confirmation through the same peer/Codex channel then completed:
+`obs-20260930-cua-01` reports no observable Client window from desktop enumeration.
+That limitation does not establish a black screen. The operator then explicitly
+accepted existing peer decoder logs as the media-readiness check. The same Agent's
+read-only result `clog-20260930-01` identifies the current Client reconnect before
+both measured intervals:
+
+- Over 5.006 seconds, decoded count advances 592620 → 592767 (+147), and presented
+  count advances 569401 → 569546 (+145). Decode and presentation failure counts
+  are zero. Presentation-busy drops increase by 25 in the preceding summary and
+  zero in the following one; these logs do not establish perfectly smooth playback.
+- Over a separate 10.001-second interval, received, reassembled and pipeline-enqueued
+  frames each increase by 294. Reassembly-failure, incomplete-frame and dependency
+  drop counters do not increase within that interval.
+- The peer logs do not record geometry or viewport. The local Host's current
+  accepted-viewport record is 1920×1001; preflight retains capture/encode geometry
+  and the reference network configuration. No peer clocks are subtracted.
+
+This confirms current-session receive/decode/presentation progress, not visual or
+pixel quality. No app, role or network settings were changed. The current peer task
+created no load; cleanup of the older failed Intel attempt remains unverified.
+Intel profiling is deferred and the peer task is complete before Host sampling.
+The normalized receipt is `t30-peer-decoder-confirmation.json`; it marks visual
+inspection false and preserves that earlier cleanup limitation.
+
+Local receipts: `p5-acceptance-x30-expiry-deployed.json`,
+`x30-expiry-readiness.json`, `x30-expiry-publication-supervisor.json` and the
+protected operation under `p5-acceptance-x30-expiry-deployment/`, all below
+`build/reports/x00-t27/`. The publication-recovery wrapper and its dispatch
+receipt are retained there; no permanent monitor was installed.
+
+### Expiry-repair live comparison and a separate sender stall
+
+After the accepted decoder-log check, all three 10-second-warmup / 60-second
+DynamicLog windows completed on `d2930f0`. The reference remains `e787ca5` in
+`x28-wake-live-20260930`. Scene seed 2700, capture/encode/viewport geometry,
+network configuration, both log visibilities and 10-second diagnostics match.
+The scene renders 21.32–21.33 FPS and log replay produces 80.04–80.23 lines/s.
+These are source-limited matched-scene windows, not maximum-throughput tests.
+Eighteen codec summaries retain 4267 kbps, nominal 30 FPS, 1/30, GOP 60 and
+confirmed NVENC GPU input with zero fallback.
+
+The trace contains **3680 fully sent frames and two deadline drops**, with zero
+in-flight-block records, zero in-flight wait and no trace/GUI overflow. No
+capture/encode/transmit failure increment is reported, but these coarse counters
+do not negate the two recorded deadline drops. Three-run median [range]:
+
+| Host metric | Reference `e787ca5` | Candidate `d2930f0` |
+| --- | --- | --- |
+| Sent FPS | 21.333 [21.333, 21.583] | 21.300 [18.700, 21.333] |
+| Send-queue P99, ms | 14.586 [11.806, 16.303] | 21.330 [18.866, 32.948] |
+| Capture-ready to last-send P99, ms | 41.780 [34.551, 41.857] | 69.911 [35.177, 93.526] |
+| Ordinary-frame wait overshoot, ms/frame | 0.319 [0.308, 0.326] | 0.613 [0.329, 0.762] |
+| Ordinary-frame token wait, ms/frame | 3.901 [3.781, 3.959] | 11.961 [4.965, 32.852] |
+| Runtime CPU, percent of one logical core | 11.430 [11.327, 11.953] | 11.973 [10.805, 13.137] |
+| GUI CPU, percent of one logical core | 27.722 [27.657, 32.839] | 34.674 [32.800, 43.459] |
+
+The latency and per-kind wait table uses successfully sent rows. Drops retain
+their own timing below; no failed row is silently counted as a completed send.
+Runtime private memory is stable at 487.852–487.883 MiB. Hidden mirror refreshes
+remain zero. No CPU/FPS or latency improvement is established.
+
+The actual adaptive pacing rate differs from the reference's constant 21677 kbps:
+candidate windows use 17738, then 17738/8565, then 3927 kbps. RTT spans 4–157 ms
+instead of 4–8 ms. Therefore the observed worse tails cannot be attributed solely
+to the expiry-refresh change. There are no traced in-flight blocks, so these
+windows do not exercise its repaired branch; the earlier causal fixture remains
+the direct evidence for that mechanism.
+
+In window 2, frames 73837 and 73839 both have deadline outcome 2 and zero
+in-flight/buffered/channel wait:
+
+- Frame 73837 waits 2320.248 ms in the send queue. After sending one of two
+  fragments, its 2.368 ms requested token wait takes 1831.716 ms, including
+  1829.348 ms overshoot; the wake is classified as notified.
+- Keyframe 73839 sends no fragment. Its transport-state callback region takes
+  701.698 ms. Deadline classification remains token; that classification does
+  not mean a token sleep consumed this second frame's time.
+- The next fully sent frame is keyframe 73840. Consecutive successful sends
+  surrounding the incident are **6214.979 ms apart**. Partial fragments do not
+  count as a completed frame. The other windows' maximum gaps are 102.615 and
+  121.164 ms.
+
+The first periodic transport summary inside window 2 already includes both
+drops. Subtracting only its first/last summaries misleadingly gives zero new
+drops. The companion anomaly audit uses the preceding summary and confirms
+deadline/token-deadline +2, in-flight-deadline +0, with explicit summary bounds;
+the trace supplies the exact affected frames. Expired-packet and transport-loss
+summary deltas are zero. These diagnostic intervals are not exact trace bounds.
+
+Elapsed wait includes scheduling and mutex reacquisition, and the transport-state
+region includes callback execution and scheduling. There is no thread-scheduler
+or internal-lock trace to distinguish them. Capture/encode maxima also rise in
+window 2, but the scene itself continues normally; a machine-wide pause is not
+established. **X00-T31** records this separate non-in-flight stall for bounded
+stage/lock/scheduler attribution. No bitrate, queue, priority, timeout or network
+change is justified by the present evidence.
+
+Recompute with `analyze_x30_expiry_live.py` and
+`analyze_x30_expiry_anomalies.py` under `build/reports/x00-t27/`. Raw traces,
+hashes, `comparison.json`, `anomalies.json` and `postflight.json` are retained in
+`x30-expiry-live-20260930/`. The latter verifies the same Host remains connected,
+log replay is inactive and this run's scene processes are stopped. Reuse the
+already-passed Debug build and five focused suites; no source or binary changed
+during sampling. The prior five-minute P5 run is not claimed as a fresh T30
+stability pass. T30 repair implementation/local/deployment work is complete,
+while historical attribution and broad live tail acceptance remain open.
+
 ## Bounded pacer wake replacement (X00-T28, 2026-09-30)
 
 The reference is the three X00-T30 DynamicLog windows above, on local Host

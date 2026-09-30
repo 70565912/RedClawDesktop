@@ -8,10 +8,23 @@ The operator now prioritizes the remaining T27 checks and T30 while retaining
 the current Host/Client roles and proxy/network configuration. Network diagnosis
 has been interrupted. T30 repair `0d43f8c` and T27 profiler `d2930f0` are pushed.
 The exact pushed candidate passes the Debug build/publication, focused checks,
-336-file verification and command-entry check. PlanOnly replacement validation
-is complete, without dispatching a worker; it is not yet in the serving Host.
-Current-state clarification precedes any replacement. Historical incident
-attribution remains unresolved. See the
+336-file verification and command-entry check. The operator then authorized
+replacement/restart: `d2930f0` is now deployed, formal/rollback manifests pass,
+DHT is published and connected real-media counters advance. The one-shot
+publication-recovery supervisor and upgrade worker have cleaned up. After the UI
+observer could not enumerate a Client window, the operator accepted existing
+decoder logs. Same-peer evidence `clog-20260930-01` confirms post-reconnect decode
++147 and presentation +145 in 5.006 s, with zero decode/presentation failures.
+The Host-received viewport remains 1920×1001; no fresh visual-quality claim.
+Three matched DynamicLog windows now complete: 3680 frames sent, two deadline
+drops, zero in-flight blocks and zero overflow. Candidate Host-frame-age P99 is
+69.911 [35.177, 93.526] versus 41.780 [34.551, 41.857] ms; pacing/RTT differ and
+no latency improvement is confirmed. Window 2 has a 6.215 s complete-frame-send
+gap followed by IDR recovery, with long token-wait/transport-state regions and
+zero in-flight wait. **X00-T31** records separate bounded attribution of this
+new stall; scheduling versus mutex/callback delay is not yet distinguished.
+Owned load is stopped and the same Host remains connected. Historical T30
+incident attribution and broad live tail acceptance remain unresolved. See the
 [repair evidence](../testing/video-send-attribution-20260929.md#expiry-driven-accounting-repair-while-preserving-the-running-session).
 The [P4 publication audit](../testing/video-link-baseline-20260928.md#p4-publication-stage-audit-from-retained-cpu-recordings)
 recovers a measured stage improvement from existing records, with different
@@ -20,17 +33,17 @@ log injection remains blocked by its prior local Debug Control access refusal.
 The [independent input profiler](../testing/video-gpu-input-p5-20260929.md#independent-cpugpu-profiler-for-the-remaining-intel-comparison)
 is locally validated. The peer's Intel measurement attempt and one same-Agent
 continuation ended with Provider exit 125, without a valid three-pair result or
-final cleanup receipt. Reconcile that incomplete attempt before another run;
-current connection is intact and no network repair was attempted. Neither task
-is declared fully accepted by these preparations.
+final cleanup receipt. The current peer/Codex task created no workload, completed
+the decoder-log check and left Intel profiling deferred; the older task's cleanup
+remains unverified. Current Host connection is intact and no network repair was
+attempted. T27/T30 are not declared fully accepted.
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
-**local controlled Debug Host / remote Client**. Pushed X00-T28 `e787ca5` is clean-source
-Debug built/published and running from `release/Debug`, with complete 336-file
-candidate/rollback verification, retained credentials and effective ICE port 56000.
-The operator reports automatic Client reconnection. Three DynamicLog wake
-windows are complete; the same Host remains connected and owned load is stopped.
+**local controlled Debug Host / remote Client**. The serving `d2930f0` includes
+the earlier X00-T28 wake optimization, with retained credentials and effective
+ICE port 56000. X00-T28's three DynamicLog wake windows on `e787ca5` remain
+historical passed evidence, not measurements of the new expiry-refresh repair.
 
 **The local NVIDIA P5 GPU preparation/encoding regression is resolved.** After
 operator picture confirmation, an initial 711 kbps batch was rejected because the

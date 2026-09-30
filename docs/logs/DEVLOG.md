@@ -1,5 +1,17 @@
 # Development Log
 
+## 2026-09-30 — Measure T30 repair and retain the new non-in-flight stall
+
+- After operator-accepted peer decoder logs, three matched DynamicLog windows complete on `d2930f0`: 3680 fully sent frames, two deadline drops, zero in-flight blocks/wait and zero trace overflow. Codec/geometry remain matched; passed Debug build and five focused suites are reused. This turn changes documentation only.
+- No latency benefit is confirmed: successful-send Host frame-age P99 is 69.911 [35.177, 93.526] versus 41.780 [34.551, 41.857] ms. Actual pacing falls from the reference's 21677 to 17738/8565/3927 kbps and RTT rises to 157 ms, preventing isolated attribution to the repair. CPU/FPS benefit is also unconfirmed.
+- Window 2 records a 6.215 s successful-send gap, then keyframe recovery. One dropped frame waits 2.320 s in the send queue and its 2.368 ms token wait takes 1.832 s; the other spends 701.698 ms in transport-state retrieval. Neither blocks on in-flight. X00-T31 captures bounded stage/lock/scheduler diagnosis; no speculative policy change. Original T30 historical attribution and broad tail acceptance remain open. Local scenes/log replay are stopped and Host remains connected. [Recomputable evidence](../testing/video-send-attribution-20260929.md#expiry-repair-live-comparison-and-a-separate-sender-stall).
+
+## 2026-09-30 — Deploy the pushed T30 expiry-refresh repair
+
+- Operator authorized replacement/restart. Reused the verified `d2930f0` Debug package and passed focused tests; the independent upgrade worker completes directory replacement, while a separate current-user one-shot supervisor verifies DHT publication with a prepared prior-bundle fallback. No fallback occurred. Formal/rollback manifests each verify 336 files and actual launch arguments match the preserved plan.
+- Host is published, reconnected and transmitting real frames. DDA 1920×1080, NVENC 1778×1000, 4267 kbps, 30 FPS/1:30/GOP 60 and confirmed GPU input with zero fallback are retained. Both scheduled tasks clean up. [Deployment evidence](../testing/video-send-attribution-20260929.md#authorized-repair-deployment-and-real-media-readiness).
+- The old Agent task again exits with code 125, and a fresh read-only observation cannot enumerate the Client window. The operator then accepts decoder logs for readiness. Same-peer evidence `clog-20260930-01` confirms post-reconnect decode +147 and presentation +145 in 5.006 s, with zero decode/presentation failures; a separate 10.001 s interval has receive/reassembly/pipeline +294. Host-received viewport remains 1920×1001. No fresh visual-quality claim. The current peer task creates no load and completes before Host sampling; earlier Intel-task cleanup remains unverified and profiling is deferred.
+
 ## 2026-09-30 — Prepare pushed T30 repair without replacing the serving Host
 
 - Pushed `0d43f8c` and `d2930f0`, then built/published the latter from the existing independent worktree through `build.ps1`. All 336 files and the command-entry check pass; published/build executable hashes agree. Reused the focused checks already passed for these sources.
