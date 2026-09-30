@@ -235,3 +235,57 @@ confirm picture/unchanged viewport; no trace or dynamic load has started.
 Local receipts under `build/reports/x00-t27/` are `x30-candidate.json`,
 `x30-candidate-manifest.json`, `x30-pushed-build.txt`,
 `p5-acceptance-x30-dispatch.json` and `p5-acceptance-x30-deployed.json`.
+
+### Reconnected live v2 capture
+
+The operator confirmed the candidate picture and unchanged viewport. Preflight
+verified real capture, original network settings, 1920×1080 capture, 1778×1000
+encoding, 1920×1001 viewport, NVENC GPU input, 4267 kbps, nominal 30 FPS,
+time base 1/30 and GOP 60. Three fixed DynamicLog runs used seed 2700, at least
+10 s warmup, 60 s trace windows, visible Host log, hidden mirror and the existing
+four-lines-per-50-ms replay. Only these affected windows were repeated.
+
+| Window | Sent trace frames | In-flight blocked frames | Failed/cancelled frames | Host frame-age P99, ms |
+| --- | --- | --- | --- | --- |
+| DynamicLog-1 | 1281 | 0 | 0 | 47.106 |
+| DynamicLog-2 | 1281 | 0 | 0 | 48.106 |
+| DynamicLog-3 | 1280 | 0 | 0 | 47.136 |
+
+All 3842 v2 rows pass identity, timing, fragment, exclusive-wait and wake-count
+checks without overflow. First-block fields correctly stay zero; final snapshot
+provenance is populated. Maximum final estimator-snapshot ages are 189.053,
+195.398 and 164.977 ms. ACK sequences advance throughout; expiry and rejected
+older-policy counts remain zero. Eighteen complete, unique codec/transport
+diagnostic windows retain the fixed codec configuration and zero GPU fallbacks.
+Within each window's retained transport-summary bounds, expiry, lost-packet,
+ignored-feedback, deadline-drop and send-failure counters do not increase.
+Those summary deltas do not cover precisely the same boundaries as the frame
+trace. Sampled capture/encode/transmit failures also have zero deltas.
+
+The incident did not recur. This validates the diagnostic candidate and the
+bounded run's stability, but **does not establish the historical ACK/network
+cause or a latency improvement**. Expiry-refresh lag remains a locally
+reproduced mechanism, not a confirmed explanation of frame 14176. Keep X00-T30
+historical attribution unresolved rather than treating absence as a repair.
+No continuing background monitor or workload was installed.
+
+The same recording supplies a current-role baseline for the independently
+actionable X00-T28 wake investigation. Ordinary-frame token waits account for
+a three-run median 90.75% [90.74%, 90.87%] of pacer duration. Mean overshoot is
+5.947 [5.910, 5.995] ms/frame and 60.14% [59.77%, 60.21%] of recorded wait.
+Pacing remains 11217 kbps in these windows, while actual output is about
+21.33–21.35 FPS. Queue P99 is 21.055 [20.106, 24.799] ms. Overshoot includes OS
+scheduling and mutex reacquisition; it does not isolate a timer-resolution cause.
+These are a baseline, not a before/after claim against the earlier 8966 kbps run.
+Proceed with X00-T28's bounded wake comparison while retaining X00-T30 trace
+support for a future recurrence; do not change congestion or expiry policy as
+part of that comparison.
+
+Recompute with `python build/reports/x00-t27/analyze_x30_admission.py`.
+Raw and derived records are under `build/reports/x00-t27/x30-admission-20260930/`,
+including `admission-analysis.json`. The local collector is
+`run-x30-windows.ps1` in the parent report directory; it retains transport
+numeric summaries alongside capture/codec summaries before log rotation.
+After collection, the same Host remains connected with real media, log replay
+is inactive and no scene process remains. This is a diagnostic/code-validation
+stage completion; historical root-cause attribution remains open.
