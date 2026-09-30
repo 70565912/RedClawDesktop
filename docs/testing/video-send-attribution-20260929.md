@@ -333,6 +333,29 @@ Receipts are `x30-expiry-*-build.txt`, `x30-expiry-ctest-first.txt`,
 `build/reports/x00-t27/`. The serving `e787ca5` Host and peer Client are unchanged;
 this candidate has not been published, deployed or measured across the live link.
 
+### Pushed repair package; serving Host preserved
+
+The repair is pushed as `0d43f8c`; `d2930f0` adds the independent T27 input
+profiler and evidence. Built that exact pushed checkout with
+`build.ps1 -Configuration Debug -Target redclaw_desktop` in the existing
+independent worktree. Publication contains 336 verified files, the command-entry
+check passes, and the executable matches the build with SHA256
+`126403535ce33a61dbc2e7bcfa2bf596476a9325bc996fe68796d0ea162441b4`.
+
+The normal upgrade entrypoint completed **PlanOnly** validation, recording the
+candidate and original 336-file manifests and preserving the Host launch role.
+No lifecycle worker was dispatched, no rollback copy was installed, and the
+serving `e787ca5` Host/Client connection was not replaced or restarted. The
+operator's request to preserve the current state is being clarified before any
+deployment; independent Intel measurements must also finish before interruption.
+
+Receipts under `build/reports/x00-t27/` are `x30-expiry-pushed-build.txt`,
+`x30-expiry-candidate.json`, `x30-expiry-candidate-manifest.json` and the protected
+PlanOnly operation under `p5-acceptance-x30-expiry-deployment/`. The generated
+wrapper initially failed while printing an absent deployment-only status field;
+the stored PlanOnly receipt and plan hash were then checked successfully. This
+did not dispatch an upgrade. Live acceptance of the repair remains unperformed.
+
 ## Bounded pacer wake replacement (X00-T28, 2026-09-30)
 
 The reference is the three X00-T30 DynamicLog windows above, on local Host
