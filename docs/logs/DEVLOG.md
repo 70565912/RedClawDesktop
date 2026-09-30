@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-30 — Resume T27 P5 and retain P1's authorization blocker
+
+- Operator prioritizes T27 P1/P5, then explicitly chooses P5 first with P1 still blocked. Same-peer checks confirm no matched real-Controller P1 result and no available normal approval channel for its refused diagnostic access. T31 is deferred and is not a new T27 completion gate.
+- The peer rejects its obsolete NVENC-only short profiler, isolates the already-present `d2930f0` source and passes the focused capture-test build. Initial OpenSSL discovery is corrected by reusing installed dependencies; no downloads, main-app build, publication or Client replacement. A preparation-only turn was interrupted before this actual build attempt. The P5 report introduction is corrected to distinguish the repaired local NVIDIA result from historical failures and pending Intel evidence.
+- First CPU/QSV attempt exits in roughly 46 ms: DDA `DuplicateOutput` returns `0x80070005` before warmup or encoding. Zero valid performance rounds; other five are unrun. Timing, CPU and copy counts are unavailable, not zero; the earlier Intel functional gate is not invalidated by this startup failure. The peer reports owned profiler load stopped and Client retained. P5 remains blocked on a permitted capture context. [Evidence and limits](../testing/video-gpu-input-p5-20260929.md#resumed-intel-build-and-capture-startup-blocker).
+
 ## 2026-09-30 — Measure T30 repair and retain the new non-in-flight stall
 
 - After operator-accepted peer decoder logs, three matched DynamicLog windows complete on `d2930f0`: 3680 fully sent frames, two deadline drops, zero in-flight blocks/wait and zero trace overflow. Codec/geometry remain matched; passed Debug build and five focused suites are reused. This turn changes documentation only.

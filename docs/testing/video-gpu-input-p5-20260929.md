@@ -1,16 +1,21 @@
 # X00-T27 P5: synchronized GPU input
 
 P5 is implemented and functionally validated, including the peer's Intel QSV
-surface repair. **The latest matched local NVIDIA Host comparison fails the
-FPS/latency objective:** GPU input removes main-video readback and reduces Host
-CPU, but throughput falls and frame-age tails increase. The five-minute dynamic
-run completed without stream failures or reconnects. See the
-[matched acceptance below](#matched-local-host-performance-acceptance).
-Earlier implementation, publication and role-specific receipts follow in order;
-their waiting states do not describe the current connected Host.
-The subsequent [input-cost diagnosis](#dda-shared-device-wait-diagnosis) reproduces
-the regression in local probes and identifies DDA waiting under the shared
-device's internal multithread protection. Runtime scheduling is not yet repaired.
+surface repair. **The local NVIDIA preparation/encoding regression is resolved**
+by the bounded DDA wait repair. The [matched repaired comparison](#matched-acceptance-after-the-dda-repair-2026-09-30)
+records lower input preparation, total encoding and CPU cost, with zero main-video
+CPU readback; DynamicLog tail improvement remains unconfirmed and effective
+pacing differs. Its subsequent five-minute continuity run passes, with the earlier
+sender exception retained separately. These findings do not qualify Intel performance.
+
+The operator now prioritizes the remaining Intel CPU/GPU comparison, while leaving
+P1 real-Controller sampling blocked by the peer's diagnostic-access refusal.
+The resumed peer attempt builds the correct v2 tool, but DDA initialization returns
+access denied before the first warmup; [zero valid Intel performance windows](#resumed-intel-build-and-capture-startup-blocker)
+have been recorded.
+Earlier failed-GPU results, deployment waiting states and the initial
+[input-cost diagnosis](#dda-shared-device-wait-diagnosis) below are chronological
+evidence, not the current P5 result or current Host readiness.
 
 ## Ownership and behavior
 
@@ -945,3 +950,46 @@ Reconcile the incomplete attempt and owned-load cleanup before another measureme
 reuse the local tool checks and peer functional gate. Sanitized progress and task
 status are retained as `t27-peer-remaining-report.txt` and
 `t27-peer-attempt-result.json` under the local report root.
+
+### Resumed Intel build and capture-startup blocker
+
+The operator explicitly selected P5 first and retained P1 as blocked. The same
+peer/Codex task resumed within its existing permissions; no alternate Agent,
+capture backend or privilege change was used. The local T31 follow-up is deferred
+and is not a new T27 completion gate.
+
+The old peer profiler binary was rejected as unsuitable: it hard-codes NVENC,
+1920×1080 and a short run. The already-present `d2930f0` commit object contains
+the required QSV/CPU/GPU v2 source. After a preparation-only turn was stopped,
+the peer confirmed no residual profiler/build load, created an independent source
+snapshot and built `redclaw_capture_gpu_input_tests`. Initial OpenSSL discovery
+failed because the isolated preset pointed to a nonexistent dependency directory
+inside the snapshot. Reusing the existing installed dependencies corrected the
+configuration; the focused build then passed, with dependency installation off
+and no downloads, publication or replacement of the serving Client.
+Build evidence reference: `p5-profiler-build-20260930-01`.
+
+The first requested CPU-input/QSV run failed at real DDA `DuplicateOutput`
+initialization with **`0x80070005`**, exiting after approximately 46 ms. It did
+not enter the 10-second warmup, the 60-second measurement or encoder validation.
+The failed record is retained as `p5-qsv-20260930-r1-denied-01`; the other five
+runs were not started.
+
+There are **zero valid measurement rounds**. Actual codec/geometry, measured
+attempt/output/capture denominators, timings, CPU/memory and readback/copy/
+allocation/exhaustion/fallback metrics are unavailable, not measured zeros.
+Seed/trajectory and background-Client stability were not qualified by this
+failed run. No median, performance benefit or QSV capability conclusion follows
+from this API access refusal; the earlier QSV functional gate remains separate.
+
+The peer reports its profiler load ended and the existing Client remained running.
+The local Host's connection remained streaming during coordination. The immediate
+missing condition is a legally permitted DDA capture context for the Intel output;
+the HRESULT alone does not identify a particular sandbox rule or desktop state.
+One limited permitted read-only follow-up could not distinguish that underlying
+condition. It did not repeat capture, change permissions or establish QSV support
+from the failed initialization. Do not label this Windows API result as a proven
+approval-policy denial or as an encoder failure.
+Local normalized receipt: `build/reports/x00-t27/p5-intel-attempt-20260930.json`.
+Peer source/build and startup-failure records are retained at the peer. P5's Intel
+performance acceptance remains blocked, not completed or failed on performance.
