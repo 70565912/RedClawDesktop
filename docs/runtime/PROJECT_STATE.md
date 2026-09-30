@@ -9,8 +9,8 @@ Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 **local controlled Debug Host / remote Client**. Pushed X00-T28 `e787ca5` is clean-source
 Debug built/published and running from `release/Debug`, with complete 336-file
 candidate/rollback verification, retained credentials and effective ICE port 56000.
-The new Host has published DHT and waits for Client reconnection/picture
-confirmation before matched wake-optimization sampling.
+The operator reports automatic Client reconnection. Three DynamicLog wake
+windows are complete; the same Host remains connected and owned load is stopped.
 
 **The local NVIDIA P5 GPU preparation/encoding regression is resolved.** After
 operator picture confirmation, an initial 711 kbps batch was rejected because the
@@ -68,18 +68,21 @@ without in-flight blocking, drops or sampled failure/expiry increments. Load is
 stopped and the Host remains connected. Historical root-cause attribution stays
 unresolved; the incident did not recur and no improvement is claimed. See the
 [investigation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
-**X00-T28 is implemented and locally validated.** The pacer uses a cancellable
+**X00-T28 implementation and bounded live wake acceptance are complete.** The pacer uses a cancellable
 Windows high-resolution deadline timer, with condition-variable fallback and
 unchanged network/queue policy. Debug main build and five focused suites pass.
 Three isolated rounds show mean wait overshoot 13.210 → 0.388 ms/wait; this is
 a primitive result, not a video-latency claim. Pushed `e787ca5` is clean Debug
 built/published and deployed through the independent worker, with verified
-336-file formal/rollback bundles and DHT readiness. Next: operator picture
-confirmation, then three matched
-DynamicLog windows against the 5.947 ms/frame current-role reference. Compare
-actual pacing, CPU, queue and Host frame-age tails. Retain X00-T30 diagnostics
-without claiming the historical in-flight cause is resolved. See the
-[wake implementation and local evidence](../testing/video-send-attribution-20260929.md#bounded-pacer-wake-replacement-x00-t28-2026-09-30).
+336-file formal/rollback bundles. After automatic Client reconnection, three
+DynamicLog windows send all 3855 frames without drops, in-flight blocks or sampled
+failures. Ordinary-frame overshoot falls 5.947 → 0.319 ms/frame; queue P99
+21.055 → 14.586 ms and Host frame-age P99 47.136 → 41.780 ms. Effective pacing
+is 21677 versus 11217 kbps and RTT differs, so total tail gains are not isolated
+to the timer. CPU and FPS improvement are unconfirmed. Load is stopped, the Host
+remains connected and no background monitor is installed. Retain X00-T30
+diagnostics for recurrence without claiming its historical cause is resolved.
+See the [live wake evidence and limits](../testing/video-send-attribution-20260929.md#reconnected-three-window-wake-acceptance).
 P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
 performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
 and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).

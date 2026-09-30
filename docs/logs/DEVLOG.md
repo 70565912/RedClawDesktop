@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-30 — Validate the deployed pacer wake optimization (X00-T28)
+
+- Operator reports automatic Client reconnection. Three fixed DynamicLog windows on pushed/deployed `e787ca5` send all 3855 frames with no drop, in-flight block, trace overflow or sampled capture/encode/transmit failure; eighteen complete summaries retain 4267 kbps/NVENC GPU input and confirm the native wait backend. Geometry, log load, scene seed and network configuration match the X00-T30 reference. Reused the passed Debug build and five focused suites; no production changes, rebuild or restart.
+- Ordinary-frame wake overshoot falls 5.947 → 0.319 ms/frame (94.6%); pacer mean 10.896 → 4.750 ms; queue P99 21.055 → 14.586 ms; Host capture-ready-to-last-send P99 47.136 → 41.780 ms. Effective pacing is 21677 versus 11217 kbps and RTT differs, so total sender-tail gains are not isolated to the timer. Runtime CPU 11.414 → 11.430% and about 21.33 FPS show no confirmed improvement. Candidate private memory is stable at 491.590–491.715 MiB, slightly above the reference. No new end-to-end or pixel-quality claim.
+- X00-T28 bounded live wake acceptance is complete; X00-T30 historical cause remains unresolved. Owned dynamic scene and log replay are stopped and the same Host remains connected. Raw/derived results and limitations are in the [three-window report](../testing/video-send-attribution-20260929.md#reconnected-three-window-wake-acceptance).
+
 ## 2026-09-30 — Replace bounded pacer deadline waits (X00-T28)
 
 - Replace only fragment-admission and frame-cadence timed waits with a pacer-owned Windows high-resolution one-shot timer plus cancellable notification event. Predicate state stays under the pacer mutex; waits release it and handles outlive worker join. Unsupported/failed native waits latch the portable condition-variable fallback. Idle/drain waits remain on the existing condition variable. No new thread, spin loop, global timer-resolution request or priority change.

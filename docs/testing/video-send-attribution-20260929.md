@@ -387,3 +387,75 @@ Receipts are `x28-candidate.json`, `x28-candidate-manifest.json`,
 operation directory `p5-acceptance-x28-deployment/`, all below
 `build/reports/x00-t27/`. Implementation, local validation and controlled
 publication are complete; real-media improvement is not yet established.
+
+### Reconnected three-window wake acceptance
+
+The operator reported automatic remote Client reconnection. Retained the prior
+fixed-window instruction; preflight verified real captured media, unchanged
+network configuration/log visibility, 1920×1080 DDA capture and 1778×1000 NVENC
+encoding at 4267 kbps, nominal 30 FPS, time base 1/30 and GOP 60. All eighteen
+complete codec/transport diagnostic windows confirm GPU input with zero fallback
+and `pacer_high_resolution_wait=1`. No peer-version equality gate was added.
+
+Three DynamicLog windows each use seed 2700, the same motion trajectory,
+at least 10 seconds warmup and 60 seconds Host trace. The visible log replay is
+about 80 lines/s and the hidden mirror remains hidden. Candidate windows send
+1295/1280/1280 frames: **3855 sent, zero dropped/cancelled, zero in-flight blocks**.
+All v2 rows pass identity, timing, fragment, exclusive-wait, wake-count and
+overflow checks. Capture/encode/transmit failure deltas are zero; retained
+transport-summary deltas show no loss, expiry, ignored feedback or send failures.
+Transport summary boundaries differ slightly from the trace boundaries.
+
+| Metric, three-run median [range] | Reference 8301b4b | Candidate e787ca5 |
+| --- | --- | --- |
+| Ordinary-frame overshoot, ms/frame | 5.947 [5.910, 5.995] | 0.319 [0.308, 0.326] |
+| Ordinary-frame token wait, ms/frame | 9.888 [9.887, 9.958] | 3.901 [3.781, 3.959] |
+| Ordinary-frame pacer duration, ms/frame | 10.896 [10.896, 10.958] | 4.750 [4.661, 4.822] |
+| Send-queue P99, ms | 21.055 [20.106, 24.799] | 14.586 [11.806, 16.303] |
+| Host capture-ready to last-send P95, ms | 42.834 [38.381, 42.854] | 29.649 [24.706, 31.655] |
+| Host capture-ready to last-send P99, ms | 47.136 [47.106, 48.106] | 41.780 [34.551, 41.857] |
+| Sent FPS | 21.350 [21.333, 21.350] | 21.333 [21.333, 21.583] |
+| Runtime CPU, percent of one logical core | 11.414 [11.104, 12.191] | 11.430 [11.327, 11.953] |
+| GUI CPU, percent of one logical core | 30.055 [29.319, 30.146] | 27.722 [27.657, 32.839] |
+| Effective pacing, kbps | 11217 throughout | 21677 throughout |
+
+The recorded wake overshoot is 94.6% lower, and its share of ordinary-frame
+wait falls from 60.14% to 8.17%. Keyframe overshoot also falls from
+11.065 [10.666, 11.486] to 0.491 [0.481, 0.510] ms/frame. The implementation
+does not spin. Recorded wait counts increase from 1013/1002/997 to
+1430/1345/1369 per window, while runtime CPU ranges overlap. **CPU and FPS
+improvement are not established.** The scene itself measures about 21.33 FPS
+in both groups; this is not a maximum-throughput test.
+
+Queue P99 and Host frame-age P95/P99 are below the reference ranges, but this
+is **not a fixed-effective-pacing experiment**. Congestion/bitrate/burst formulas
+were unchanged; the adaptive controller selected 21677 instead of 11217 kbps,
+and RTT samples span 4–8 instead of 4–10 ms. Thus the 30.7% queue-P99 and 11.4%
+Host-frame-age-P99 reductions cannot be attributed entirely to the timer.
+The isolated fixed-wait probe above supplies direct wait-mechanism evidence;
+the live windows confirm the smaller recorded overshoot and overall observed
+sender tails under the actual adaptive policy. No end-to-end latency is inferred.
+
+Encoding mean is unchanged within variation (12.878 → 12.786 ms). Ordinary
+wire size is essentially unchanged (17649 → 17660 bytes/frame); keyframe size
+is 31726 → 31440 bytes/frame, with overlapping ranges. Runtime private memory
+stays within 491.590–491.715 MiB across the candidate samples, versus
+487.047–487.836 MiB in the reference; this small cross-process increase is
+recorded, not described as a memory reduction. The per-window private-memory
+maximum stays at 491.715 MiB in all three trials. The operator's reconnection report does not constitute
+a fresh pixel comparison or separate requalification of text/line/cursor quality.
+
+Recompute both groups with `python build/reports/x00-t27/analyze_x28_live.py`.
+Candidate raw data, frame hashes and `comparison.json` are in
+`build/reports/x00-t27/x28-wake-live-20260930/`; the reference is
+`x30-admission-20260930/`. The inherited plan field `comparison_baseline` contains
+an older label; comparison source directories and commit identities in the
+analysis explicitly select these two recordings. No historical label is used
+to select data. `postflight.json` confirms the same new Host remains connected,
+log replay is inactive and no scene process remains.
+
+**X00-T28 implementation, local validation, deployment and bounded live wake
+acceptance are complete.** Reused the passed Debug build and five focused suites;
+this sampling turn changed no production code and did not rebuild or restart.
+X00-T30's historical in-flight cause remains unresolved; no new incident occurred
+in these windows and no background load or monitor is left running.
