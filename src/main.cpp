@@ -1907,13 +1907,6 @@ std::uint32_t stream_fps_hint_from_frame_present_delta(double frame_present_delt
     return clamp_stream_target_fps(static_cast<std::uint32_t>((1000.0 / frame_present_delta_ms) + 0.5));
 }
 
-std::uint32_t clamp_stream_bitrate_kbps(
-    std::uint32_t bitrate_kbps,
-    std::uint32_t min_bitrate_kbps,
-    std::uint32_t max_bitrate_kbps) {
-    return std::max(min_bitrate_kbps, std::min(max_bitrate_kbps, bitrate_kbps));
-}
-
 std::uint32_t resolve_stream_target_fps(const StreamAdaptiveControlState& adaptive_control) {
     if (adaptive_control.target_fps != 0) {
         return clamp_stream_target_fps(adaptive_control.target_fps);
@@ -6543,10 +6536,7 @@ int run_runtime_mode(
             redclaw::capture::EncoderProfileRequest profile_request;
             profile_request.width = encode_width;
             profile_request.height = encode_height;
-            profile_request.fps = encoder_resolution_changed
-                && adaptive_control.applied_fps != 0
-                ? adaptive_control.applied_fps
-                : adaptive_target_fps;
+            profile_request.fps = adaptive_target_fps;
             profile_request.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
             profile_request.preferred_codec = redclaw::capture::EncoderCodec::kH264;
 
@@ -6564,37 +6554,6 @@ int run_runtime_mode(
                     "stream",
                     "desktop video encoder profile build failed: " + encoder_error);
                 return;
-            }
-
-            if (encoder_resolution_changed) {
-                // Bitrate belongs to the committed pixel geometry. Carrying a
-                // larger viewport's target into this rebuild wastes bandwidth
-                // until a later adaptation window. Rebase immediately while
-                // preserving the independently tracked pacing target.
-                encoder_profile.target_bitrate_kbps =
-                    redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(
-                        encode_width,
-                        encode_height,
-                        adaptive_target_fps);
-                encoder_profile.max_bitrate_kbps = encoder_profile.target_bitrate_kbps
-                    + (encoder_profile.target_bitrate_kbps / 5);
-            } else if (adaptive_control.target_bitrate_kbps != 0) {
-                const std::uint32_t quality_floor_kbps =
-                    redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(
-                        encode_width,
-                        encode_height,
-                        adaptive_target_fps);
-                encoder_profile.target_bitrate_kbps = std::max(
-                    adaptive_control.target_bitrate_kbps,
-                    quality_floor_kbps);
-                encoder_profile.max_bitrate_kbps =
-                    adaptive_control.target_max_bitrate_kbps != 0
-                        ? std::max(
-                              adaptive_control.target_max_bitrate_kbps,
-                              encoder_profile.target_bitrate_kbps
-                                  + (encoder_profile.target_bitrate_kbps / 5))
-                        : (encoder_profile.target_bitrate_kbps
-                            + (encoder_profile.target_bitrate_kbps / 5));
             }
 
             redclaw::capture::EncoderBackendBridgeRequest bridge_request;
@@ -6646,7 +6605,7 @@ int run_runtime_mode(
                 // being encoded and can trigger a redundant restart fallback.
                 stream_encoded_width_snapshot = stream_encoder_width;
                 stream_encoded_height_snapshot = stream_encoder_height;
-                stream_adaptive_control_snapshot.applied_fps = encoder_profile.fps;
+                stream_adaptive_control_snapshot.applied_fps = adaptive_target_fps;
                 stream_adaptive_control_snapshot.applied_bitrate_kbps = encoder_profile.target_bitrate_kbps;
                 stream_adaptive_control_snapshot.applied_max_bitrate_kbps = encoder_profile.max_bitrate_kbps;
                 stream_adaptive_control_snapshot.last_reconfigure_ms = now_ms;
@@ -8868,31 +8827,15 @@ int run_runtime_mode(
 
                     redclaw::capture::EncoderConfigProfile adaptive_profile;
                     std::string adaptive_profile_error;
-                    if (redclaw::capture::build_low_latency_encoder_profile(
+                    if (redclaw::capture::build_desktop_encoder_profile(
                             adaptive_profile_request,
                             &adaptive_profile,
                             &adaptive_profile_error)) {
-                        // build_low_latency_encoder_profile already includes
-                        // the target FPS in its pixels-per-second bitrate.
-                        // Scaling it by FPS a second time made low cadence
-                        // unnecessarily blurry.
-                        const std::uint32_t scaled_base_bitrate_kbps =
-                            adaptive_profile.target_bitrate_kbps;
-                        const std::uint32_t quality_floor_kbps =
-                            redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(
-                                bitrate_width,
-                                bitrate_height,
-                                desired_fps);
-
-                        // Local encode/decode capacity pressure reduces cadence,
-                        // never the per-frame clarity budget. Only transport
-                        // congestion may govern the independent media pacer.
-                        desired_bitrate_kbps = clamp_stream_bitrate_kbps(
-                            scaled_base_bitrate_kbps,
-                            quality_floor_kbps,
-                            adaptive_profile.target_bitrate_kbps);
-                        desired_max_bitrate_kbps = desired_bitrate_kbps + (desired_bitrate_kbps / 5);
-
+                        // Use the same geometry-based codec budget as startup
+                        // and resize. Capacity pressure changes submission FPS;
+                        // transport congestion still governs the media pacer.
+                        desired_bitrate_kbps = adaptive_profile.target_bitrate_kbps;
+                        desired_max_bitrate_kbps = adaptive_profile.max_bitrate_kbps;
                     }
                 }
 

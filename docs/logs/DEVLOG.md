@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-09-30 — Keep the desktop codec budget across low-cadence resize (X00-T29)
+
+- Contract change: `build_desktop_encoder_profile` sizes the codec budget from actual encoded pixels at nominal 30 FPS. Runtime initialization, geometry rebuild and adaptation share this policy; 1–30 FPS submission remains independent. Removed duplicate runtime bitrate overrides and retain the actual applied cadence after start. This supersedes P2's cadence-dependent bitrate calculation for the desktop path; the generic low-latency profile, hardware live-restart protection and network policy remain unchanged.
+- Reproduced the old 5-FPS resize failure (`711` versus expected `4267` kbps), then passed four focused CTest suites and the selected real NVENC roundtrip. Software/NVENC each validate 20 decoded frames across low-cadence enlargement/shrinkage/reconnect, with unchanged budget during cadence recovery, zero rate-update attempts and monotonic PTS. Main Debug NoPublish build passes through `build.ps1`; serving Host is preserved pending pushed-source build and controlled replacement. See [scope and evidence](../testing/video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
+
 ## 2026-09-30 — Verify the DDA wait repair on the real two-machine link (X00-T27 P5)
 
 - Operator confirmed the pushed `a656ede` picture. Rejected and retained an initial 711 kbps collection because both references use 4267 kbps; logs show a 5-FPS geometry reconfiguration followed by unsupported hot bitrate update and suppressed hardware restart. A controlled reconnect of the same candidate restored 4267 kbps; preflight, each window and the final codec-summary audit now verify that budget. No production code, protocol or policy changed.

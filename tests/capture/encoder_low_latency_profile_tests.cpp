@@ -129,30 +129,36 @@ bool test_low_latency_profile_uses_all_intra_at_one_fps() {
         && expect_true(profile.zero_latency_tuning, "one-fps mode must keep zero-latency tuning enabled");
 }
 
-bool test_desktop_codec_clock_is_independent_of_submission_cadence() {
+bool test_desktop_codec_budget_is_independent_of_submission_cadence() {
     redclaw::capture::EncoderProfileRequest request;
-    request.width = 1920;
-    request.height = 1080;
     std::string error;
-    for (const auto fps : {1U, 30U, 1U}) {
+    struct Step { std::uint32_t width, height, fps, kbps; };
+    // Low-cadence resize, cadence recovery, resize back and same-size reconnect.
+    for (const auto [width, height, fps, kbps] : {
+             Step{1184, 666, 30, 1892}, Step{1778, 1000, 5, 4267},
+             Step{1778, 1000, 30, 4267}, Step{1778, 1000, 1, 4267},
+             Step{1184, 666, 1, 1892}, Step{1184, 666, 5, 1892}}) {
+        request.width = width;
+        request.height = height;
         request.fps = fps;
-        redclaw::capture::EncoderConfigProfile adaptive, desktop;
-        if (!expect_true(redclaw::capture::build_low_latency_encoder_profile(request, &adaptive, &error)
-                && redclaw::capture::build_desktop_encoder_profile(request, &desktop, &error),
-                "desktop and adaptive profiles should build: " + error)
+        redclaw::capture::EncoderConfigProfile desktop;
+        if (!expect_true(redclaw::capture::build_desktop_encoder_profile(request, &desktop, &error),
+                "desktop profile should build: " + error)
             || !expect_true(desktop.fps == 30 && desktop.gop_length_frames == 60,
                 "1-to-30-to-1 cadence must retain the nominal clock and frame-count GOP")
-            || !expect_true(desktop.target_bitrate_kbps == adaptive.target_bitrate_kbps
-                && desktop.max_bitrate_kbps == adaptive.max_bitrate_kbps,
-                "nominal codec FPS must not change the existing bitrate adaptation")
+            || !expect_true(desktop.target_bitrate_kbps == kbps
+                && desktop.max_bitrate_kbps == kbps + kbps / 5,
+                "resize/reconnect at low cadence must retain the nominal quality budget; actual="
+                    + std::to_string(desktop.target_bitrate_kbps) + " expected=" + std::to_string(kbps))
             || !expect_true(desktop.width == request.width && desktop.height == request.height,
                 "desktop policy must preserve pixel geometry")) {
             return false;
         }
-        request.width = 1280;
-        request.height = 720;
     }
-    return true;
+    redclaw::capture::EncoderConfigProfile desktop;
+    request.fps = 0;
+    return expect_true(!redclaw::capture::build_desktop_encoder_profile(request, &desktop, &error),
+        "nominal clock substitution must still reject invalid cadence");
 }
 
 bool test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() {
@@ -184,7 +190,7 @@ int main() {
     ok = test_low_latency_profile_fast_action_has_higher_bitrate_and_shorter_gop() && ok;
     ok = test_low_latency_profile_uses_all_intra_at_one_fps() && ok;
     ok = test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() && ok;
-    ok = test_desktop_codec_clock_is_independent_of_submission_cadence() && ok;
+    ok = test_desktop_codec_budget_is_independent_of_submission_cadence() && ok;
 
     if (!ok) {
         return 1;

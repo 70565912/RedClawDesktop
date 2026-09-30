@@ -759,3 +759,47 @@ isolated P2/P4 gains and Intel matched performance are not established by this r
 Continuity evidence: `p5-wait-soak-20260930/` with raw samples, complete fixed-prefix
 stage summaries, two traces and `analysis.json`; recompute with
 `python build/reports/x00-t27/analyze_p5_wait_soak.py`.
+
+## Low-cadence resize codec budget repair (X00-T29, 2026-09-30)
+
+The rejected 711 kbps run exposed two coupled calculations: desktop initialization
+fixed the codec clock at 30 FPS only after computing bitrate from submission FPS,
+and the runtime geometry branch overwrote that profile with another cadence-based
+floor. Later adaptation recomputed a higher target but NVENC did not advertise a
+hot rate update; the hardware live-restart guard intentionally retained its session.
+
+The desktop profile now computes bitrate, nominal clock and frame-count GOP from
+30 FPS and the actual encoded dimensions. Initialization, resize/device restart and
+adaptation call the same builder. Removed runtime bitrate overrides cannot carry
+an old geometry's budget into a new session. Applied submission FPS continues to
+record the 1–30 FPS cadence, independently of nominal codec FPS. Generic
+`build_low_latency_encoder_profile` behavior is unchanged. No new session state,
+thread, queue, per-FPS restart or protocol field is introduced; hardware restart
+protection, network pacer/congestion policy, capture dimensions and IDR recovery
+remain in place. This intentionally supersedes P2's desktop cadence-dependent
+bitrate calculation; a configured codec budget is not a fixed wire send rate.
+
+| Encoded dimensions | Submission FPS | Before configured target | Repaired target / maximum |
+| --- | --- | --- | --- |
+| 1778×1000 | 5 | 711 kbps | 4267 / 5120 kbps |
+| 1778×1000 | 30 | 4267 kbps | 4267 / 5120 kbps |
+| 1184×666 | 1 | 1183 kbps | 1892 / 2270 kbps |
+
+The focused regression fails against the former code with `actual=711 expected=4267`
+and passes after the repair. Four focused CTest suites pass: encoder profile,
+backend preservation, execution session and FFmpeg roundtrip. New software and
+developer-selected NVENC roundtrips each encode/decode 20 frames across four
+sessions, covering enlargement at 5 FPS, shrinkage at 1 FPS and same-size reconnect.
+Within each session, low/high/low submission intervals do not restart or update
+the codec: actual configured/active budget, nominal 30 FPS, 1/30 time base, GOP 60,
+monotonic PTS, keyframe placement and decoded dimensions are asserted. The generic
+profile and invalid-request checks also pass. Main Debug NoPublish build through
+`build.ps1` passes; existing FFmpeg deprecated-field warnings remain.
+
+Evidence under `build/reports/x00-t27/`: `x29-profile-before.txt`,
+`x29-focused-build.txt`, `x29-ctest.txt`, `x29-nvenc.json`, `x29-nvenc.txt` and
+`x29-main-build.txt`. These are local codec and configuration results; the hardware
+fixture uses CPU input and does not repeat GPU data-flow, remote visual quality or
+weak-network performance acceptance. Clean pushed-source publication and controlled
+Host replacement are the next delivery steps. The serving Host remains unchanged
+at this source-validation checkpoint.

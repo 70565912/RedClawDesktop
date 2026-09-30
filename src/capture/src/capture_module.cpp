@@ -1292,16 +1292,17 @@ bool build_desktop_encoder_profile(
     const EncoderProfileRequest& request,
     EncoderConfigProfile* profile,
     std::string* error_detail) {
-    auto desktop_request = request;
-    desktop_request.workload = EncoderWorkload::kInteractiveDesktop;
-    if (!build_low_latency_encoder_profile(desktop_request, profile, error_detail)) {
+    if (!validate_encoder_request(request, error_detail)) {
         return false;
     }
-    // Retain the existing cadence-dependent bitrate result. Only the nominal
-    // codec clock and frame-count GOP are fixed for the desktop pipeline.
-    profile->fps = 30;
-    profile->gop_length_frames = 60;
-    return true;
+    auto desktop_request = request;
+    desktop_request.workload = EncoderWorkload::kInteractiveDesktop;
+    // Hardware sessions may not support safe live rate changes. A resize at
+    // low submission cadence must not lock their codec budget below the rate
+    // needed when motion resumes. Size budget, clock and GOP from the same
+    // nominal cadence; actual submission and network pacing stay independent.
+    desktop_request.fps = 30;
+    return build_low_latency_encoder_profile(desktop_request, profile, error_detail);
 }
 
 bool resolve_viewport_encode_dimensions(

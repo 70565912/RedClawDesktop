@@ -291,7 +291,8 @@ bool build_low_latency_encoder_profile(
 	EncoderConfigProfile* profile,
 	std::string* error_detail = nullptr);
 
-// Desktop cadence controls submission and bitrate, independently of codec time.
+// Desktop submission cadence is independent of the nominal 30-FPS codec budget
+// and clock. Bitrate is rebased on the actual encoded dimensions, not cadence.
 // GOP is counted in submitted frames, not elapsed seconds at a low source FPS.
 bool build_desktop_encoder_profile(
 	const EncoderProfileRequest& request,

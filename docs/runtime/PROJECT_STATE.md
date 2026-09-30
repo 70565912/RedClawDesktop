@@ -35,8 +35,17 @@ stable runtime private memory and two clean 60 s traces. The operator confirms
 normal fixed text, fine lines, color blocks and cursor. These are local Host
 performance and human visual results, not end-to-end clock or pixel-diff proof.
 
-Next: **X00-T29**, the low-FPS viewport reconfiguration retaining 711 kbps when
-hardware hot update/restart is unavailable. **X00-T30** separately investigates
+**X00-T29 is implemented and locally validated.** Desktop initialization,
+geometry rebuild and adaptation share a nominal-30-FPS geometry-based codec
+budget; a 5-FPS 1778×1000 rebuild now gets 4267 instead of 711 kbps. Submission
+cadence remains independent and hardware live-restart protection is unchanged.
+The old-code regression fails as expected; four focused suites, software/NVENC
+resize/reconnect roundtrips and Debug NoPublish main build pass. Next delivery
+step: commit/push, clean Debug publication and controlled Host replacement with
+independent recovery. The existing serving Host is still preserved at this point.
+See [repair scope and validation](../testing/video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
+
+**X00-T30** separately investigates
 the observed one-second in-flight wait; do not conflate it with X00-T28's historic
 pacer wake-lateness observation or preemptively tune network/queue policy.
 P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
