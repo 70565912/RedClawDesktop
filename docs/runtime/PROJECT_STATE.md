@@ -45,8 +45,14 @@ is pushed, clean Debug built/published and deployed through the independent
 lifecycle worker with complete rollback. DHT publication and automatic Client
 reconnection are confirmed. The active 1778×1000 NVENC session reports 4267 kbps,
 nominal 30 FPS, 1/30 time base, GOP 60 and confirmed GPU input without fallback.
-No post-replacement benchmark load or remote viewport manipulation has started.
-Operator picture confirmation is pending for any further cross-LAN evaluation.
+The operator confirms reconnection. A 90/60/30-second low-source/dynamic/low-source
+run passes: 15 complete diagnostic windows show output 1.0 → 21.2–21.4 → 1.0 FPS
+at 4267 kbps, with zero capture/encode/transmit failure increments or GPU fallback.
+No runtime restart occurs. The adaptive target stays 30 FPS and no encoded-size
+change/reconfiguration increment is observed; live target-5-FPS viewport resize
+and new visual quality are not established. The exact resize case remains covered
+by the passed local software/NVENC tests. See the
+[live recovery evidence](../testing/video-gpu-input-p5-20260929.md#reconnected-live-cadence-recovery).
 See [repair scope and validation](../testing/video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
 
 **X00-T30** separately investigates

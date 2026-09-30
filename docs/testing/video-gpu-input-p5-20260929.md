@@ -829,3 +829,40 @@ local regressions.
 Receipts: `x29-pushed-build.txt`, `x29-candidate.json`,
 `p5-acceptance-x29-deployed.json` and `x29-deployed-codec.json` under the same local
 evidence root. No remote machine was upgraded or configured by this task.
+
+### Reconnected live cadence recovery
+
+After the operator confirmed reconnection, the deployed `532f1a0` Host completed
+90 s at a 1-FPS source, 60 s dynamic target-30-FPS source and 30 s at a 1-FPS
+source. The fixed-seed scene entered the real desktop capture/codec/network path.
+Fifteen unique diagnostic windows wholly inside those phases (excluding the
+first two seconds and windows crossing transitions) show:
+
+| Phase | Complete diagnostic windows | Codec output FPS | Configured bitrate |
+| --- | --- | --- | --- |
+| Low source cadence | 8 | 1.0 | 4267 kbps |
+| Dynamic recovery | 5 | 21.2–21.4 | 4267 kbps |
+| Return to low source cadence | 2 | 1.0 | 4267 kbps |
+
+All phases retain 1778×1000 encode dimensions, nominal 30 FPS, 1/30 time base,
+GOP 60, confirmed GPU input and zero fallback. Capture/encode/transmit failure
+deltas are zero; the runtime and connection remain intact. Status counters report
+1547 sends across the three phases including transitions. GUI counters refresh
+from cached summaries, so short polling-interval counter differences are not used
+as exact output FPS; the complete diagnostic windows above provide that cadence.
+
+The adaptive target remains 30 FPS in those windows. This validates low *source*
+cadence and motion recovery, not adaptive-target-5-FPS resize. Encoded geometry
+never changes and the resolution-reconfigure counter remains 2. No remote resize
+or new visual-quality conclusion is claimed; the exact 5-FPS resize/reconnect case
+remains covered by the passed local software/NVENC regression. Operator confirmation
+in this turn establishes reconnection only.
+
+The first attempted collection stalled in local sampler JSON serialization before
+its first periodic sample. It was stopped, marked invalid and retained separately;
+the Host stayed running. The retry writes scalar counters and plain-text summaries
+separately and completes successfully. All task-owned scene processes are closed.
+Evidence: `x29-live-recovery-20260930/invalid.json` and
+`x29-live-recovery-20260930-r2/{result.json,analysis.json}` under the same evidence
+root; recompute with `analyze_x29_live_recovery.py`. This turn reuses the candidate's
+passed build/tests and changes only documentation and ignored diagnostic helpers.
