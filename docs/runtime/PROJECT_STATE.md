@@ -66,11 +66,16 @@ without in-flight blocking, drops or sampled failure/expiry increments. Load is
 stopped and the Host remains connected. Historical root-cause attribution stays
 unresolved; the incident did not recur and no improvement is claimed. See the
 [investigation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
-Next independently actionable work is **X00-T28**: the new matched baseline
-reproduces ordinary-frame overshoot at 5.947 ms/frame (60.14% of wait). Evaluate
-bounded wake behavior with CPU/frame-age/stop checks, holding network/queue
-policy fixed. Retain X00-T30 diagnostics for recurrence, without an ongoing
-background load or an unsupported historical root-cause conclusion.
+**X00-T28 is implemented and locally validated.** The pacer uses a cancellable
+Windows high-resolution deadline timer, with condition-variable fallback and
+unchanged network/queue policy. Debug main build and five focused suites pass.
+Three isolated rounds show mean wait overshoot 13.210 → 0.388 ms/wait; this is
+a primitive result, not a video-latency claim. Next: push, clean Debug publication,
+controlled Host replacement, operator picture confirmation, then three matched
+DynamicLog windows against the 5.947 ms/frame current-role reference. Compare
+actual pacing, CPU, queue and Host frame-age tails. Retain X00-T30 diagnostics
+without claiming the historical in-flight cause is resolved. See the
+[wake implementation and local evidence](../testing/video-send-attribution-20260929.md#bounded-pacer-wake-replacement-x00-t28-2026-09-30).
 P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
 performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
 and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).

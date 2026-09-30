@@ -289,3 +289,77 @@ numeric summaries alongside capture/codec summaries before log rotation.
 After collection, the same Host remains connected with real media, log replay
 is inactive and no scene process remains. This is a diagnostic/code-validation
 stage completion; historical root-cause attribution remains open.
+
+## Bounded pacer wake replacement (X00-T28, 2026-09-30)
+
+The reference is the three X00-T30 DynamicLog windows above, on local Host
+`8301b4b`: ordinary-frame wake overshoot 5.947 [5.910, 5.995] ms/frame,
+queue P99 21.055 [20.106, 24.799] ms and Host frame-age P99
+47.136 [47.106, 48.106] ms. Preserve this baseline, including the effective
+11217 kbps pacing rate, for the subsequent real-media comparison.
+
+`MediaPacerWait` owns one Windows high-resolution one-shot timer and one
+notification event per pacer. The pacer worker uses it for fragment-admission
+and frame-cadence deadlines. Predicate state and timer reset/arming use the
+existing pacer mutex; blocking releases that mutex. Stop, reset, writable and
+budget updates notify both timed and idle/drain waiters. Worker completion
+still wakes reset/drain waiters. All handles outlive the joined worker.
+Unrelated notifications do not grant credit or extend the original deadline.
+
+Timer creation/arming/wait failures latch the condition-variable fallback.
+Other platforms use that fallback directly. No spin loop, global timer-resolution
+change, thread-priority change or extra worker is introduced. Local periodic
+diagnostics add `pacer_high_resolution_wait`; frame trace remains v2, with no
+wire or persisted-protocol change. The timer API and relative one-shot behavior
+follow Microsoft's [CreateWaitableTimerExW](https://learn.microsoft.com/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw)
+and [SetWaitableTimerEx](https://learn.microsoft.com/windows/win32/api/synchapi/nf-synchapi-setwaitabletimerex)
+contracts.
+
+Bitrate, congestion, in-flight expiry/refresh, hard deadlines, queue limits,
+token accounting and burst formulas are unchanged. The existing burst formula
+uses measured wake lateness, so its effective result can adapt to a different
+waiter; it is not artificially frozen. Compare actual pacing and wait counts as
+well as overshoot, CPU and frame age. A primitive-only timing gain cannot prove
+real-media or end-to-end latency improvement.
+
+Local validation passes:
+
+- `build.ps1 -Configuration Debug -FreshConfigure -Target redclaw_desktop -NoPublish`.
+- Five focused CTest suites: `redclaw_media_pacer_wait_tests`,
+  `redclaw_adaptive_media_sender_tests`, `redclaw_transport_recovery_regression_tests`,
+  `redclaw_net_video_frame_transport_tests` and `redclaw_host_frame_trace_tests`.
+  The eight new cases cover stale notifications, predicate changes at unlock,
+  wake storms with a fixed deadline, no early cadence release, reset/stop while
+  admission or cadence is waiting, and explicit condition-variable fallback.
+- Three isolated rounds per backend, alternating order. Each warms up 32 waits,
+  then measures 512 waits cycling through 100/250/500/1000/2000/4000/8000/16000 us.
+  All 1536 automatic waits use the native backend; neither backend returns
+  before its requested interval. CSV writing occurs after measurement.
+
+| Primitive metric, three-run median [range] | Condition variable | Native timer |
+| --- | --- | --- |
+| Mean overshoot, ms/wait | 13.210 [13.175, 13.248] | 0.388 [0.362, 0.417] |
+| Overshoot P95, ms/wait | 15.528 [15.393, 15.537] | 0.611 [0.581, 0.634] |
+| Overshoot P99, ms/wait | 15.657 [15.618, 15.826] | 0.853 [0.738, 1.013] |
+| Process CPU for 512 waits, ms | 15.625 [0, 31.250] | 15.625 [0, 31.250] |
+
+The isolated overshoot reduction is established. CPU counters have an observed
+15.625 ms granularity, so these short runs do not resolve a CPU benefit or small
+regression. The fixed primitive sequence is **not** the live video's wait
+distribution: do not compare its per-wait numbers directly with per-frame
+DynamicLog overshoot or claim end-to-end gains. Runtime native API failure was
+not fault-injected; the fallback's deadline/cancellation behavior is exercised
+explicitly. Other operating systems have not been run in this Windows check.
+
+Reproduce with developer-only `redclaw_media_pacer_wait_probe automatic` and
+`redclaw_media_pacer_wait_probe condition-variable`; the probe is excluded from
+default builds and is not a CTest performance gate. Raw CSVs, SHA256 identities
+and `analysis.json` are under `build/reports/x00-t27/x28-wake-probe-20260930/`;
+recompute using `python build/reports/x00-t27/analyze_x28_probe.py`. Build/test
+logs are `x28-main-build.txt`, `x28-focused-build.txt`, `x28-ctest.txt/xml` in the
+parent directory.
+
+The serving Host is still the X00-T30 reference at this implementation checkpoint.
+Candidate publication and controlled replacement follow push; matched DynamicLog
+sampling awaits the operator's new-candidate picture confirmation. X00-T30's
+historical in-flight cause remains unresolved and its diagnostic fields remain.

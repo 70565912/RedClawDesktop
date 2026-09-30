@@ -22,6 +22,16 @@ include(cmake/integration-tests.cmake)
 include(cmake/diag-tests.cmake)
 include(cmake/ui-tests.cmake)
 
+add_executable(redclaw_media_pacer_wait_tests net/media_pacer_wait_tests.cpp)
+target_link_libraries(redclaw_media_pacer_wait_tests PRIVATE redclaw_net GTest::gtest_main)
+redclaw_apply_warnings(redclaw_media_pacer_wait_tests)
+add_test(NAME redclaw_media_pacer_wait_tests COMMAND redclaw_media_pacer_wait_tests)
+set_tests_properties(redclaw_media_pacer_wait_tests PROPERTIES TIMEOUT 30)
+
+add_executable(redclaw_media_pacer_wait_probe EXCLUDE_FROM_ALL net/media_pacer_wait_probe.cpp)
+target_link_libraries(redclaw_media_pacer_wait_probe PRIVATE redclaw_net)
+redclaw_apply_warnings(redclaw_media_pacer_wait_probe)
+
 add_executable(redclaw_runtime_options_tests helper/runtime_options_tests.cpp helper/local_control_output_tests.cpp helper/input_qa_receipts_tests.cpp helper/runtime_loop_wake_tests.cpp)
 target_link_libraries(redclaw_runtime_options_tests PRIVATE redclaw_runtime_options redclaw_protocol redclaw_diag redclaw_input Boost::json GTest::gtest_main)
 redclaw_apply_warnings(redclaw_runtime_options_tests)

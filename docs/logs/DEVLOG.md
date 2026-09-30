@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-30 — Replace bounded pacer deadline waits (X00-T28)
+
+- Replace only fragment-admission and frame-cadence timed waits with a pacer-owned Windows high-resolution one-shot timer plus cancellable notification event. Predicate state stays under the pacer mutex; waits release it and handles outlive worker join. Unsupported/failed native waits latch the portable condition-variable fallback. Idle/drain waits remain on the existing condition variable. No new thread, spin loop, global timer-resolution request or priority change.
+- Interface scope: one local telemetry/periodic-log boolean reports the active timer backend. Trace v2 and all wire formats stay unchanged; no bitrate, burst formula, congestion, expiry, queue or hard-deadline policy changes. Local lifecycle/deadline tests and a developer-only timing probe cover the replacement before deployment. Real-media benefit remains pending matched DynamicLog windows after candidate publication and operator picture confirmation. See [implementation and evidence](../testing/video-send-attribution-20260929.md#bounded-pacer-wake-replacement-x00-t28-2026-09-30).
+- Debug NoPublish main build and five focused CTest suites pass, including eight new waiting/lifecycle cases. Three primitive-only rounds per backend show mean overshoot 13.210 → 0.388 ms/wait and P99 15.657 → 0.853 ms/wait, with 1536 waits per backend and no early return. Process CPU is below this short experiment's useful resolution; live-video CPU and frame-age gains remain unconfirmed. Reuse the three X00-T30 DynamicLog windows as the current-role media reference and preserve the controlled replacement/remote-picture gate.
+
 ## 2026-09-30 — Trace in-flight admission and feedback refresh (X00-T30)
 
 - Interface scope: extend local Host frame trace to v2 with first-block/final admission snapshots and wake counts. Pass the estimator snapshot provenance through existing pacer budget updates; no wire protocol, admission rule, deadline, congestion policy or queue capacity changes. Bounded capture stays opt-in and writes only after the window completes. Historical v1 trace cannot identify the missing ACK/refresh sequence; controlled local cases will distinguish ACK release, expiry release and delayed refresh.
