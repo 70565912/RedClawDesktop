@@ -52,6 +52,11 @@ trace extensions need a version, frame ID, capture generation and denominators;
 sampling off must not write each frame. Borrow Radar's allocation/ownership ideas,
 not FIFO behavior; compressed frame dependencies and IDR recovery remain intact.
 
+X00-T29 supersedes P2's desktop bitrate calculation after the observed low-FPS
+resize defect: the encoded dimensions and nominal 30 FPS set the codec budget;
+submission cadence and the network pacer remain independent. See the
+[repair and regression evidence](video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
+
 ## B0 tools and contract
 
 `scripts/capture/run-local-high-motion-scene.ps1` uses seed 2700 by default and
