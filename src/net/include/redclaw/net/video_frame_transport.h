@@ -298,6 +298,9 @@ struct MediaTransportEstimate {
     std::uint32_t probe_delivery_bitrate_kbps = 0;
     std::size_t probe_acknowledged_bytes = 0;
     bool probe_rate_valid = false;
+    // Local snapshot provenance; never used to change congestion decisions.
+    std::uint64_t sampled_host_us = 0, last_feedback_host_us = 0;
+    std::uint64_t last_sent_sequence = 0, oldest_in_flight_sent_us = 0;
 };
 
 // Diagnostic only: one latest applied packet, not a packet history or a
@@ -693,9 +696,11 @@ public:
         std::uint32_t smoothed_rtt_ms,
         std::size_t in_flight_bytes,
         const MediaRecoveryProbe* recovery_probe = nullptr,
-        const MediaCongestionDecision* policy = nullptr);
+        const MediaCongestionDecision* policy = nullptr,
+        const MediaTransportEstimate* estimate = nullptr);
     void update_policy(const MediaCongestionDecision& decision,
-        std::uint32_t smoothed_rtt_ms, std::size_t in_flight_bytes);
+        std::uint32_t smoothed_rtt_ms, std::size_t in_flight_bytes,
+        const MediaTransportEstimate* estimate = nullptr);
     [[nodiscard]] EncodeReservation reserve_encode();
     void observe_ack_progress(std::uint64_t acknowledged_packets);
     void notify_writable();

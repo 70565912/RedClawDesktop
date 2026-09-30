@@ -246,37 +246,44 @@ TEST(RecoveryBudget, SlowKeyframeProgressUsesMonotonicAbsoluteCeiling) {
     EXPECT_FALSE(assembler.keyframe_progressing(11500, 20));
     EXPECT_FALSE(assembler.keyframe_progressing(500, 20));
 }
-TEST(RecoveryBudget, UnconfirmedProbeHasHardByteLimitAndCanBeCancelled) {
+TEST(RecoveryBudget, ProbeBudgetCapsTaggedBytesAndCancellationKeepsSendableFrame) {
     DesktopMediaSendPacer pacer;
     std::mutex mutex;
     std::condition_variable cv;
     std::atomic<std::size_t> bytes{0};
+    std::atomic<std::size_t> probe_bytes{0};
+    std::atomic<std::uint32_t> rate{5000};
     bool terminal = false;
-    MediaRecoveryProbe probe{1, MediaRecoveryProbePhase::kProbing};
+    bool sent = false;
+    MediaRecoveryProbe probe{1, MediaRecoveryProbePhase::kProbing, 64U * 1024U, 4000};
     ASSERT_TRUE(pacer.start([&](auto packet) {
         bytes += packet.size();
         return MediaPacerSendResult{.accepted = true};
-    }, [] { return MediaPacerTransportState{.open = true}; }, [&](const auto&) {
-        pacer.update_budget(500, 10, 0); // Expiry is not a media ACK.
+    }, [] { return MediaPacerTransportState{.open = true}; }, [&](const auto& packet) {
+        if (packet.probe_generation != 0) probe_bytes += packet.wire_bytes;
+        // Isolate probe cancellation from in-flight admission. Retiring bytes
+        // is not an ACK that confirms the capacity probe.
+        pacer.update_budget(rate.load(), 10, 0);
         cv.notify_all();
     }, [&](const auto& e) {
-        if (e.type == MediaPacerFrameEventType::kDropped) {
-            { std::lock_guard lock(mutex); terminal = true; }
+        if (e.type == MediaPacerFrameEventType::kDropped || e.type == MediaPacerFrameEventType::kSent) {
+            { std::lock_guard lock(mutex); terminal = true; sent = e.type == MediaPacerFrameEventType::kSent; }
             cv.notify_all();
         }
     }));
-    pacer.update_budget(500, 10, 0, &probe);
-    ASSERT_TRUE(pacer.submit_frame(frame(1, true, 800000)).ready());
-    { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 3s, [&] { return bytes >= 64U * 1024U; })); }
-    EXPECT_EQ(bytes, 64U * 1024U);
-    std::this_thread::sleep_for(100ms);
-    EXPECT_EQ(bytes, 64U * 1024U);
+    pacer.update_budget(5000, 10, 0, &probe);
+    ASSERT_TRUE(pacer.submit_frame(frame(1, true, 120000)).ready());
+    { std::unique_lock lock(mutex); ASSERT_TRUE(cv.wait_for(lock, 3s, [&] { return probe_bytes >= 64U * 1024U; })); }
     probe.phase = MediaRecoveryProbePhase::kCancelled;
-    pacer.update_budget(400, 10, 0, &probe);
-    { std::unique_lock lock(mutex); EXPECT_TRUE(cv.wait_for(lock, 1s, [&] { return terminal; })); }
+    rate.store(4000);
+    pacer.update_budget(4000, 10, 0, &probe);
+    { std::unique_lock lock(mutex); EXPECT_TRUE(cv.wait_for(lock, 3s, [&] { return terminal; })); }
     pacer.stop();
-    EXPECT_EQ(bytes, 64U * 1024U);
-    EXPECT_GT(pacer.telemetry().next_admission_ms, 0U);
+    EXPECT_TRUE(sent);
+    EXPECT_EQ(probe_bytes, 64U * 1024U);
+    EXPECT_GT(bytes, 120000U);
+    EXPECT_EQ(pacer.telemetry().deadline_drops, 0U);
+    EXPECT_EQ(pacer.telemetry().next_admission_ms, 0U);
 }
 
 TEST(RecoveryBudget, RepeatedRateChangesCannotExtendOriginalHardDeadline) {

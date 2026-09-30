@@ -4216,7 +4216,7 @@ int run_runtime_mode(
             stream_media_pacer.update_budget(
                 open_pacing_kbps,
                 open_rtt_ms,
-                estimate.in_flight_bytes);
+                estimate.in_flight_bytes, nullptr, nullptr, &estimate);
             const auto pacer_telemetry = stream_media_pacer.telemetry();
             std::string threshold_error;
             (void)ice_wrapper.setDataChannelBufferedAmountLowThreshold(
@@ -4861,7 +4861,7 @@ int run_runtime_mode(
                         ++stream_transport_feedback_ignored_total;
                     }
                 }
-                stream_media_pacer.update_policy(decision, smoothed_rtt_ms, estimate.in_flight_bytes);
+                stream_media_pacer.update_policy(decision, smoothed_rtt_ms, estimate.in_flight_bytes, &estimate);
                 if (applied && estimate.feedback_fresh
                     && estimate.rate_revision == current_rate_revision) {
                     stream_media_pacer.observe_ack_progress(estimate.acknowledged_packets);
@@ -8466,7 +8466,8 @@ int run_runtime_mode(
                 stream_transport_estimate_snapshot = transport_estimate;
             }
             stream_media_pacer.update_budget(
-                source_pacing_kbps, source_srtt_ms, transport_estimate.in_flight_bytes);
+                source_pacing_kbps, source_srtt_ms, transport_estimate.in_flight_bytes,
+                nullptr, nullptr, &transport_estimate);
             const auto pacer_snapshot = stream_media_pacer.telemetry();
             const bool budget_waiting = pacer_snapshot.rejected_wire_bytes != 0;
             if (!stream_last_published_budget_wait.has_value()
@@ -8780,7 +8781,7 @@ int run_runtime_mode(
                 stream_media_pacer.update_policy(
                     congestion_decision,
                     rtt_telemetry.smoothed_rtt_ms,
-                    transport_estimate.in_flight_bytes);
+                    transport_estimate.in_flight_bytes, &transport_estimate);
                 const auto pacer_telemetry = stream_media_pacer.telemetry();
                 std::string low_threshold_error;
                 (void)ice_wrapper.setDataChannelBufferedAmountLowThreshold(

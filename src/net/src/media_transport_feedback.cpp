@@ -542,6 +542,10 @@ MediaTransportEstimate MediaTransportEstimator::snapshot(
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->expire_in_flight(host_steady_us, smoothed_rtt_ms);
     MediaTransportEstimate result = impl_->delivery;
+    result.sampled_host_us = host_steady_us;
+    result.last_feedback_host_us = impl_->last_feedback_host_us;
+    result.last_sent_sequence = impl_->last_sent_sequence;
+    result.oldest_in_flight_sent_us = impl_->sent.empty() ? 0 : impl_->sent.front().steady_send_us;
     result.feedback_sample_id = impl_->last_current_feedback_id;
     result.rate_revision = impl_->last_feedback_rate_revision;
     result.acknowledged_bitrate_kbps = impl_->acknowledged_bitrate_kbps;

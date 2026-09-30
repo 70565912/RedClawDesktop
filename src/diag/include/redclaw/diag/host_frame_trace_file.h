@@ -7,7 +7,8 @@ namespace redclaw::diag {
 void write_host_frame_trace_csv(std::ostream& output, const net::MediaFrameTraceBatch& batch);
 
 // Called only by the periodic diagnostic thread. An exact sidecar request
-// arms one window: "redclaw.host-frame-trace.v1 <seconds 1..120>".
+// arms one window: "redclaw.host-frame-trace.v2 <seconds 1..120>".
+// The v1 arm command remains accepted; completed exports identify their v2 schema.
 // Consumed requests remain as receipts; no hot-path file I/O or re-arming loop.
 class HostFrameTraceFile final {
 public:

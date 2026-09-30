@@ -55,9 +55,15 @@ by the passed local software/NVENC tests. See the
 [live recovery evidence](../testing/video-gpu-input-p5-20260929.md#reconnected-live-cadence-recovery).
 See [repair scope and validation](../testing/video-gpu-input-p5-20260929.md#low-cadence-resize-codec-budget-repair-x00-t29-2026-09-30).
 
-**X00-T30** separately investigates
-the observed one-second in-flight wait; do not conflate it with X00-T28's historic
-pacer wake-lateness observation or preemptively tune network/queue policy.
+**X00-T30** has locally validated bounded trace v2 and an isolated reproduction
+of expiry not releasing admission until the budget snapshot is refreshed. Four
+focused suites and the Debug main build pass. Historical ACK/refresh records
+are unavailable, so that mechanism is not yet the proven cause of frame 14176.
+Next is pushed-source candidate publication and controlled Host replacement,
+then operator picture confirmation before bounded live v2 sampling. See the
+[investigation](../testing/video-send-attribution-20260929.md#in-flight-stall-investigation-x00-t30-2026-09-30).
+Do not conflate this with X00-T28's wake-lateness observation or preemptively
+tune network/queue policy.
 P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
 performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
 and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).

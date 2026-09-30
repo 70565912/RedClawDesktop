@@ -3,15 +3,36 @@
 #include <string>
 
 namespace redclaw::diag {
+namespace {
+void write_admission_header(std::ostream& out, const char* prefix) {
+    for (const auto* name : {"observed_us", "budget_update_us", "estimate_us", "feedback_host_us",
+            "feedback_id", "acknowledged_sequence", "last_sent_sequence", "oldest_sent_us",
+            "expired_packets", "estimated_bytes", "in_flight_bytes", "limit_bytes",
+            "budget_updates", "rejected_policy_updates", "policy_revision"}) {
+        out << ',' << prefix << name;
+    }
+}
+void write_admission(std::ostream& out, const net::MediaAdmissionTrace& s) {
+    out << ',' << s.observed_us << ',' << s.budget_update_us << ',' << s.estimate_us
+        << ',' << s.feedback_host_us << ',' << s.feedback_id << ',' << s.acknowledged_sequence
+        << ',' << s.last_sent_sequence << ',' << s.oldest_sent_us << ',' << s.expired_packets
+        << ',' << s.estimated_bytes << ',' << s.in_flight_bytes << ',' << s.limit_bytes
+        << ',' << s.budget_updates << ',' << s.rejected_policy_updates << ',' << s.policy_revision;
+}
+} // namespace
 void write_host_frame_trace_csv(std::ostream& out, const net::MediaFrameTraceBatch& batch) {
-    out << "# redclaw.host-frame-trace.v1 started_us=" << batch.started_us
+    out << "# redclaw.host-frame-trace.v2 started_us=" << batch.started_us
         << " ended_us=" << batch.ended_us << " overflow=" << batch.overflow << '\n';
     out << "frame_id,rate_revision,capture_generation,capture_sequence,keyframe,outcome,width,height,target_fps,pacing_kbps,rtt_ms,"
         "capture_begin_us,capture_end_us,capture_ready_us,encode_begin_us,encode_end_us,enqueued_us,"
         "pacer_begin_us,first_send_us,last_send_us,finish_us,wire_bytes,sent_fragments,fragment_count,"
         "token_wait_us,in_flight_wait_us,buffered_wait_us,channel_wait_us,probe_wait_us,"
         "wait_requested_us,wait_elapsed_us,wait_overshoot_us,max_wait_overshoot_us,"
-        "transport_state_us,send_call_us,max_send_call_us,callback_us\n";
+        "transport_state_us,send_call_us,max_send_call_us,callback_us,"
+        "blocked_wire_bytes,wait_count,timeout_wakes,notified_wakes";
+    write_admission_header(out, "block_");
+    write_admission_header(out, "final_");
+    out << '\n';
     for (const auto& f : batch.frames) {
         out << f.frame_id << ',' << f.rate_revision << ',' << f.capture_generation << ',' << f.capture_sequence
             << ',' << f.keyframe << ',' << f.outcome << ',' << f.width << ',' << f.height << ',' << f.target_fps
@@ -23,7 +44,11 @@ void write_host_frame_trace_csv(std::ostream& out, const net::MediaFrameTraceBat
             << ',' << f.channel_wait_us << ',' << f.probe_wait_us << ',' << f.wait_requested_us
             << ',' << f.wait_elapsed_us << ',' << f.wait_overshoot_us << ',' << f.max_wait_overshoot_us
             << ',' << f.transport_state_us << ',' << f.send_call_us << ',' << f.max_send_call_us
-            << ',' << f.callback_us << '\n';
+            << ',' << f.callback_us << ',' << f.blocked_wire_bytes << ',' << f.wait_count
+            << ',' << f.timeout_wakes << ',' << f.notified_wakes;
+        write_admission(out, f.first_in_flight_block);
+        write_admission(out, f.final_admission);
+        out << '\n';
     }
 }
 
@@ -59,7 +84,8 @@ void HostFrameTraceFile::poll(std::uint64_t now_us) {
     std::string schema, trailing;
     unsigned seconds = 0;
     const bool valid = (in >> schema >> seconds) && !(in >> trailing)
-        && schema == "redclaw.host-frame-trace.v1" && seconds > 0 && seconds <= 120;
+        && (schema == "redclaw.host-frame-trace.v1" || schema == "redclaw.host-frame-trace.v2")
+        && seconds > 0 && seconds <= 120;
     in.close();
     if (!valid) return;
     auto consumed = request;
