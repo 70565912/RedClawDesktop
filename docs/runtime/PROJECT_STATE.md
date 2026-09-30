@@ -4,6 +4,20 @@ Updated: 2026-09-30
 
 ## Current optimization work
 
+The operator now prioritizes the remaining T27 checks and T30 while retaining
+the current Host/Client roles and proxy/network configuration. Network diagnosis
+has been interrupted. A local T30 candidate fixes the reproduced expiry-refresh
+stall and passes the Debug NoPublish build plus focused checks; it is not yet in
+the serving Host. Historical incident attribution remains unresolved. See the
+[repair evidence](../testing/video-send-attribution-20260929.md#expiry-driven-accounting-repair-while-preserving-the-running-session).
+The [P4 publication audit](../testing/video-link-baseline-20260928.md#p4-publication-stage-audit-from-retained-cpu-recordings)
+recovers a measured stage improvement from existing records, with different
+network identities explicitly excluded from full latency claims. Peer P1 live
+log injection remains blocked by its prior local Debug Control access refusal.
+The [independent input profiler](../testing/video-gpu-input-p5-20260929.md#independent-cpugpu-profiler-for-the-remaining-intel-comparison)
+is locally validated and ready for Intel's isolated CPU/GPU measurement without a
+role switch. Neither task is declared fully accepted by these preparations.
+
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
 **local controlled Debug Host / remote Client**. Pushed X00-T28 `e787ca5` is clean-source
