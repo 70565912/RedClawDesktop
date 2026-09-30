@@ -6,9 +6,11 @@ Updated: 2026-09-30
 
 Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
 [phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
-**local controlled Debug Host / remote Client**. Pushed X00-T30 `8301b4b` is clean-source
+**local controlled Debug Host / remote Client**. Pushed X00-T28 `e787ca5` is clean-source
 Debug built/published and running from `release/Debug`, with complete 336-file
 candidate/rollback verification, retained credentials and effective ICE port 56000.
+The new Host has published DHT and waits for Client reconnection/picture
+confirmation before matched wake-optimization sampling.
 
 **The local NVIDIA P5 GPU preparation/encoding regression is resolved.** After
 operator picture confirmation, an initial 711 kbps batch was rejected because the
@@ -70,8 +72,10 @@ unresolved; the incident did not recur and no improvement is claimed. See the
 Windows high-resolution deadline timer, with condition-variable fallback and
 unchanged network/queue policy. Debug main build and five focused suites pass.
 Three isolated rounds show mean wait overshoot 13.210 → 0.388 ms/wait; this is
-a primitive result, not a video-latency claim. Next: push, clean Debug publication,
-controlled Host replacement, operator picture confirmation, then three matched
+a primitive result, not a video-latency claim. Pushed `e787ca5` is clean Debug
+built/published and deployed through the independent worker, with verified
+336-file formal/rollback bundles and DHT readiness. Next: operator picture
+confirmation, then three matched
 DynamicLog windows against the 5.947 ms/frame current-role reference. Compare
 actual pacing, CPU, queue and Host frame-age tails. Retain X00-T30 diagnostics
 without claiming the historical in-flight cause is resolved. See the
