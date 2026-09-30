@@ -11428,6 +11428,7 @@ int run_runtime_mode(
                           << " pacer_reserved_bytes=" << pacer_telemetry.reserved_bytes
                           << " pacer_oldest_pending_us=" << pacer_telemetry.oldest_pending_us
                           << " pacer_timer_lateness_us=" << pacer_telemetry.timer_lateness_us
+                          << " pacer_high_resolution_wait=" << pacer_telemetry.high_resolution_wait
                           << " pacer_resource_limited=" << pacer_telemetry.resource_limited
                           << " pacer_buffer_reason=" << static_cast<int>(pacer_telemetry.buffer_target_reason)
                           << " pacer_token_deadline_drops="

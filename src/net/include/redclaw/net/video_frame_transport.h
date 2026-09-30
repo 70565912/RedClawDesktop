@@ -553,6 +553,7 @@ struct MediaPacerTelemetry {
     std::uint64_t queue_target_us = 0;
     std::uint64_t oldest_pending_us = 0;
     std::uint64_t timer_lateness_us = 0;
+    bool high_resolution_wait = false;
     std::uint64_t token_wait_total_us = 0;
     bool frame_token_limited = false;
     std::uint64_t probe_end_sequence = 0;

@@ -11,6 +11,7 @@
 #include <thread>
 #include <utility>
 #include "media_transport_limits.h"
+#include "media_pacer_wait.h"
 
 namespace redclaw::net {
 namespace {
@@ -28,6 +29,7 @@ std::uint64_t steady_now_us() {
 struct DesktopMediaSendPacer::Impl {
     mutable std::mutex mutex;
     std::condition_variable cv;
+    MediaPacerWait deadline_wait;
     std::thread worker;
     bool running = false;
     std::uint64_t generation = 1;
@@ -59,6 +61,10 @@ struct DesktopMediaSendPacer::Impl {
     MediaFrameTraceRecorder* trace_recorder = nullptr; // Outlives the stopped pacer.
     MediaPacerTelemetry telemetry;
     MediaAdmissionTrace admission_trace;
+    void notify_waiters() {
+        cv.notify_all();
+        deadline_wait.notify();
+    }
     MediaAdmissionTrace admission_trace_locked() const {
         auto result = admission_trace;
         result.observed_us = steady_now_us();
@@ -492,7 +498,7 @@ struct DesktopMediaSendPacer::Impl {
                     ? remaining_us
                     : std::min(remaining_us, delay_us);
                 const auto wait_begin_us = steady_now_us();
-                const bool notified = cv.wait_for(
+                const bool notified = deadline_wait.wait_for(
                     lock,
                     std::chrono::microseconds(wait_us),
                     [&]() {
@@ -695,7 +701,8 @@ struct DesktopMediaSendPacer::Impl {
                 while (running && !pending.empty()) {
                     const auto now = steady_now_us();
                     if (now >= next_frame_us) break;
-                    cv.wait_for(lock, std::chrono::microseconds(next_frame_us - now));
+                    deadline_wait.wait_until(lock, MediaPacerWait::Clock::time_point(
+                        std::chrono::microseconds(next_frame_us)));
                 }
                 if (!running) return;
                 if (pending.empty()) continue;
@@ -819,7 +826,7 @@ void DesktopMediaSendPacer::stop() {
         impl_->free_payloads.clear();
         worker = std::move(impl_->worker);
     }
-    impl_->cv.notify_all();
+    impl_->notify_waiters();
     if (worker.joinable()) {
         worker.join();
     }
@@ -833,7 +840,7 @@ void DesktopMediaSendPacer::reset(bool reset_transport_sequence) {
     impl_->frame_cadence_remainder = 0;
     impl_->frame_cadence_fps = 0;
     ++impl_->writable_revision;
-    impl_->cv.notify_all();
+    impl_->notify_waiters();
     if (impl_->worker.get_id() != std::this_thread::get_id()) {
         impl_->cv.wait(lock, [&]() { return impl_->telemetry.active_depth == 0; });
     }
@@ -921,7 +928,7 @@ void DesktopMediaSendPacer::update_budget(
         impl_->refresh_queue();
         ++impl_->writable_revision;
     }
-    impl_->cv.notify_all();
+    impl_->notify_waiters();
     if (admission_changed) impl_->notify_capacity();
 }
 
@@ -952,7 +959,7 @@ void DesktopMediaSendPacer::notify_writable() {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         ++impl_->writable_revision;
     }
-    impl_->cv.notify_all();
+    impl_->notify_waiters();
 }
 
 bool DesktopMediaSendPacer::can_accept_frame() const {
@@ -1016,7 +1023,7 @@ MediaAdmissionResult DesktopMediaSendPacer::submit_reserved(PacedEncodedVideoFra
     impl_->refresh_queue();
     result.state = MediaAdmissionState::kReady;
     lock.unlock();
-    impl_->cv.notify_all();
+    impl_->notify_waiters();
     return result;
 }
 
@@ -1085,6 +1092,7 @@ MediaPacerTelemetry DesktopMediaSendPacer::telemetry() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->refresh_queue();
     auto snapshot = impl_->telemetry;
+    snapshot.high_resolution_wait = impl_->deadline_wait.high_resolution();
     if (!impl_->pending.empty()) snapshot.oldest_pending_us = steady_now_us() - impl_->pending.front().enqueued_us;
     return snapshot;
 }
