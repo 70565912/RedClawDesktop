@@ -290,6 +290,49 @@ After collection, the same Host remains connected with real media, log replay
 is inactive and no scene process remains. This is a diagnostic/code-validation
 stage completion; historical root-cause attribution remains open.
 
+### Expiry-driven accounting repair while preserving the running session
+
+The follow-up repairs the locally established missing-refresh mechanism. An
+optional estimator callback runs only while in-flight admission is blocked and
+outside the pacer mutex. It refreshes the copied byte count, then schedules the
+existing waiter for the oldest packet's unchanged expiry deadline. Multiple
+retained packets advance that deadline without a polling loop. A budget update
+or lifecycle generation change during the callback discards its result. Normal
+sendable fragments do not query the estimator through this callback.
+
+No ACK is invented and expiry still does not count as packet loss. Congestion,
+bitrate, burst, in-flight limits, frame deadlines, queue capacity and wire formats
+are unchanged. Existing trace v2 provenance records the refresh; no new trace
+format or per-frame file I/O is introduced.
+
+Three isolated repetitions retain both paths with the same real estimator/pacer,
+16,063-byte frame, 16,384-byte limit and a retained packet ten milliseconds from
+expiry. No heartbeat or ACK is supplied in either comparison arm:
+
+| Result, three-run median [range] | Without refresh callback | With expiry refresh |
+| --- | --- | --- |
+| Pacer entry to terminal event, ms | 1015.397 [1015.224, 1015.465] | 9.791 [9.737, 9.813] |
+| Frame result | Deadline drop, no fragment sent | Frame sent after packet expiry |
+
+This is a causal mechanism comparison, **not a remote latency measurement or
+proof of the cause of historical frame 14176**. Its missing ACK history remains
+unrecoverable. Existing live no-recurrence results do not qualify this new code.
+
+Debug main compilation through `build.ps1 -Configuration Debug -SkipConfigure
+-Target redclaw_desktop -NoPublish` passes. The five affected suites pass, with
+the trace suite rerun after fixing an omitted test timestamp. New coverage
+includes autonomous expiry, successive packet expiry, concurrent budget refresh
+and reset while the callback is outside the mutex. Existing waiter lifecycle,
+transport, adaptive sender and recovery checks are reused where unchanged.
+The initial restricted build stalled before any compiler ran; its watchdog
+receipt is retained, and the verified owned processes/stale lock were cleaned
+before the successful serial build with normal build permissions.
+
+Receipts are `x30-expiry-*-build.txt`, `x30-expiry-ctest-first.txt`,
+`x30-expiry-trace-ctest.txt/xml` and `x30-expiry-causal-{1,2,3}.txt/xml` under
+`build/reports/x00-t27/`. The serving `e787ca5` Host and peer Client are unchanged;
+this candidate has not been published, deployed or measured across the live link.
+
 ## Bounded pacer wake replacement (X00-T28, 2026-09-30)
 
 The reference is the three X00-T30 DynamicLog windows above, on local Host

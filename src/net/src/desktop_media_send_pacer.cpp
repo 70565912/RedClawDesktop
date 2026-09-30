@@ -53,6 +53,7 @@ struct DesktopMediaSendPacer::Impl {
     MediaPacerPacketSentCallback packet_sent_callback;
     MediaPacerFrameEventCallback frame_event_callback;
     MediaPacerCapacityCallback capacity_callback;
+    MediaPacerInFlightRefreshCallback in_flight_refresh_callback;
     bool recovery_notified = false;
     bool active_recovery_frame = false;
     std::uint64_t acknowledged_packets = 0;
@@ -61,6 +62,21 @@ struct DesktopMediaSendPacer::Impl {
     MediaFrameTraceRecorder* trace_recorder = nullptr; // Outlives the stopped pacer.
     MediaPacerTelemetry telemetry;
     MediaAdmissionTrace admission_trace;
+    void refresh_admission_locked(std::size_t in_flight_bytes,
+                                  const MediaTransportEstimate* estimate,
+                                  std::uint64_t now_us) {
+        telemetry.in_flight_bytes = in_flight_bytes;
+        admission_trace.budget_update_us = now_us;
+        ++admission_trace.budget_updates;
+        admission_trace.estimate_us = estimate ? estimate->sampled_host_us : 0;
+        admission_trace.feedback_host_us = estimate ? estimate->last_feedback_host_us : 0;
+        admission_trace.feedback_id = estimate ? estimate->feedback_sample_id : 0;
+        admission_trace.acknowledged_sequence = estimate ? estimate->latest_acknowledged_sequence : 0;
+        admission_trace.last_sent_sequence = estimate ? estimate->last_sent_sequence : 0;
+        admission_trace.oldest_sent_us = estimate ? estimate->oldest_in_flight_sent_us : 0;
+        admission_trace.expired_packets = estimate ? estimate->expired_in_flight_packets : 0;
+        admission_trace.estimated_bytes = in_flight_bytes;
+    }
     void notify_waiters() {
         cv.notify_all();
         deadline_wait.notify();
@@ -363,6 +379,8 @@ struct DesktopMediaSendPacer::Impl {
                 frame.payload.size() - payload_offset,
                 plan.max_fragment_payload_bytes);
             std::uint64_t transport_sequence = 0;
+            std::optional<std::uint64_t> refreshed_writable_revision;
+            std::uint64_t next_expiry_refresh_us = 0;
             while (true) {
                 std::uint64_t now_us = steady_now_us();
                 {
@@ -491,12 +509,36 @@ struct DesktopMediaSendPacer::Impl {
                     trace.first_in_flight_block = admission_trace_locked();
                     trace.blocked_wire_bytes = wire_bytes;
                 }
+                if (transport_state.open && !in_flight_available && in_flight_refresh_callback
+                    && (refreshed_writable_revision != writable_revision
+                        || (next_expiry_refresh_us != 0 && now_us >= next_expiry_refresh_us))) {
+                    const auto observed_revision = writable_revision;
+                    const auto expiry_rtt_ms = telemetry.smoothed_rtt_ms;
+                    lock.unlock();
+                    const auto estimate = in_flight_refresh_callback(now_us, expiry_rtt_ms);
+                    lock.lock();
+                    if (!running || generation != frame_generation) return;
+                    // ACK/policy callbacks can update accounting while the estimator
+                    // is queried. Never replace their newer budget with this result.
+                    if (writable_revision != observed_revision) continue;
+                    refresh_admission_locked(estimate.in_flight_bytes, &estimate, steady_now_us());
+                    refreshed_writable_revision = observed_revision;
+                    const auto expiry_us = estimate.oldest_in_flight_sent_us
+                        + resolve_transport_in_flight_expiry_us(expiry_rtt_ms);
+                    next_expiry_refresh_us = estimate.oldest_in_flight_sent_us != 0
+                        && expiry_us > now_us ? expiry_us : 0;
+                    // No usable future expiry falls back to the existing external
+                    // notifications/deadline, rather than polling an unchanged value.
+                    continue;
+                }
                 const std::uint64_t observed_writable_revision = writable_revision;
                 const std::uint64_t remaining_us = deadline_us - now_us;
                 std::uint64_t wait_us = delay_us == 0
                     || delay_us == std::numeric_limits<std::uint64_t>::max()
                     ? remaining_us
                     : std::min(remaining_us, delay_us);
+                if (!in_flight_available && next_expiry_refresh_us > now_us)
+                    wait_us = std::min(wait_us, next_expiry_refresh_us - now_us);
                 const auto wait_begin_us = steady_now_us();
                 const bool notified = deadline_wait.wait_for(
                     lock,
@@ -792,7 +834,8 @@ bool DesktopMediaSendPacer::start(
     MediaPacerPacketSentCallback packet_sent_callback,
     MediaPacerFrameEventCallback frame_event_callback,
     MediaPacerCapacityCallback capacity_callback,
-    MediaFrameTraceRecorder* trace_recorder) {
+    MediaFrameTraceRecorder* trace_recorder,
+    MediaPacerInFlightRefreshCallback in_flight_refresh_callback) {
     if (!send_callback || !transport_state_callback || !packet_sent_callback) {
         return false;
     }
@@ -805,6 +848,7 @@ bool DesktopMediaSendPacer::start(
     impl_->packet_sent_callback = std::move(packet_sent_callback);
     impl_->frame_event_callback = std::move(frame_event_callback);
     impl_->capacity_callback = std::move(capacity_callback);
+    impl_->in_flight_refresh_callback = std::move(in_flight_refresh_callback);
     impl_->trace_recorder = trace_recorder;
     impl_->running = true;
     impl_->telemetry.keyframe_required = true;
@@ -907,18 +951,7 @@ void DesktopMediaSendPacer::update_budget(
         }
         impl_->telemetry.pacing_bitrate_kbps = pacing_bitrate_kbps;
         impl_->telemetry.smoothed_rtt_ms = smoothed_rtt_ms;
-        impl_->telemetry.in_flight_bytes = in_flight_bytes;
-        auto& provenance = impl_->admission_trace;
-        provenance.budget_update_us = now_us;
-        ++provenance.budget_updates;
-        provenance.estimate_us = estimate ? estimate->sampled_host_us : 0;
-        provenance.feedback_host_us = estimate ? estimate->last_feedback_host_us : 0;
-        provenance.feedback_id = estimate ? estimate->feedback_sample_id : 0;
-        provenance.acknowledged_sequence = estimate ? estimate->latest_acknowledged_sequence : 0;
-        provenance.last_sent_sequence = estimate ? estimate->last_sent_sequence : 0;
-        provenance.oldest_sent_us = estimate ? estimate->oldest_in_flight_sent_us : 0;
-        provenance.expired_packets = estimate ? estimate->expired_in_flight_packets : 0;
-        provenance.estimated_bytes = in_flight_bytes;
+        impl_->refresh_admission_locked(in_flight_bytes, estimate, now_us);
         impl_->telemetry.in_flight_limit_bytes = impl_->policy.in_flight_limit_bytes != 0
             ? impl_->policy.in_flight_limit_bytes
             : resolve_pacer_window_bytes(pacing_bitrate_kbps, smoothed_rtt_ms);
