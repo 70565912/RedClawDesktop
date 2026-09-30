@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-09-30 — Prepare pushed T30 repair without replacing the serving Host
+
+- Pushed `0d43f8c` and `d2930f0`, then built/published the latter from the existing independent worktree through `build.ps1`. All 336 files and the command-entry check pass; published/build executable hashes agree. Reused the focused checks already passed for these sources.
+- Upgrade PlanOnly validation records both 336-file manifests and the unchanged Host role. No lifecycle worker or replacement ran; serving binaries, roles, credentials, network and connection remain unchanged. The request to preserve current state is being clarified for deployment, while the peer independently prepares Intel CPU/GPU measurement. [Candidate evidence](../testing/video-send-attribution-20260929.md#pushed-repair-package-serving-host-preserved).
+- The Intel attempt subsequently ended with Provider exit 125; one same-Agent continuation for result reconciliation/owned-load cleanup and permitted remaining work also failed. No valid comparison or final cleanup receipt was received. Host-side connection remains streaming, but peer load cleanup is unconfirmed. Preserve the passed QSV functional gate and local profiler checks; no alternative channel, peer restart or network change was attempted. P1 live sampling remains independently blocked by its previous access refusal. [Remaining acceptance](../testing/video-gpu-input-p5-20260929.md#peer-intel-attempt-and-remaining-acceptance).
+
 ## 2026-09-30 — Repair reproduced expiry-refresh admission stalls (X00-T30)
 
 - Continue the locally reproduced missing-refresh mechanism while preserving the serving Host, peer Client and network settings. Historical frame 14176 still lacks the original ACK history; this repair will not establish its cause.

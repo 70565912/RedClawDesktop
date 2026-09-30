@@ -917,3 +917,31 @@ by the frame already captured at measurement start. These are representative
 tool checks, not a three-run performance acceptance or an Intel result.
 Receipts: `input-profile-v2-local-final/{cpu,gpu}.txt/xml` and
 `t27-profile-focused-build.txt` under `build/reports/x00-t27/`.
+
+### Peer Intel attempt and remaining acceptance
+
+The same peer Agent received the pushed-source comparison scope, preserving its
+running Client, viewport, release files and network configuration. It reported
+fetching the candidate objects; fast-forward checkout was refused by its local
+sandbox's Git-metadata write boundary and was not retried. It then independently
+prepared a source snapshot and checked the actual capture output for the
+multiple-display environment. These are progress reports, not build or measurement
+completion receipts.
+
+The turn ended with `provider_exit`, without a final result. One continuation
+through the same Agent requested completion-state reconciliation, cleanup of its
+own test load and continuation only of independently permitted unfinished work;
+that also ended with provider exit code 125. No valid three-pair result or final
+cleanup receipt was received. The local Host still reports a connected streaming
+session; this does not independently confirm the peer's temporary-load state.
+Do not infer a FlClash/network cause from that exit code, or restart the peer
+application to obtain the missing data under the preserve-state request.
+
+**Intel performance acceptance remains blocked at the peer execution/result
+stage.** The earlier QSV functional gate is retained. P1 real-Controller fixed-log
+sampling separately remains blocked by its existing Debug Control access refusal.
+No alternate execution channel or Agent was used to bypass either refusal.
+Reconcile the incomplete attempt and owned-load cleanup before another measurement;
+reuse the local tool checks and peer functional gate. Sanitized progress and task
+status are retained as `t27-peer-remaining-report.txt` and
+`t27-peer-attempt-result.json` under the local report root.

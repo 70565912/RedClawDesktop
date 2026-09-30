@@ -18,20 +18,22 @@ a session-independent recovery task before replacing a serving Host. Preserve th
 connected-Host exit confirmation. Older capable Clients may connect; identical
 versions are not a gate. Controller log benefits require a Client containing P1.
 
-The operator subsequently selected local Client / remote Host on 2026-09-29.
-Use that running topology for the new-role baseline; do not automatically switch
-roles or deploy a remote Host. See the current [task ledger](../runtime/MODULE_KANBAN.md).
-P6 can independently reuse earlier same-Host recordings for
-[offline attribution](video-send-attribution-20260929.md); those results do not
-qualify the current remote Host.
+The operator briefly selected local Client / remote Host on 2026-09-29; its
+[nine-window baseline](video-link-remote-host-baseline-20260929.md) remains a
+separate historical recording. The later P5 acceptance restored **local controlled
+Debug Host / remote Client**. Retain that current topology and the network
+configuration while finishing T27/T30. Deployment and remaining results follow
+the current [task ledger](../runtime/MODULE_KANBAN.md), not the historical role
+selection. Do not transfer a performance conclusion between the two machines.
 
-The [new-role baseline](video-link-remote-host-baseline-20260929.md) now records
-nine valid windows and current readback/input-preparation cost. The authorized
-terminal finished results and two replacements after Agent handoff. The
-[P5 candidate](video-gpu-input-p5-20260929.md) is now implemented and locally
-validated; current measurements do not establish same-peer P4/P5 improvement.
-Preserve both endpoint roles and the running connection; candidate rollout and
-peer QSV validation remain separate stages.
+The [P5 report](video-gpu-input-p5-20260929.md) records the completed local NVIDIA
+comparison and continuity checks, the peer's Intel functional gate, and the
+remaining independent Intel performance comparison. P6 reuses same-Host records
+for [offline attribution](video-send-attribution-20260929.md). The recovered
+[P4 publication audit](video-link-baseline-20260928.md#p4-publication-stage-audit-from-retained-cpu-recordings)
+establishes that stage's improvement with its network-matching limit. P1's real
+Controller tail-latency target remains unqualified; independent local replay is
+not a replacement for it.
 
 ## Phases
 
@@ -137,5 +139,6 @@ allocation/copy/time metric. Overlapping baseline variation is "improvement not
 confirmed". Local replays cannot qualify remote Client GUI benefit. Finish with
 a 5-minute real dynamic run, frame age/memory/failure/recovery counters and decoded
 text, thin lines, color patches and cursor comparisons. Run only affected tests;
-main builds are serialized through `build.ps1`. Keep P2–P6 planned until the B0/P1
-checkpoint supplies the appropriate baseline.
+main builds are serialized through `build.ps1`. The ledger separates implemented,
+locally verified and measured benefits; a completed phase does not qualify an
+unmeasured phase or another endpoint.
