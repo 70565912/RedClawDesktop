@@ -138,7 +138,7 @@ The 2026-09-28 working-tree extension advertises clipboard 4. Both endpoints mus
 negotiate 4 before using `ClipboardChanged` and the optional Host source revision;
 common 1/2/3 connections retain their previous operations without change notices.
 The reverse publication reuses capability-3 mode 2 and the existing file channel.
-This extension does not change the published v0.1.5 package.
+This extension is included in [v0.1.6](../releases/v0.1.6.md); the published v0.1.5 package remains unchanged.
 
 Qualification uses isolated local fixtures, injected clipboard/focus adapters
 and supported-capability direction/reconnect tests. Actual application paste
