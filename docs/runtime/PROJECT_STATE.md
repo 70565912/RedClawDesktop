@@ -234,7 +234,9 @@ run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
-The v0.1.6 Windows x64 Developer Preview is prepared for publication from current main. It includes X00-T27–T29 and the T30 expiry refresh, with T30/T31 temporarily closed and historical causes unknown. See [v0.1.6 release notes](../releases/v0.1.6.md). Packaging does not replace a serving Host or change its session.
+RedClawDesktop [v0.1.6](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.6) is published on 2026-10-01 from `24bad14` as a Windows x64 Developer Preview / GitHub Pre-release. It includes X00-T27–T29, the T30 expiry refresh, portable checks and the release-checkpoint wrapped-log scroll repair. T30/T31 retain operator-approved temporary closure with historical causes unknown. See [release notes](../releases/v0.1.6.md).
+
+Standard Release build/publication and thirty selected automatic suites have passing final outcomes. The final ZIP has 336 files / 355,871,643 bytes; ZIP hash12 `7415034eb54a`, EXE hash12 `c299311c033d`. Both server asset SHA256 digests, the downloaded checksum file, remote tag and embedded executable/source manifest are verified. Local extracted command startup passes; [GitHub package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/36819801648) succeeds. The full 125-suite local matrix and new physical/performance acceptance are not claimed; the separate CI unit build was still running at publication verification. Raw evidence: `release-v0.1.6-20261001`. Publication does not replace a serving Host or change its session, credentials or network settings.
 
 ### Previous published package
 
@@ -308,7 +310,7 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-Current `main` includes X00-T25 audio, accepted X00-T27–T29 optimizations, the T30 expiry refresh and Windows/Linux minimal checks. T30/T31 historical causes remain unknown after their operator-approved temporary closure. The v0.1.6 publication checkpoint follows the release notes. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
+Current `main` includes X00-T25 audio, accepted X00-T27–T29 optimizations, the T30 expiry refresh and Windows/Linux minimal checks. T30/T31 historical causes remain unknown after their operator-approved temporary closure. The published v0.1.6 checkpoint follows the release notes; its package/manifest/remote assets and cloud package smoke are verified. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
 
 The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
 
