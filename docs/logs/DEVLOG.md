@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-01 — Release checkpoint repairs before v0.1.6
+
+- The Release build/publish succeeds. The first focused unattended sweep passes 24/27 suites; three first failures remain in local evidence. Two congestion fixtures predate the sustained usable-feedback/demand contract: update the fixture inputs and retain assertions for isolated-edge rejection, confirmed pressure, nonstacking drain and recovery. Production congestion policy is unchanged.
+- The wrapped-log eviction failure is a product defect: restoring by pixel distance divided by font line spacing can move the first visible record backward. Preserve its retained QTextBlock and document layout-line offset directly. The existing regression now also checks the first block's pixel position within one pixel; it passes in Release together with the full automatic UI suite. Bounded batching and hidden-view semantics stay intact; no new performance percentage is claimed.
+- Six focused/supplemental suites pass five on the first repair round, including clipboard protocol/copy-store/workspace common-capability fixtures. A remaining fixture's first usable-sample expectation is corrected before its sole targeted final pass. Final results: 30 distinct suites have passing outcomes across 34 CTest executions, zero final failures or observed skips. The untouched 24 passing suites are reused; there is no 125-suite/full-CTest claim. Original XML/logs and the test-startup PowerShell error are retained under local reference `release-v0.1.6-20261001`.
+
 ## 2026-10-01 — T29–T31 minimal production-code checks and one Linux handoff
 
 - The operator requests a Linux-runnable T29 codec check and one further bounded T30/T31 attribution round, allowing temporary closure if the old causes remain unknown. Prepared a standalone test-only CMake graph, moving existing software/NVENC budget assertions into one common header. Two capture conditional-compilation defects are repaired without changing Windows behavior; no protocol/runtime policy changes.

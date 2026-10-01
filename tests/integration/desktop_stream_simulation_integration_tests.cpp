@@ -458,22 +458,34 @@ TEST(DesktopStreamSimulation, WeakNetworkAndCapacityStepsRemainBoundedAndRecover
     sample.rtt_sample_id = 1;
     sample.transport.feedback_fresh = true;
     sample.transport.feedback_sample_id = 1;
+    sample.transport.delivery_rate_valid = true;
+    sample.transport.application_limited = false;
+    sample.transport.delivery_bitrate_kbps = 12000;
+    sample.transport.feedback_interval_us = 100000;
+    sample.transport.feedback_round_trip_us = 50000;
+    sample.media_channel_open = true;
+    sample.demand.target_fps = 30;
     sample.now_steady_ms = 1000;
     auto decision = controller.update(sample);
     const std::uint32_t initial_rate = decision.pacing_bitrate_kbps;
 
     sample.transport.queue_delay_ms = 250;
+    sample.transport.delivery_bitrate_kbps = 8000;
+    sample.demand.pending_bytes = 65536;
+    sample.demand.token_limited = true;
     for (std::uint64_t now_ms : {1100ULL, 1200ULL, 1300ULL}) {
         sample.now_steady_ms = now_ms;
         ++sample.transport.feedback_sample_id;
         decision = controller.update(sample);
     }
     const std::uint32_t reduced_rate = decision.pacing_bitrate_kbps;
+    EXPECT_EQ(decision.backoff_count, 1U); // Repeated pressure cannot stack drains.
     EXPECT_LT(reduced_rate, initial_rate);
     EXPECT_GE(reduced_rate, 400U);
 
     sample.transport.queue_delay_ms = 0;
     sample.transport.loss_per_mille = 0;
+    sample.transport.delivery_bitrate_kbps = 12000;
     for (std::uint64_t now_ms : {2000ULL, 3000ULL, 4100ULL}) {
         sample.now_steady_ms = now_ms;
         ++sample.rtt_sample_id;

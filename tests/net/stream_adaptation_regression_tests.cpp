@@ -367,8 +367,23 @@ TEST(MediaTransportTiming, LearnedClockDoesNotEraseSustainedQueueStepsOrKeepReco
                         MediaCongestionController controller;
                         MediaCongestionSample congestion;
                         congestion.encoder_target_bitrate_kbps = 20000;
+                        congestion.now_steady_ms = (1050000 + elapsed) / 1000;
+                        congestion.demand.target_fps = 30;
+                        congestion.media_channel_open = true;
                         congestion.transport = estimator.snapshot(1050000 + elapsed, 10);
-                        EXPECT_TRUE(controller.update(congestion).reduce_fps);
+                        // Preserve the estimator's queue/clock data and supply
+                        // an active-flow delivery fixture. One feedback edge is
+                        // insufficient; two usable observations confirm pressure.
+                        congestion.transport.delivery_rate_valid = true;
+                        congestion.transport.application_limited = false;
+                        congestion.transport.delivery_bitrate_kbps = 10000;
+                        EXPECT_FALSE(controller.update(congestion).reduce_fps);
+                        congestion.now_steady_ms += 100;
+                        ++congestion.transport.feedback_sample_id;
+                        const auto confirmed = controller.update(congestion);
+                        EXPECT_TRUE(confirmed.reduce_fps);
+                        EXPECT_EQ(confirmed.backoff_count, 1U);
+                        EXPECT_FALSE(controller.update(congestion).backoff);
                     }
                 }
             }
