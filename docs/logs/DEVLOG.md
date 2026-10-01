@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-01 — Publish and verify v0.1.6
+
+- Commit `24bad14` and annotated tag `v0.1.6` are pushed to public origin; GitHub Pre-release contains the Windows x64 ZIP and SHA256SUMS.txt. Final ZIP: 336 files, 355,871,643 bytes, hash12 `7415034eb54a`; EXE hash12 `c299311c033d`. Both uploaded asset sizes/full server SHA256 digests match local files. The downloaded checksum text matches byte-for-byte; remote peeled tag and embedded source/EXE manifest match the release commit and binary.
+- Final local extraction/command smoke passes and [GitHub released-package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/36819801648) completes successfully. Docs Governance for the release commit also passes. The separate CI unit build remains in progress at this verification snapshot; no all-CI/full-CTest assertion. Thirty selected local unattended suites have final passing results; all initial failures and repairs stay documented.
+- Serving runtime/session, credentials, network and role are not changed by publication. T30/T31 historical causes remain unknown under temporary closure. Full identity/build/package/test evidence is retained locally as `release-v0.1.6-20261001`; no recurring task or extra Host performance run is created.
+
 ## 2026-10-01 — Prepare v0.1.6 Developer Preview publication
 
 - Synchronize CMake/vcpkg version, bilingual README downloads, document navigation, release notes and current checkpoint to v0.1.6. Include accepted optimization records and portable minimal checks; T30/T31 retain explicit temporary closure with historical causes unknown. Clipboard-4 qualification is documented as incremental common-capability behavior. Keep the unrelated DPI backup locally and exclude generated backup files from Git.
