@@ -128,3 +128,9 @@ add_test(
   NAME redclaw_net_lan_peer_integration_tests
   COMMAND redclaw_net_lan_peer_integration_tests
 )
+
+add_executable(redclaw_sender_timing_provenance_tests net/sender_timing_provenance_tests.cpp)
+target_link_libraries(redclaw_sender_timing_provenance_tests PRIVATE redclaw_net GTest::gtest_main)
+redclaw_apply_warnings(redclaw_sender_timing_provenance_tests)
+add_test(NAME redclaw_sender_timing_provenance_tests COMMAND redclaw_sender_timing_provenance_tests)
+set_tests_properties(redclaw_sender_timing_provenance_tests PROPERTIES TIMEOUT 15)

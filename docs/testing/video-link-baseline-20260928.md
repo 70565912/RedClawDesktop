@@ -1,5 +1,119 @@
 # X00-T27 local Host baseline, 2026-09-28
 
+The later [2026-10-01 source-based acceptance](video-link-optimization-x00-t27.md#accepted-optimization-scope-2026-10-01)
+closes T27 under the operator's revised criterion. The measurements and their
+limitations below remain unchanged; source acceptance does not supply missing
+real-Controller P1 or isolated P2 latency percentages.
+
+## Local Intel P2 verification, 2026-10-01
+
+The operator authorizes a temporary local Host/Client pair for P2 verification.
+This recording is separate from the historical NVIDIA/cross-machine baselines
+below and from the independent Intel P5 CPU/GPU comparison. Both temporary GUI
+instances reuse main-app hash12 `47087D9C0484`, with the full binary hash retained
+locally; its source commit is not proved. Credentials and UI settings are isolated
+test fixtures. No main-app build/publication, display-mode change, permission
+change or user-settings modification is performed.
+
+Three low/high/low source sequences complete nine valid windows, each with 10 s
+warmup and at least 60 s measurement. The source uses seed 2700 and target cadence
+1/30/1 FPS. Actual dynamic redraw is 21.19–21.29 FPS, so this is not sustained
+30 FPS delivery evidence. Real DDA capture stays 1680×1050; synthetic counts and
+capture/encode/send/GUI-decode/GUI-presentation failure increments are zero in
+all valid windows. D3D11 decoded surfaces provide the actual GUI playback path;
+runtime-only decoded/rendered counters are not its progress counters.
+
+| Source stage | Seconds, median [min, max] | Capture delta | Encode/send delta | GUI decode delta |
+| --- | --- | --- | --- | --- |
+| Low before motion | 61.209 [61.075, 61.476] | 64 [64, 136] | 64 [64, 134] | 64 [64, 118] |
+| Motion | 61.063 [60.791, 61.152] | 1280 [1275, 1337] | 414 [406, 1269] | 447 [408, 1277] |
+| Low after motion | 61.221 [60.327, 61.567] | 65 [65, 294] | 65 [64, 215] | 73 [65, 220] |
+
+These are three-run medians/ranges of cached-status counter deltas. Cache refresh
+boundaries differ between stages/endpoints; they do not form exact matched-frame
+accounting, latency distributions or an isolated performance comparison. Source
+cadence is distinct from the live adaptive submission target, observed at 30 and
+18 FPS. An initial preparation run used the wrong runtime decode counter and had
+zero measured windows. A later scene exited at approximately 63 s before its
+75 s safety deadline; its partial window is invalid and its close cause remains
+unknown. The completed first trial is retained, and only the missing two trials
+are subsequently measured with a 95 s safety duration. Raw attempts are retained.
+
+Across 97 active QSV diagnostic rows, nominal FPS is 30, time base is 1/30 and GOP
+is 60, with no sampled PTS regression or codec-contract deviation. Initial actual
+encoding is 1064×664, even after setting the temporary output buffer to 1584×990.
+Owned low-cadence viewport state changes later produce actual encoded geometries
+1064×664 → 1552×970 → 1584×990, with continued GUI decoding and zero observed
+decode/presentation failures. The final 1584×990 NV12 visible image uses a
+1584×992 padded texture. Do not equate output-buffer geometry with encoded geometry
+or transfer these temporary Client sizes to the existing remote Client.
+
+An isolated test-only build adds a QSV invocation of the existing desktop-budget
+regression helper to the local `d2930f0` snapshot. Main production source and
+binary are unchanged. The guarded test build exits 0; explicit software and
+QSV cases both pass (2/2). Each case encodes/decodes 20 frames across four sessions
+at requested 30/5/1/5 FPS and 1184×666/1778×1000 sizes, checking nominal 30 FPS,
+1/30 time base, GOP 60, geometry-derived bitrate budget, no hot rate update,
+per-frame increasing PTS and decoded dimensions. This is codec-fixture evidence;
+the nine GUI windows independently establish real desktop media. Test hash12 is
+`F084AD2C4038`. The first guarded build did not launch because its Windows
+PowerShell child was invoked from Core; the repository-standard Windows
+PowerShell launcher resolves that preparation error without persistent policy
+changes.
+
+File-signaling manual reconnect fails: the temporary Client applies an offer but
+ICE fails, while the Host restarts into waiting state. This is a real unsuccessful
+diagnostic attempt, not an encoder-failure result. The normal local DHT/ICE
+required-media-channel recovery check is recorded separately. No same-machine
+pre-P2 binary comparison or frame trace is collected here; isolated P2 gain,
+frame percentiles and trace overflow remain unqualified. GUI defaults request
+UPnP discovery despite omission of the explicit enabling flag; the file runs
+report no IGD and no successful mapping. Do not label discovery as disabled.
+
+The subsequent DHT/ICE check confirms one automatic media-channel recovery in
+the same Host/Client runtime instances. The bounded observation lasts 189.811 s;
+both required-channel open totals reach 2 and recovery-success totals reach 1.
+The forced-close frame is 5 and the first post-reconnect frame is 7; 17 subsequent
+frames reach the GUI pipe. Final GUI decode/presentation totals are 16/16, with
+zero observed media/GUI failures. Two recovered diagnostic rows demonstrate
+10 s of continued progression on each endpoint. These same-machine timestamps
+are not used to infer cross-machine latency. All owned processes and the source
+scene stop; the main binary hash is unchanged. The raw sampler reports a timeout
+because QA status omits the required-channel/forced-close/recovery fields used
+by its predicate. Retained primary runtime diagnostics and GUI samples prove
+recovery, and the separate reproducible log analysis records `recovery_passed=true`.
+Keep this instrumentation false negative distinct from the earlier unsuccessful
+file-signaling manual reconnect.
+
+**Conclusion:** local Intel P2 nominal-codec, low-cadence codec initialization/
+rebuild, real low/high/low media, viewport resizing and one DHT recovery checks
+pass. A live adaptive submission target 1→30→1 is not proved: actual source
+cadence changes, while runtime target diagnostics show 30/18 FPS. The isolated
+codec cases cover requested 1/5/30 FPS explicitly. This observation alone does not
+establish matched same-machine before/after P2 performance gain. The subsequent
+source-based T27 closure accepts the implemented cost reduction under the new
+operator criterion, without changing these empirical limitations.
+
+Opaque evidence: `t27-p2-local-20261001-01` (preparation),
+`t27-p2-local-20261001-02` (first valid trial plus invalid partial),
+`t27-p2-local-20261001-03` (remaining trials, geometry, codec tests and analysis),
+`t27-p2-local-20261001-04` (bounded DHT recovery). Raw identities, settings,
+credentials and logs remain local.
+
+### P1 historical access scope
+
+The old Client's Debug Control status action was refused with access denied;
+the historical remote execution context had no normal approval path. That blocks
+its live log injection/GUI sampling. The retained record does not distinguish
+execution-context restriction from pipe access rules, and does not establish a
+missing password or encoder error. Its explicitly prohibited ACL/elevation/
+identity/channel workarounds are not attempted. Fresh owned local P2 Debug Control
+endpoints work with normal platform approval. P1 is therefore not globally
+unavailable; its real-Controller matched 80-lines/s before/after tail benefit
+remains unmeasured and is not supplied by these P2 runs.
+
+## Historical B0 recording (2026-09-28)
+
 Nine real-media windows completed after the operator confirmed the remote Client
 display and fixed its viewport. Host source: `808c144`; collector source: `8da3530`.
 The controlled Host remained connected, with no synthetic frames or capture,

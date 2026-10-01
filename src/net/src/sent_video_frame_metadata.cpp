@@ -85,7 +85,7 @@ ReceiverFeedbackAssessment assess_receiver_feedback(
     std::uint64_t current_rate_revision) {
     ReceiverFeedbackAssessment result;
     const std::uint64_t doubled_rtt_ms = static_cast<std::uint64_t>(smoothed_rtt_ms) * 2ULL;
-    result.fresh_limit_ms = (std::max)(250ULL, doubled_rtt_ms);
+    result.fresh_limit_ms = (std::max<std::uint64_t>)(250ULL, doubled_rtt_ms);
     result.expired_limit_ms = (std::max)(1000ULL, doubled_rtt_ms * 2ULL);
     if (!sent_frame.has_value()) {
         return result;

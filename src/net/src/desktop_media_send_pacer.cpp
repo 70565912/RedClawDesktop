@@ -136,7 +136,7 @@ struct DesktopMediaSendPacer::Impl {
         // into persistent display latency for every following P-frame.
         const auto service = static_cast<std::uint64_t>(normal_service.quantile(0.95));
         const auto jitter = budget.lateness_us();
-        telemetry.queue_target_us = std::max(period, service + jitter);
+        telemetry.queue_target_us = std::max<std::uint64_t>(period, service + jitter);
         if (telemetry.congested) {
             telemetry.queue_target_frames = 1;
             telemetry.queue_target_us = period;
@@ -356,7 +356,7 @@ struct DesktopMediaSendPacer::Impl {
         const auto maximum_ms = frame.recovery_frame
             ? kMediaPacerRecoveryFrameDeadlineMs : kMediaPacerMaximumFrameDeadlineMs;
         const auto hard_deadline_us = started_us + maximum_ms * 1000ULL;
-        std::uint64_t deadline_ms = std::min(maximum_ms, frame_budget.deadline_ms
+        std::uint64_t deadline_ms = std::min<std::uint64_t>(maximum_ms, frame_budget.deadline_ms
             + (initial_in_flight_bytes > 0 ? resolve_transport_in_flight_expiry_us(rtt_ms) / 1000ULL : 0));
         {
             std::lock_guard lock(mutex);

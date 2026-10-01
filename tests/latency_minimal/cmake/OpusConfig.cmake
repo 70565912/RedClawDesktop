@@ -1,0 +1,6 @@
+if(NOT TARGET Opus::opus)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LATENCY_OPUS REQUIRED IMPORTED_TARGET opus)
+  add_library(Opus::opus ALIAS PkgConfig::LATENCY_OPUS)
+endif()
+set(Opus_FOUND TRUE)

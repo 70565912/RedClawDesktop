@@ -6,6 +6,86 @@ Keep real capture, native capture dimensions, codec quality and the current medi
 and Control wire formats. The old remote Host's reported 9.8 ms readback and the
 natural 1.58 FPS scene are reference observations, not the new-role baseline.
 
+## Accepted optimization scope (2026-10-01)
+
+**X00-T27 is accepted under the operator's revised criterion:** confirm that the
+optimization is implemented and accept a clear resource/cost benefit established
+by source analysis. Existing functional/build and measured stage evidence is
+retained. A new matched historical-Client run or an isolated empirical percentage
+for every phase is no longer a completion gate. This changes the acceptance
+decision, not the measurements or their provenance. The earlier real-Controller
+P1 P95/P99 target and isolated P2 latency gain remain unmeasured/unconfirmed.
+
+The audited repository revision is `58002bb`; relevant production files have no
+working-tree source edits, and file SHA256 values are retained locally under
+`t27-static-acceptance-20261001-01`. This is a source audit, not an assertion that
+an old running Client has that commit. The prior local GUI pair is identified
+independently by main-app hash12 `47087D9C0484`.
+
+| Phase | Confirmed optimization or completed evidence | Accepted basis |
+| --- | --- | --- |
+| B0 | Deterministic fixed-seed scene and bounded observation/trace tools; retained same-Host baselines | Existing reproducible recordings, not a new performance claim |
+| P1 | One bounded text cache; independent documents; visible views batch at 100 ms, at most 64 lines/32 KiB; hidden views stop the timer and return before document work | Source-confirmed removal of per-record document mutation and hidden-view refresh; prior functional validation retained |
+| P2 | Desktop profile fixes nominal FPS to 30, time base to 1/30 and GOP to 60; initial budget uses the same nominal cadence; submission pacing stays independent | Source-confirmed removal of low-cadence clock/GOP/budget coupling, plus existing software/QSV and real GUI resize/recovery checks |
+| P3 | Three leased CPU slots retain image storage; native-texture slots reuse idle handles; consumers retain strong references and latest pending semantics | Source confirms bounded reuse; retained same-Host capture-copy/CPU reduction supports it |
+| P4 | Main frame is published and encoder notified before thumbnail preparation; JPEG/serialization/send run in one bounded worker with one replaceable pending image | Source confirms removal of JPEG/send from the capture publication path; retained publication-stage reduction supports it |
+| P5 | Successful hardware output confirms GPU-only capture delivery; conversion/map stays on GPU, with device/generation ownership and CPU fallback | Source confirms the main-video CPU readback/copy path is removed after confirmation; retained NVIDIA/Intel stage measurements support it |
+| P6 | Bounded memory trace with explicit overflow and export after completion; retained accounting of key/ordinary frames and exclusive waits | Attribution/tooling complete; P6 itself is not claimed to reduce latency |
+
+### P1 source-derived benefit
+
+Before `a8ec6e4`, the GUI calls `QPlainTextEdit::appendPlainText` for every incoming
+record and the mirror shares the same document. The current
+[buffer/view implementation](../../src/ui/runtime_log_view.cpp) stores text once;
+[GUI integration](../../src/ui/gui_shell.cpp) shares the buffer rather than the
+document. `schedule_refresh` arms one single-shot 100 ms timer only for visible
+views; `hideEvent` stops it and `flush_pending` returns before document work when
+hidden. The 4096-line/4 MiB cache and 64-line/32 KiB batch also bound input retention
+and one refresh's insertion work. File logging remains independent.
+
+For the existing [80-lines/s replay](../../src/ui/runtime_log_replay.h), each
+record invokes append individually. With steady visibility and no explicit
+flush/clear calls, the old path performs about 80 document appends per second;
+the current path performs at most about 10 refresh appends per second per visible
+view, while a hidden view performs none. This is a source-derived count of
+document mutations/refreshes, not a measured CPU or P95/P99 improvement. Separate
+documents can use more view storage when both views are visible; the shared text
+cache does not eliminate every display allocation. The clear cost reduction is
+sufficient for P1 acceptance under the new criterion.
+
+### P2 source-derived benefit
+
+Before `c9df422`, the main runtime builds its codec profile from current/applied
+submission FPS. The ordinary profile sets clock FPS to that request and desktop
+GOP to twice that FPS, with a minimum of 2. A codec initialized at 1 FPS can
+therefore retain a 1/1 clock and a 2-frame GOP when motion resumes. The current
+[desktop profile](../../src/capture/src/capture_module.cpp) explicitly normalizes
+to 30 FPS before deriving clock, GOP and initialization bitrate. Its FFmpeg
+context uses that profile directly. This eliminates the low-cadence 2-frame-GOP
+configuration and under-sized startup/resize budget, reducing avoidable periodic
+keyframe pressure on motion resumption. Forced recovery IDRs remain available;
+no actual keyframe-count, bitrate, CPU or latency reduction percentage is inferred.
+
+The [runtime](../../src/main.cpp) applies actual target FPS to submission cadence;
+FPS alone does not satisfy the codec bitrate/restart predicate. The PTS assignment
+is the maximum of the next tick and elapsed monotonic time rescaled to the codec
+clock. Existing isolated software/QSV checks explicitly cover requested 1/5/30
+FPS, geometry rebuild and monotonically increasing PTS; nine real Intel GUI
+windows and one DHT recovery supply independent media-path evidence. A live
+adaptive target 1→30→1 was not observed and is not relabeled as performed. The
+implemented coupling removal and existing functional evidence are sufficient
+for P2 acceptance under the new criterion.
+
+P3/P4/P5 retain their actual scoped measurements, including P4's differing
+network identities and P5's higher GPU memory/approximately 21 FPS scene rate.
+No end-to-end zero-copy, sustained 30 FPS or universal latency benefit is added.
+The historical five-minute NVIDIA continuity/visual result remains within its
+original machine/role scope; no new Intel five-minute run is claimed. Historical
+Client diagnostics were not restored in this closure. X00-T30/X00-T31 remain
+separate incident/attribution records. Their [later bounded local/Linux review](video-link-linux-checks-20261001.md)
+temporarily closes them by explicit operator instruction; historical causes remain
+unknown and no incident resolution is inferred from T27 acceptance.
+
 ## Execution sequence
 
 For the original local-Host deployment workflow: finish local checks, commit
@@ -28,7 +108,14 @@ selection. Do not transfer a performance conclusion between the two machines.
 
 The [P5 report](video-gpu-input-p5-20260929.md) records the completed local NVIDIA
 comparison and continuity checks, the peer's Intel functional gate, and the
-remaining independent Intel performance comparison. P6 reuses same-Host records
+completed independent Intel performance comparison. The later
+[local Intel P2 checks](video-link-baseline-20260928.md#local-intel-p2-verification-2026-10-01)
+record nine real source-cadence windows, nominal-codec/geometry checks, explicit
+QSV low-requested-FPS cases and one DHT recovery using an unchanged temporary
+local Host/Client pair. Live adaptive target 1→30→1 and isolated P2 gain remain
+unqualified. P1's old diagnostic refusal is endpoint-specific; new owned local
+endpoints work, while its matched real-Controller log benefit is still unmeasured.
+P6 reuses same-Host records
 for [offline attribution](video-send-attribution-20260929.md). The recovered
 [P4 publication audit](video-link-baseline-20260928.md#p4-publication-stage-audit-from-retained-cpu-recordings)
 establishes that stage's improvement with its network-matching limit. P1's real
@@ -133,12 +220,18 @@ and scroll following. The existing complete file sink remains outside UI evictio
 
 ## Acceptance
 
-Compare three-run medians and ranges. P1 targets at least 20% lower real-video
-dispatch P95/P99 under fixed logs. Other phases must reduce the matching measured
-allocation/copy/time metric. Overlapping baseline variation is "improvement not
-confirmed". Local replays cannot qualify remote Client GUI benefit. Finish with
-a 5-minute real dynamic run, frame age/memory/failure/recovery counters and decoded
-text, thin lines, color patches and cursor comparisons. Run only affected tests;
-main builds are serialized through `build.ps1`. The ledger separates implemented,
-locally verified and measured benefits; a completed phase does not qualify an
-unmeasured phase or another endpoint.
+The current completion decision follows [the revised operator criterion](#accepted-optimization-scope-2026-10-01)
+above: implementation, a clear source-proven cost/resource benefit, and retained
+functional evidence qualify the optimization. X00-T27 is done on that basis.
+Static benefits must remain labeled static; source provenance must not replace
+running-binary identity, and previous measured outcomes must not be rewritten.
+
+The original empirical target was at least 20% lower real-video P1 dispatch
+P95/P99 under fixed logs, with matching measured allocation/copy/time gains for
+other phases, plus five-minute dynamic continuity/visual evidence. Those
+historical targets and measurements remain useful for future evaluation but are
+not outstanding T27 closure gates under the new instruction. Overlapping ranges
+remain "improvement not confirmed"; local replay does not measure remote Client
+benefit. Run only affected tests when requested; main builds remain serialized
+through `build.ps1`. No new build or load is necessary for this documentation/source
+acceptance decision.
