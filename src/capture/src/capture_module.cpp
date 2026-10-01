@@ -141,6 +141,20 @@ bool captured_frame_has_cpu_bgra_pixels(const CapturedFrame& frame) {
     return frame.data.size() >= min_frame_bytes;
 }
 
+std::string describe_capture_adapter_vendor(CaptureAdapterVendor vendor) {
+    switch (vendor) {
+    case CaptureAdapterVendor::kIntel:
+        return "Intel";
+    case CaptureAdapterVendor::kNvidia:
+        return "NVIDIA";
+    case CaptureAdapterVendor::kAmd:
+        return "AMD";
+    case CaptureAdapterVendor::kUnknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
 #ifdef _WIN32
 std::string describe_encoder_backend(EncoderBackendType backend);
 
@@ -206,21 +220,6 @@ CaptureAdapterVendor classify_dxgi_vendor(std::uint32_t vendor_id) {
     default:
         return CaptureAdapterVendor::kUnknown;
     }
-}
-
-std::string describe_capture_adapter_vendor(CaptureAdapterVendor vendor) {
-    switch (vendor) {
-    case CaptureAdapterVendor::kIntel:
-        return "Intel";
-    case CaptureAdapterVendor::kNvidia:
-        return "NVIDIA";
-    case CaptureAdapterVendor::kAmd:
-        return "AMD";
-    case CaptureAdapterVendor::kUnknown:
-        return "unknown";
-    }
-
-    return "unknown";
 }
 
 std::string describe_dxgi_vendor(std::uint32_t vendor_id) {
@@ -1680,6 +1679,7 @@ public:
             || source_region.height != profile_.height;
         const bool has_cpu_pixels = captured_frame_has_cpu_bgra_pixels(frame);
         const bool has_native_texture = unwrap_d3d11_native_handle(frame) != nullptr;
+#ifdef _WIN32
         if (!hardware_frame_input_active_
             && !hardware_input_policy_.blocked()
             && has_native_texture
@@ -1698,6 +1698,7 @@ public:
                 diagnostics_.capture_adapter_summary = capture_adapter_summary;
             }
         }
+#endif
         CapturedFrame gpu_scaled_frame;
         bool gpu_scaled = false;
         std::string gpu_scale_error;

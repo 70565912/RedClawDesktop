@@ -147,7 +147,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
                 std::max<double>(t.delivery_bitrate_kbps, robust_delivery))
             : pacing_bitrate_kbps_;
         // Drain measured excess queue instead of applying a fixed percentage.
-        const double drain_us = static_cast<double>(std::max(queue_us, allowance));
+        const double drain_us = static_cast<double>(std::max<std::uint64_t>(queue_us, allowance));
         pacing_bitrate_kbps_ = rate_kbps(delivered * static_cast<double>(horizon)
             / (static_cast<double>(horizon) + drain_us));
         confirmed_rate_kbps_ = pacing_bitrate_kbps_;

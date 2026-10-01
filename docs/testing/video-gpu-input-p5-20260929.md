@@ -1,5 +1,10 @@
 # X00-T27 P5: synchronized GPU input
 
+T27's optimization acceptance is now complete under the operator's
+[2026-10-01 source-based criterion](video-link-optimization-x00-t27.md#accepted-optimization-scope-2026-10-01).
+P5's actual measured results below retain their original scope; missing P1/P2
+latency measurements are not supplied by that acceptance decision.
+
 P5 is implemented and functionally validated, including the peer's Intel QSV
 surface repair. **The local NVIDIA preparation/encoding regression is resolved**
 by the bounded DDA wait repair. The [matched repaired comparison](#matched-acceptance-after-the-dda-repair-2026-09-30)
@@ -8,11 +13,17 @@ CPU readback; DynamicLog tail improvement remains unconfirmed and effective
 pacing differs. Its subsequent five-minute continuity run passes, with the earlier
 sender exception retained separately. These findings do not qualify Intel performance.
 
-The operator now prioritizes the remaining Intel CPU/GPU comparison, while leaving
-P1 real-Controller sampling blocked by the peer's diagnostic-access refusal.
-The resumed peer attempt builds the correct v2 tool, but DDA initialization returns
-access denied before the first warmup; [zero valid Intel performance windows](#resumed-intel-build-and-capture-startup-blocker)
-have been recorded.
+**The Intel same-machine CPU/GPU comparison is now complete.** Three paired
+real-DDA/QSV runs per input reduce preparation and total encoding cost and measured
+process CPU, with zero GPU-input readback/copy/fallback. GPU memory is higher.
+The scene actually redraws at about 21 FPS, so sustained 30 FPS is unqualified.
+See the [2026-10-01 local acceptance](#local-intel-matched-acceptance-2026-10-01).
+P1's historical peer real-Controller sampling was blocked by that Client's
+diagnostic-access refusal. Fresh owned local P2 endpoints now work through normal
+approval; the matched P1 tail-benefit comparison remains unmeasured. See the
+[local P2 checks and access scope](video-link-baseline-20260928.md#local-intel-p2-verification-2026-10-01).
+The earlier [capture-startup failure](#resumed-intel-build-and-capture-startup-blocker)
+is retained as a historical zero-window attempt.
 Earlier failed-GPU results, deployment waiting states and the initial
 [input-cost diagnosis](#dda-shared-device-wait-diagnosis) below are chronological
 evidence, not the current P5 result or current Host readiness.
@@ -993,3 +1004,133 @@ approval-policy denial or as an encoder failure.
 Local normalized receipt: `build/reports/x00-t27/p5-intel-attempt-20260930.json`.
 Peer source/build and startup-failure records are retained at the peer. P5's Intel
 performance acceptance remains blocked, not completed or failed on performance.
+
+## Local Intel matched acceptance (2026-10-01)
+
+The operator requested investigation and a new local Intel performance acceptance.
+This section records direct execution on the Intel machine; the earlier NVIDIA
+and cross-LAN measurements are not its CPU reference. The preflight found no
+running RedClaw application, so there was no background Client decoding during
+this comparison. The diagnostic uses real desktop capture and the existing
+encoder implementation without launching a GUI pair or networking.
+
+### Startup diagnosis and identity
+
+The previous local fixed-scene launcher omitted the repository-standard
+child-process script execution parameter. Inbox Windows PowerShell had all policy
+scopes Undefined and the effective client default Restricted; PowerShell Core's
+RemoteSigned setting did not apply to that different executable. No forced
+MachinePolicy/UserPolicy was found. The scene now uses the process-only parameter
+documented by `scripts/AGENTS.md`, and real desktop sampling ran through the normal
+platform approval path. No persistent execution policy, ACL, display setting or
+application/network configuration changed. This explains the local scene-script
+refusal; it does not retrospectively identify the cause of the earlier peer DDA
+`0x80070005` or Provider exit 125. DDA startup succeeds in all six current runs.
+
+The previous logical-screen result 1344×840 was also unsuitable as a DDA capture
+requirement. Read-only physical-mode enumeration reports 1680×1050; 125% DPI
+virtualization yields the 1344×840 logical canvas. The fullscreen scene uses that
+logical canvas while every consumed DDA texture is asserted to be 1680×1050.
+Encoded visible content remains 1584×990. No display/DPI change was made.
+
+The reused isolated Debug profiler was built from
+`d2930f096bacebaf25d2e64c925fa8e88172f9dc`. Its SHA256 is
+`127D829E511EB1C583F40D23990103945DDA18C34FAAFB9020C5F82FCCD1FB33`,
+verified before and after sampling. Current encoder/capture sources and the
+profiler test have no changes from that source revision. No rebuild, publication,
+deployment or Host restart occurs in this acceptance. The independent hardware
+metadata query was unavailable; no new adapter-model/driver claim is made.
+Actual `h264_qsv`, the selected QSV backend and hardware-frame-input confirmation
+are strict runtime checks, not conclusions inferred from repository HEAD.
+
+### Fixed conditions and six measured windows
+
+- Three pairs in order CPU/GPU, GPU/CPU, CPU/GPU; each has 10 s warmup and at least
+  60 s measured sampling. Each temporary scene auto-stops after 75 s, with a
+  separate profiler timeout and owned-process cleanup.
+- Dynamic fullscreen scene, fixed seed 2700, 28 sprites, target 30 FPS,
+  `absolute-frame-reflection-v1` trajectory. Offscreen verification confirms
+  identical repeated-frame hashes and different hashes at different scene frames.
+- DDA only, no capture fallback, concurrent acquisition with timeout 0;
+  1680×1050 capture and 1584×990 encode in all runs. Bitrate 4267 kbps, nominal
+  30 FPS, time base 1/30, GOP 60. CPU and GPU modes both use `h264_qsv`.
+- Each selected test passes without skips: zero real capture failures, no encode
+  error other than the explicitly permitted output-not-ready state, requested
+  input confirmation and zero hardware-input fallback. Every measured encode
+  attempt actually produces an output in this batch.
+
+Stage values below are average milliseconds per encode attempt in one window.
+CPU is measured process CPU, with one logical core equal to 100%.
+
+| Round/input | Measured s | Attempts/outputs | Capture delta | Output FPS | Preparation ms | Total encoding ms | CPU % | Readback/copy delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 CPU | 60.050940 | 1279/1279 | 1278 | 21.298584 | 7.335815 | 15.205704 | 23.105383 | 1278/1278 |
+| 2 GPU | 60.034185 | 1318/1318 | 1318 | 21.954158 | 0.353774 | 8.190540 | 5.517690 | 0/0 |
+| 3 GPU | 60.020519 | 1282/1282 | 1281 | 21.359362 | 0.361239 | 8.174739 | 9.163533 | 0/0 |
+| 4 CPU | 60.014622 | 1279/1279 | 1278 | 21.311473 | 7.505406 | 15.248048 | 27.597441 | 1278/1278 |
+| 5 CPU | 60.042433 | 1280/1280 | 1280 | 21.318257 | 7.481891 | 15.353333 | 27.064193 | 1280/1280 |
+| 6 GPU | 60.033127 | 1282/1282 | 1281 | 21.354876 | 0.364256 | 8.115654 | 5.752033 | 0/0 |
+
+Total measured attempts and outputs are both **7720**. Capture deltas total 7716;
+the boundaries differ because a previously captured frame can be consumed just
+after measurement starts. Capture-side readback/copy denominators must remain
+capture deltas. All measured CPU large-buffer allocation, pool-exhaustion and
+GPU-fallback counters are zero for both inputs. GPU input is confirmed in all
+three GPU tests; CPU input is not reported as hardware-frame input.
+
+### Three-run median and range
+
+Ranges describe the three window averages, not per-frame percentiles.
+
+| Metric | CPU median [min, max] | GPU median [min, max] |
+| --- | ---: | ---: |
+| Output FPS | 21.311 [21.299, 21.318] | 21.359 [21.355, 21.954] |
+| Preparation ms/attempt | 7.482 [7.336, 7.505] | 0.361 [0.354, 0.364] |
+| Codec submission ms/attempt | 7.609 [7.491, 7.627] | 7.560 [7.468, 7.621] |
+| Packet retrieval ms/attempt | 0.001285 [0.001253, 0.001306] | 0.001156 [0.001142, 0.001269] |
+| Total encoding ms/attempt | 15.248 [15.206, 15.353] | 8.175 [8.116, 8.191] |
+| Measured CPU, one-core % | 27.064 [23.105, 27.597] | 5.752 [5.518, 9.164] |
+| Working-set median MiB | 82.219 [80.816, 82.285] | 119.816 [119.703, 119.871] |
+| Private-memory median MiB | 119.828 [119.738, 119.828] | 216.555 [216.492, 216.605] |
+| Working-set peak MiB | 83.492 [82.043, 83.539] | 121.039 [120.984, 121.145] |
+| Private-memory peak MiB | 121.055 [121.020, 121.086] | 217.965 [217.828, 218.008] |
+
+Memory uses 1 Hz samples over each profiler's full lifetime, including warmup;
+it is not a measured-only memory trace. Each run has 70 samples. The GPU path
+uses approximately 37.6 MiB more median working set and 96.7 MiB more median
+private memory. This short batch does not establish long-run leak freedom.
+
+GPU stage median [range] in ms/attempt: scale 0.210589 [0.207712, 0.211573],
+surface pool 0.005702 [0.005608, 0.005838], map 0.019495 [0.019478, 0.020719],
+copy submission 0.084828 [0.081814, 0.085474], release
+0.011842 [0.011235, 0.011857]. CPU values for these GPU-only fields are zero
+because those stages do not execute, not evidence of zero CPU conversion cost.
+Codec submission means the encoder API, not network sending.
+
+### Result, cleanup and limits
+
+The six-window Intel P5 comparison is complete: observed input preparation falls
+95.17%, total encoding 46.39% and measured CPU 78.75% by three-run medians.
+The preparation/total-encoding/CPU ranges are separated in this batch; codec
+submission ranges overlap and no isolated codec-submission gain is established.
+Output remains approximately 21 FPS at the observed source cadence. The scene
+redraw medians/ranges are CPU 21.27 [21.24, 21.28] and GPU
+21.26 [21.26, 21.28] FPS over each 75 s scene. Target/nominal 30 FPS does not
+prove sustained 30 FPS output, and the scene summary is not a frame-aligned
+measurement-window cadence trace. No throughput/tail/network/display improvement
+or cross-machine-clock latency is claimed.
+
+All six scenes exit normally, all selected tests return success, and the final
+profiler process count is zero. Temporary profile environment is removed when
+the bounded runner exits. No recurring task, persistent per-frame writer or
+background load remains. This v2 diagnostic records aggregates, not a per-frame
+trace: trace overflow is **not applicable**, and P50/P95/P99 cannot be derived.
+No new decode/picture/remote-viewport or five-minute continuity acceptance is
+included; the previously passed Intel functional gate remains separate.
+
+Opaque evidence reference: **`t27-p5-intel-local-20261001-01`**. Local evidence
+retains policy/identity checks and asserted physical capture geometry, deterministic scene verification,
+six XML/stdout/stderr and scene receipts, process-memory samples, the bounded
+runner and reproducible analysis. No raw environment data needs to be returned.
+P1's real-Controller diagnostic-access blocker and the separate T30/T31 sender
+attribution remain open; this scoped local Intel completion does not close T27.
