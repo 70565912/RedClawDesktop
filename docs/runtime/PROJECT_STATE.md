@@ -1,23 +1,94 @@
 # Project State
 
-Updated: 2026-09-30
+Updated: 2026-10-01
 
 ## Current optimization work
 
-The operator now explicitly prioritizes **X00-T27 P1 and P5 acceptance** while
-retaining the current Host/Client roles and proxy/network configuration. Complete
-the real-Controller log comparison and the peer Intel CPU/GPU comparison before
-expanding follow-up diagnostics. T30's recorded anomaly is retained; X00-T31 is
+**X00-T27 is done under the operator's revised optimization-acceptance criterion
+(2026-10-01).** The operator accepts an implemented optimization with a clear
+benefit established by source analysis. The current source audit confirms P1's
+bounded batching/hidden-view work removal and P2's fixed nominal clock/GOP/budget,
+supported by retained functional checks. Existing scoped P3/P4/P5 measurements and
+P6 attribution complete the phase record. Source-audit evidence:
+`t27-static-acceptance-20261001-01`; see [accepted scope and code evidence](../testing/video-link-optimization-x00-t27.md#accepted-optimization-scope-2026-10-01).
+P1's empirical >=20% real-Controller tail target and isolated P2 latency benefit
+remain unmeasured/unconfirmed; those former targets no longer block closure.
+The old Client's refused interface was not restored and no old-Client identity
+was proved. No runtime, permission, source, build or load change occurs in this
+closure; only acceptance/status documentation is updated at that T27 decision.
+The later bounded T29–T31 follow-up below temporarily closes T30/T31 by explicit
+operator instruction; their historical incident causes remain unknown.
+
+### Bounded T29–T31 follow-up (2026-10-01)
+
+The operator requests Linux minimal joint checks and one further T30/T31 review,
+allowing temporary closure if the historical causes remain unproved. A standalone
+production-code test build and three local rounds pass (9 CTest executions,
+21 GoogleTest cases, 60 software codec frames, zero failures/skips). One artifact
+is dispatched to operator-selected Linux chat 设置 RedClawDesktop. Its T29 result
+passes three rounds/60 frames; four LP64 type deductions initially block T30/T31.
+Those are repaired without policy changes; three local T30/T31 rounds pass and the
+same executor receives the incremental patch for its previously unrun groups.
+Supplemental Linux checks pass three rounds each (6 CTest / 18 case executions,
+zero failures/skips; T29 is not repeated). Source and injections establish
+attribution limits, not the old stall cause. T30/T31 are temporarily closed by the
+operator's instruction, with historical causes unknown and incident_complete=false.
+No serving runtime or network/pacing policy changes. See
+[bounded review](../testing/video-link-linux-checks-20261001.md); final task
+status follows the [ledger](MODULE_KANBAN.md).
+
+### Retained measurement and execution history
+
+The operator authorizes **local Intel P2 Host/Client verification** after asking
+why P1 diagnostic access was refused. Nine real DDA/QSV low/high/low source windows
+complete with nominal 30 FPS, time base 1/30 and GOP 60; geometry changes and one
+DHT/ICE media-channel recovery are verified. Main-app hash12 `47087D9C0484` is
+unchanged, with its source commit unproved. Two isolated codec-budget tests pass,
+including QSV requested 1/5/30 FPS and monotonic per-frame PTS. Live adaptive target
+1→30→1 and isolated P2 performance benefit remain unqualified. All owned test
+processes are stopped, with no main-app rebuild/replacement or persistent settings
+change. The initial file-signaling manual reconnect fails; a separate normal
+DHT recovery succeeds. Its raw sampler timeout is an instrumentation false
+negative because QA status omits recovery fields; retained logs/GUI samples prove
+10 s of post-recovery progression. Opaque references `t27-p2-local-20261001-03`
+and `t27-p2-local-20261001-04`; see [P2 checks and limits](../testing/video-link-baseline-20260928.md#local-intel-p2-verification-2026-10-01).
+P1's historical old-Client Debug Control access refusal is scoped to that endpoint
+and execution context. Its exact cause is unproved. Fresh owned local endpoints
+work through normal approval, without retrying or bypassing the old refusal.
+The P1 matched real-video 80-lines/s tail comparison remains unmeasured; this
+local P2 observation alone does not supply it. The later source-based acceptance
+decision is recorded above.
+
+The operator prioritizes **X00-T27 P1 and P5 acceptance**. The Intel machine's
+local P5 comparison now completes six valid windows, each with 10 s warmup and
+at least 60 s measurement. Real DDA capture is 1680×1050 and QSV encoding is
+1584×990 at 4267 kbps, nominal 30 FPS, time base 1/30 and GOP 60. Three-run
+CPU/GPU medians are preparation 7.482/0.361 ms, total encoding 15.248/8.175 ms
+and measured process CPU 27.064/5.752% of one logical core. GPU input confirms
+zero readback/copy/fallback; all 7720 measured attempts produce output. GPU private
+memory is higher (119.828/216.555 MiB median). Actual scene cadence is about
+21 FPS; sustained 30 FPS and network/display tail acceptance are not established.
+No RedClaw application was running at this local preflight. All owned scenes and
+profilers have stopped; no application rebuild/replacement or persistent settings
+change occurred. Evidence: `t27-p5-intel-local-20261001-01`; see
+[local Intel acceptance](../testing/video-gpu-input-p5-20260929.md#local-intel-matched-acceptance-2026-10-01).
+P1's historical peer real-Controller log comparison remains incomplete after its
+access refusal. T30's recorded anomaly is retained; X00-T31 is
 not being executed and is not an additional T27 completion gate. Network diagnosis
 remains stopped. T30 repair `0d43f8c` and T27 profiler `d2930f0` are pushed.
 The peer reconfirmed that P1's Client Debug Control access remains refused and
 its execution environment offers no normal approval channel. The operator chose
 to retain P1 as blocked and finish P5 first. The same peer task built the correct
 `d2930f0` QSV/CPU/GPU v2 profiler in isolation using existing dependencies.
-The first CPU/QSV run returned `0x80070005` from DDA `DuplicateOutput` before
-warmup; zero valid measurements exist and the remaining five runs did not start.
-Its profiler load has ended, Client is preserved, and no QSV performance or
-hardware-support conclusion is inferred. See the [capture-startup blocker](../testing/video-gpu-input-p5-20260929.md#resumed-intel-build-and-capture-startup-blocker).
+That historical CPU/QSV attempt returned `0x80070005` from DDA `DuplicateOutput`
+before warmup; it has zero valid windows and its profiler load ended. Its API
+failure cause remains unidentified. A later local scene-script refusal came from
+omitting the repository's process-scoped Windows PowerShell launch parameter;
+normal approved execution now succeeds in all six current DDA/QSV windows.
+The reused profiler's binary hash12 is `127D829E511E`, checked before and after
+sampling, with encoder/profiler sources unchanged from `d2930f0`. The physical
+capture requirement corrects a DPI-virtualized logical-size reading. Historical
+records remain in the [startup-failure section](../testing/video-gpu-input-p5-20260929.md#resumed-intel-build-and-capture-startup-blocker).
 The exact pushed candidate passes the Debug build/publication, focused checks,
 336-file verification and command-entry check. The operator then authorized
 replacement/restart: `d2930f0` is now deployed, formal/rollback manifests pass,
@@ -42,16 +113,16 @@ recovers a measured stage improvement from existing records, with different
 network identities explicitly excluded from full latency claims. Peer P1 live
 log injection remains blocked by its prior local Debug Control access refusal.
 The [independent input profiler](../testing/video-gpu-input-p5-20260929.md#independent-cpugpu-profiler-for-the-remaining-intel-comparison)
-is locally validated. The peer's Intel measurement attempt and one same-Agent
-continuation ended with Provider exit 125, without a valid three-pair result or
-final cleanup receipt. A later decoder-only turn created no workload and completed
-the decoder-log check. The resumed Intel attempt above supersedes that earlier
-deferral: correct tool build passes but capture startup is denied. Current Host
-connection is intact and no network repair was attempted. T27/T30 are not declared
-fully accepted.
+is locally validated. Earlier peer Provider exit 125 and capture-startup failures
+remain historical incomplete attempts. The 2026-10-01 direct local Intel result
+supersedes their pending P5 measurement status, with all owned loads stopped.
+It does not verify the current cross-LAN application/connection state. The
+following deployment and connection observations are retained from 2026-09-30;
+At that stage T27/T30 were not declared fully accepted. T27's later revised-scope
+closure is recorded above; T30 remains unresolved.
 
-Continue X00-T27 using the [task ledger](MODULE_KANBAN.md) and
-[phase plan](../testing/video-link-optimization-x00-t27.md). Current roles remain
+X00-T27's accepted scope is on the [task ledger](MODULE_KANBAN.md) and
+[phase plan](../testing/video-link-optimization-x00-t27.md). Last recorded cross-LAN roles were
 **local controlled Debug Host / remote Client**. The serving `d2930f0` includes
 the earlier X00-T28 wake optimization, with retained credentials and effective
 ICE port 56000. X00-T28's three DynamicLog wake windows on `e787ca5` remain
@@ -128,8 +199,10 @@ to the timer. CPU and FPS improvement are unconfirmed. Load is stopped, the Host
 remains connected and no background monitor is installed. Retain X00-T30
 diagnostics for recurrence without claiming its historical cause is resolved.
 See the [live wake evidence and limits](../testing/video-send-attribution-20260929.md#reconnected-three-window-wake-acceptance).
-P1 remote Controller tail benefit, isolated P2/P4 gains and Intel matched
-performance remain unconfirmed. See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
+P1 remote Controller tail benefit and isolated P2/P4 gains remain unconfirmed.
+Intel local preparation/total-encoding/CPU comparison is now complete in the
+[local Intel acceptance](../testing/video-gpu-input-p5-20260929.md#local-intel-matched-acceptance-2026-10-01).
+See the [matched repair acceptance](../testing/video-gpu-input-p5-20260929.md#matched-acceptance-after-the-dda-repair-2026-09-30)
 and [mechanism diagnosis](../testing/video-gpu-input-p5-20260929.md#dda-shared-device-wait-diagnosis).
 
 The QSV bridge maps leased D3D11 surfaces into the derived QSV context and keeps
@@ -138,8 +211,8 @@ a decoder-target array encoded slice 0 on Intel HD Graphics 530 and produced a
 black picture. The strict Intel gate now passes on that device, including
 resize and device replacement, with zero GPU-input fallbacks.
 See the [repair and validation limits](../testing/video-gpu-input-p5-20260929.md#qsv-surface-pool-and-mapping-repair).
-Intel functional success does not establish Intel performance improvement; the
-new measured regression applies to the local NVIDIA Host.
+The earlier Intel functional gate is separate from the newly completed local
+Intel performance comparison; neither establishes a cross-LAN Intel latency gain.
 
 The previous local-Client/remote-Host run confirmed normal video and the DISPLAY2
 thumbnail repair: deployed `8c4fc09`, advancing revisions 1761→1777 and no failures.
@@ -154,13 +227,18 @@ does not establish QSV performance improvement.
 
 [P6 offline attribution](../testing/video-send-attribution-20260929.md) is complete
 for the former local Host. X00-T28 retains the separately scoped wake-lateness
-follow-up. P5 throughput/tail regression, Intel matched performance and detailed
-remote visual comparison remain open on the task ledger. The current five-minute
+follow-up. Detailed remote tail/visual comparison remains open on the task ledger;
+the local NVIDIA regression and Intel stage/CPU comparison are resolved within
+their documented scopes. The recorded five-minute
 run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
-RedClawDesktop [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the current Windows x64 Developer Preview, published on 2026-09-23 from `9a7483b`. It supersedes [v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4). It adds optional remote system audio: Host shared-mode loopback, Opus on `redclaw-audio-v1`, and Controller XAudio2 playback. The playback thread initializes COM, drains a lock-free frame cache immediately, and leaves the output open until remote sound is turned off or the session ends. The operator verified audible playback on a Debug Controller against the existing peer Host. That Host was not replaced, so the listen check does not prove the 20 ms capture pacing in this package. Connection passwords remain mandatory, so passwordless releases including v0.1.3 are rejected. The public tag and both uploaded assets were verified; the 336-file ZIP is 348,401,429 bytes and its SHA256 is `f163faa3f975b4f4e87d6f2a51c25b24d73c04d2f45f41d03e088fa0b29860bf`, matching the GitHub asset digest. Local extracted-package startup passed. v0.1.4 remains the 2026-09-22 package from `4032409`. Recording this identity does not move the v0.1.5 tag.
+The v0.1.6 Windows x64 Developer Preview is prepared for publication from current main. It includes X00-T27–T29 and the T30 expiry refresh, with T30/T31 temporarily closed and historical causes unknown. See [v0.1.6 release notes](../releases/v0.1.6.md). Packaging does not replace a serving Host or change its session.
+
+### Previous published package
+
+RedClawDesktop [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the preceding Windows x64 Developer Preview, published on 2026-09-23 from `9a7483b`. It supersedes [v0.1.4](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.4). It adds optional remote system audio: Host shared-mode loopback, Opus on `redclaw-audio-v1`, and Controller XAudio2 playback. The playback thread initializes COM, drains a lock-free frame cache immediately, and leaves the output open until remote sound is turned off or the session ends. The operator verified audible playback on a Debug Controller against the existing peer Host. That Host was not replaced, so the listen check does not prove the 20 ms capture pacing in this package. Connection passwords remain mandatory, so passwordless releases including v0.1.3 are rejected. The public tag and both uploaded assets were verified; the 336-file ZIP is 348,401,429 bytes and its SHA256 is `f163faa3f975b4f4e87d6f2a51c25b24d73c04d2f45f41d03e088fa0b29860bf`, matching the GitHub asset digest. Local extracted-package startup passed. v0.1.4 remains the 2026-09-22 package from `4032409`. Recording this identity does not move the v0.1.5 tag.
 
 The portable ZIP is the only binary distribution for this release. The service MSI remains an unsigned development scaffold and is excluded from the release.
 
@@ -230,7 +308,7 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-Current `main` includes X00-T25 remote system audio and the verified Controller playback corrections. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
+Current `main` includes X00-T25 audio, accepted X00-T27–T29 optimizations, the T30 expiry refresh and Windows/Linux minimal checks. T30/T31 historical causes remain unknown after their operator-approved temporary closure. The v0.1.6 publication checkpoint follows the release notes. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
 
 The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
 

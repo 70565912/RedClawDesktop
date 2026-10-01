@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-01 — Prepare v0.1.6 Developer Preview publication
+
+- Synchronize CMake/vcpkg version, bilingual README downloads, document navigation, release notes and current checkpoint to v0.1.6. Include accepted optimization records and portable minimal checks; T30/T31 retain explicit temporary closure with historical causes unknown. Clipboard-4 qualification is documented as incremental common-capability behavior. Keep the unrelated DPI backup locally and exclude generated backup files from Git.
+- Standard `build.ps1 -Configuration Release` succeeds; after the scrolling repair, `build.ps1 -Configuration Release -SkipConfigure` succeeds and publishes the final candidate. The package-only publisher verifies 336 files, required runtimes/notices, forbidden-state exclusion, SHA256 and extracted command startup (exit 0). Final EXE hash12 is `c299311c033d`; the publisher will repeat verification when packaging the clean release commit. The previous Release directory and complete raw build/test/hash evidence remain local under `release-v0.1.6-20261001`.
+- Thirty distinct automatic suites have final passing outcomes; original failures and the corrected test-launch invocation are retained. No full 125-suite, new WAN/GPU performance or five-minute acceptance is claimed. Publication does not replace a serving Host, change credentials or network settings, or create recurring work.
+
 ## 2026-10-01 — Release checkpoint repairs before v0.1.6
 
 - The Release build/publish succeeds. The first focused unattended sweep passes 24/27 suites; three first failures remain in local evidence. Two congestion fixtures predate the sustained usable-feedback/demand contract: update the fixture inputs and retain assertions for isolated-edge rejection, confirmed pressure, nonstacking drain and recovery. Production congestion policy is unchanged.

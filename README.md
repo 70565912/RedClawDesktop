@@ -4,10 +4,10 @@
 
 **面向开发者的 Windows P2P 远程桌面与远端 Agent 工作台**
 
-[English](README.en.md) · [下载 v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
+[English](README.en.md) · [下载 v0.1.6](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.6) · [构建文档](docs/README.md) · [问题反馈](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.5-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5)
+[![Release](https://img.shields.io/badge/release-v0.1.6-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.6)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.6)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,7 +16,7 @@
 
 RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，在同一个界面中查看真实桌面、发送经过授权的键鼠输入，并与开发机上的 AI coding Agent 交互。连接采用在线 DHT rendezvous 与 ICE/STUN/TURN 协商，优先建立端到端 P2P 直连。
 
-> `v0.1.5` 是 Windows x64 Developer Preview。它在 v0.1.4 之上增加可选的远程系统声音：Host 采集共享模式系统声音，Controller 用本机扬声器播放。连接仍要求密码，播放窗仍是独立顶层窗口。尚未提供签名安装器，也不宣称覆盖所有异地 NAT/TURN 组合。详见 [发行说明](docs/releases/v0.1.5.md)。
+> `v0.1.6` 是 Windows x64 Developer Preview。它在 v0.1.5 之上优化日志刷新、采集缓冲复用、GPU 编码输入和发送等待，修复低帧率尺寸变更后的编码预算，并增加有界逐帧诊断和 Linux 最小验证用例。连接密码、可选远程声音及独立播放窗口继续保留。尚未提供签名安装器，也不宣称覆盖所有异地 NAT/TURN 组合。详见 [发行说明](docs/releases/v0.1.6.md)。
 
 ![RedClawDesktop 连接首页：本机机器码、对方机器码和连接密码](docs/assets/redclaw-connection-homepage.png)
 
@@ -30,7 +30,7 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 当前能力
 
-| 能力 | v0.1.5 状态 |
+| 能力 | v0.1.6 状态 |
 | --- | --- |
 | 连接密码 | 必填；无密码的 v0.1.3 及更早版本会被拒绝 |
 | Windows Host / Controller 图形界面 | 可用 |
@@ -50,11 +50,11 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 ## 快速开始
 
-1. 从 [v0.1.5 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) 下载 `RedClawDesktop-windows-x64-v0.1.5.zip` 和 `SHA256SUMS.txt`。
+1. 从 [v0.1.6 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.6) 下载 `RedClawDesktop-windows-x64-v0.1.6.zip` 和 `SHA256SUMS.txt`。
 2. 校验 ZIP：
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.5.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.6.zip -Algorithm SHA256
    ```
 
 3. 解压到一个全新目录，运行 `redclaw_desktop.exe`。具备连接密码能力的 Host 和 Controller 通过共同能力互通；连接不要求相同版本或相同二进制。
@@ -110,7 +110,7 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 ## 项目状态
 
-`v0.1.5` 沿用真实桌面和 Control / Media / Agent 基线，要求连接密码，并增加可选远程系统声音。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。
+`v0.1.6` 沿用真实桌面、连接密码、远程声音及 Control / Media / Agent 基线，包含 X00-T27–T29 优化和 T30 过期计数刷新修复。T30/T31 历史停顿原因仍未知，按有界排查结果暂时结项；不宣称所有端到端延迟目标通过。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。
 
 下一阶段重点是扩大异地网络与 TURN 覆盖、完善无人值守安装和升级、补充代码签名，并继续降低 GUI 与 Agent 大输出下的调度开销。当前执行状态见 [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md)。
 

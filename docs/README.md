@@ -10,6 +10,7 @@
 - [CMake Tools 故障排查](setup/cmake-tools-api-failure-troubleshooting.md)
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
+- [v0.1.6 Release notes](releases/v0.1.6.md)
 - [v0.1.5 Release notes](releases/v0.1.5.md)
 - [v0.1.4 Release notes](releases/v0.1.4.md)
 - [v0.1.3 Release notes](releases/v0.1.3.md)
@@ -20,7 +21,7 @@
 发布 Windows x64 便携包使用 PowerShell 7：
 
 ```powershell
-.\scripts\release\publish-github-release.ps1 -Version 0.1.5 -PackageOnly
+.\scripts\release\publish-github-release.ps1 -Version 0.1.6 -PackageOnly
 ```
 
 脚本对最终 ZIP 自动执行哈希、提取文件与命令启动检查，结果保存在 `build/reports/`。去掉 `-PackageOnly` 后，脚本会先校验干净的公开 `main`，包检查成功后才创建注释标签并上传同一个已验证 ZIP 为 GitHub Pre-release。构建/CTest 自动集合遵循 [无人值守验收矩阵](testing/test-matrix.md)；需要人工的评估不作为发布条件。
@@ -53,6 +54,7 @@
 - [远端 Agent 联调](testing/remote-development-agent-integration-runbook.md)
 - [Debug Bridge 联调](testing/p2p-debug-bridge-integration-runbook.md)
 - [产品性能基线](testing/product-performance-baseline-v1.md)
+- [T29–T31 Linux 最小联测与有界排查](testing/video-link-linux-checks-20261001.md)
 - [GitHub Actions 验证范围](testing/github-actions-validation.md)
 - [特权输入与 DirectX 检查表](testing/e2e-privileged-directx-checklist.md)
 
@@ -65,6 +67,7 @@
 - [Agent 执行协议](runtime/AGENT_EXECUTION_PROTOCOL.md)
 - [模块规格](modules/module-specs.md)
 - [阶段日志](logs/DEVLOG.md)
+- [v0.1.6 发布说明](releases/v0.1.6.md)
 - [v0.1.5 发布说明](releases/v0.1.5.md)
 - [v0.1.4 发布说明](releases/v0.1.4.md)
 - [v0.1.3 发布说明](releases/v0.1.3.md)
