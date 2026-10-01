@@ -108,8 +108,8 @@ void RuntimeLogView::flush_pending() {
     GuiLatencyScope timing(GuiStage::kLogWidget);
     const bool follow = verticalScrollBar()->value() >= verticalScrollBar()->maximum();
     const int old_scroll = verticalScrollBar()->value();
-    QTextCursor anchor(firstVisibleBlock());
-    const auto anchor_top = blockBoundingGeometry(anchor.block()).translated(contentOffset()).top();
+    const auto anchor = firstVisibleBlock();
+    const int anchor_line = old_scroll - anchor.firstLineNumber();
     if (next_line_ < buffer_->first_line_ ||
         (next_line_ == buffer_->first_line_ && line_offset_ == 0)) {
         reset_display();
@@ -159,10 +159,11 @@ void RuntimeLogView::flush_pending() {
         - static_cast<std::uint64_t>(document()->blockCount());
     if (follow) verticalScrollBar()->setValue(verticalScrollBar()->maximum());
     else {
-        verticalScrollBar()->setValue(old_scroll);
-        const auto moved_top = blockBoundingGeometry(anchor.block()).translated(contentOffset()).top();
-        const auto line_height = std::max(1, fontMetrics().lineSpacing());
-        verticalScrollBar()->setValue(verticalScrollBar()->value() + qRound((moved_top - anchor_top) / line_height));
+        // The scrollbar uses document layout lines, whose height need not equal
+        // fontMetrics().lineSpacing(). Preserve the retained block and its
+        // wrapped-line offset directly instead of rounding a pixel estimate.
+        verticalScrollBar()->setValue(anchor.isValid()
+            ? anchor.firstLineNumber() + anchor_line : old_scroll);
     }
     ++refresh_count_;
     if (next_line_ < end) schedule_refresh();

@@ -241,6 +241,7 @@ TEST(RuntimeLogView, WrappedHistorySurvivesEviction) {
     class HistoryView : public redclaw::ui::RuntimeLogView {
     public:
         QString first_text() const { return firstVisibleBlock().text(); }
+        qreal first_top() const { return blockBoundingGeometry(firstVisibleBlock()).translated(contentOffset()).top(); }
     } view;
     view.resize(360, 100);
     for (int i = 0; i < 4096; ++i) view.appendPlainText(QString("record %1 ").arg(i) + QString(90, 'x'));
@@ -249,8 +250,10 @@ TEST(RuntimeLogView, WrappedHistorySurvivesEviction) {
     view.verticalScrollBar()->setValue(200);
     QApplication::processEvents();
     const auto original = view.first_text();
+    const auto original_top = view.first_top();
     for (int i = 0; i < 10; ++i) view.appendPlainText(QString("new %1 ").arg(i) + QString(90, 'y'));
     view.flush_pending();
     EXPECT_EQ(view.first_text(), original);
+    EXPECT_NEAR(view.first_top(), original_top, 1.0);
 }
 }
