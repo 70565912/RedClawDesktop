@@ -2,7 +2,7 @@
 
 Updated: 2026-10-10
 
-This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.6` Developer Preview. The v0.1.5 package remains the preceding audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
+This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.7` Developer Preview, with verified Release build, 182 focused cases and local/GitHub package smoke. The v0.1.6 package remains the preceding optimization release; v0.1.5 remains the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
 Status values: `done`, `in-progress`, `planned`.
 
