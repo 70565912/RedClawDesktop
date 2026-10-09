@@ -209,6 +209,96 @@ TEST(CaptureRecovery, FastRecoveryLatchesInputPauseAndRejectsInflightSubmission)
     EXPECT_TRUE(submitted);
 }
 
+TEST(CaptureRecovery, NavigationRejectsOldGenerationAndRetainsConsentUntilNewPresentation) {
+    CaptureStreamGate gate;
+    gate.update(CaptureAvailability::kRunning, 1);
+    gate.submitted_keyframe(1, 10);
+    gate.presented(10);
+    const auto pause_revision = gate.snapshot().input_pause_revision;
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    EXPECT_EQ(gate.snapshot().input_reset_revision, 1U);
+    EXPECT_TRUE(gate.snapshot().navigation_pending);
+    EXPECT_FALSE(gate.accepts(1));
+    EXPECT_FALSE(gate.submitted_keyframe(1, 11));
+    EXPECT_FALSE(gate.presented(11));
+    EXPECT_TRUE(gate.update(CaptureAvailability::kRunning, 2));
+    EXPECT_EQ(gate.snapshot().input_pause_revision, pause_revision);
+    EXPECT_TRUE(gate.accepts(2));
+    EXPECT_TRUE(gate.submitted_keyframe(2, 20));
+    EXPECT_FALSE(gate.presented(19));
+    EXPECT_TRUE(gate.snapshot().navigation_pending);
+    EXPECT_TRUE(gate.presented(20));
+    EXPECT_FALSE(gate.snapshot().navigation_pending);
+    EXPECT_TRUE(gate.snapshot().presented);
+}
+
+TEST(CaptureRecovery, NavigationCannotHideCaptureFailureOrSubsequentUnexpectedRecovery) {
+    CaptureStreamGate gate;
+    gate.update(CaptureAvailability::kRunning, 1);
+    const auto pause_revision = gate.snapshot().input_pause_revision;
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    gate.update(CaptureAvailability::kPaused, 2);
+    EXPECT_GT(gate.snapshot().input_pause_revision, pause_revision);
+    EXPECT_FALSE(gate.snapshot().navigation_pending);
+    EXPECT_FALSE(gate.accepts(2));
+    gate.update(CaptureAvailability::kRunning, 3);
+    gate.submitted_keyframe(3, 30);
+    gate.presented(30);
+    const auto recovered_revision = gate.snapshot().input_pause_revision;
+    gate.update(CaptureAvailability::kRunning, 4);
+    EXPECT_GT(gate.snapshot().input_pause_revision, recovered_revision);
+}
+
+TEST(CapturePlayback, NavigationRunningGenerationWaitDoesNotRequireNewControlRequest) {
+    redclaw::ui::CapturePlaybackState state;
+    redclaw::protocol::StreamControlMessageV1 message;
+    message.capture_status_version = 1;
+    message.capture_status = 1;
+    message.capture_generation = 1;
+    message.capture_first_frame_id = 10;
+    state.observe(message);
+    state.presented(10);
+    ASSERT_TRUE(state.request_control());
+    state.begin_navigation();
+    state.presented(11); // An old frame must not finish the navigation wait.
+    message.capture_generation = 2;
+    message.capture_first_frame_id = 0;
+    state.observe(message);
+    EXPECT_TRUE(state.waiting());
+    EXPECT_FALSE(state.rearm_required());
+    EXPECT_FALSE(state.retry_available());
+    state.begin_navigation(); // Repeated selection does not move the generation barrier.
+    state.presented(20); // Media can precede the first-frame control status.
+    EXPECT_TRUE(state.waiting());
+    message.capture_first_frame_id = 20;
+    state.observe(message);
+    EXPECT_FALSE(state.waiting());
+    EXPECT_TRUE(state.control_allowed());
+    message.capture_generation = 3;
+    message.capture_first_frame_id = 0;
+    state.observe(message);
+    EXPECT_TRUE(state.rearm_required()); // A later unrequested recovery remains terminal.
+}
+
+TEST(CapturePlayback, NavigationFailureStillRequiresExplicitRearm) {
+    redclaw::ui::CapturePlaybackState state;
+    state.begin_navigation();
+    redclaw::protocol::StreamControlMessageV1 message;
+    message.capture_status_version = 1;
+    message.capture_status = 3;
+    message.capture_generation = 2;
+    state.observe(message);
+    EXPECT_TRUE(state.waiting());
+    EXPECT_TRUE(state.rearm_required());
+    EXPECT_TRUE(state.retry_available());
+    message.capture_status = 1;
+    message.capture_first_frame_id = 20;
+    state.observe(message);
+    state.presented(20);
+    EXPECT_FALSE(state.control_allowed());
+    EXPECT_TRUE(state.request_control());
+}
+
 TEST(CapturePlayback, LegacyAndUnknownCapabilitiesKeepExistingBehavior) {
     redclaw::ui::CapturePlaybackState state;
     redclaw::protocol::StreamControlMessageV1 message;

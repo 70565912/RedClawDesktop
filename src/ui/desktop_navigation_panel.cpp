@@ -397,11 +397,6 @@ std::uint64_t DesktopNavigationPanel::pending_region_revision() const {
   return pending_region_revision_;
 }
 
-bool DesktopNavigationPanel::pending_request_changes_display() const {
-  return !confirmed_display_id_.isEmpty()
-      && selected_display_id() != confirmed_display_id_;
-}
-
 QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
   auto snapshot = selection_widget_->thumbnail_snapshot();
   snapshot.insert("version", 1);

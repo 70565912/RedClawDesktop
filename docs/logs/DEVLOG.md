@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-09 — Preserve control during desktop navigation (M05-T01)
+
+- Move capture-region acknowledgement/presentation tracking into the Controller input owner. Display and region requests retain the user's control intent while a separate capture-region suspension releases held input and waits for both Host confirmation and a displayed frame. Host geometry resets discard queued/held input without cancelling the current control grant or extending its lease. Disconnect, authorization loss and capture-unavailable transitions retain their terminal behavior; the v1 wire contract is unchanged.
+- Distinguish requested display restarts from failed capture generations in the capture gate and playback state. Reject old frames; while awaiting new presentation, retain only empty state syncs and Stop, and block clipboard injection. A capture-worker revision signals the reset to the runtime-loop input owner. Actual failure still latches a terminal pause and requires explicit re-arm.
+- Final Debug main build through `build.ps1 -SkipConfigure -NoPublish -Target redclaw_desktop` passes. The rebuilt input-session, Controller UI and capture-recovery CTest suites pass all 179 cases (three suites, zero failures/skips). Cover held/queued input cleanup, acknowledgement/frame ordering, repeated navigation, independent focus/resize suspension, retained Stop and empty lease syncs, and failure/expired-consent rejection. Publish the complete 345-file bundle separately. Local evidence: `navigation-control-20261009`; physical multi-display switching is not requalified.
+
 ## 2026-10-09 — Correct right Shift remote input (M05-T01)
 
 - Share scan-code extended-flag normalization between Controller capture and Host input sessions: Shift scan codes `0x2A`/`0x36` never carry the E0 flag used by scan-code injection. Preserve genuine extended keys such as right Ctrl/Alt. Normalize before pressed-key tracking and state reconciliation, including batches and snapshots from existing Controllers; the v1 wire schema and authorization gates remain unchanged.

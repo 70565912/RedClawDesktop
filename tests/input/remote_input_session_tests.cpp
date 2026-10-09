@@ -232,6 +232,65 @@ TEST(RemoteInputSessionTests, ReleaseAllPreservesActiveControlIntent) {
     EXPECT_EQ(session.pause_reason(), redclaw::input::RemoteInputPauseReason::kNone);
 }
 
+TEST(RemoteInputSessionTests, GeometryResetReleasesHeldInputDiscardsQueueAndRetainsGrant) {
+    using namespace redclaw::input;
+    InputPolicyGate gate;
+    InMemoryInputInjectorBackend backend;
+    RemoteInputSession session(gate, backend);
+    session.set_authorized(true);
+    ASSERT_TRUE(session.request_active(1000));
+    InputEvent button;
+    button.type = InputEventType::kMouseButtonDown;
+    button.mouse_button = MouseButton::kLeft;
+    ASSERT_TRUE(session.enqueue_batch(1, {key_event(InputEventType::kKeyDown, 0x36), button}, 1100));
+    ASSERT_TRUE(session.drain(1100));
+    ASSERT_TRUE(session.enqueue_batch(2, {key_event(InputEventType::kKeyDown, 0x1E)}, 1200));
+    const auto eligibility_before = session.eligibility_revision();
+    session.reset_for_geometry_change();
+    EXPECT_GT(session.eligibility_revision(), eligibility_before);
+    EXPECT_EQ(session.queued_event_count(), 0U);
+    EXPECT_EQ(session.state(), RemoteInputSessionState::kActive);
+    EXPECT_EQ(session.pause_reason(), RemoteInputPauseReason::kNone);
+    ASSERT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_EQ(backend.injected_events()[2].type, InputEventType::kKeyUp);
+    EXPECT_EQ(backend.injected_events()[3].type, InputEventType::kMouseButtonUp);
+    ASSERT_TRUE(session.drain(1250));
+    EXPECT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_FALSE(session.enqueue_batch(2, {key_event(InputEventType::kKeyDown, 0x1E)}, 1300));
+    ASSERT_TRUE(session.synchronize_state(3, {}, 0, 1400));
+    ASSERT_TRUE(session.enqueue_batch(4, {key_event(InputEventType::kKeyDown, 0x30)}, 1500));
+    ASSERT_TRUE(session.drain(1500));
+    EXPECT_EQ(backend.injected_events().back().scan_code, 0x30);
+}
+
+TEST(RemoteInputSessionTests, GeometryResetDoesNotExtendLeaseOrReviveStoppedControl) {
+    using namespace redclaw::input;
+    InputPolicyGate gate;
+    InMemoryInputInjectorBackend backend;
+    RemoteInputSession session(gate, backend);
+    session.set_authorized(true);
+    session.reset_for_geometry_change();
+    EXPECT_EQ(session.state(), RemoteInputSessionState::kAvailable);
+    ASSERT_TRUE(session.request_active(1000));
+    session.reset_for_geometry_change();
+    EXPECT_TRUE(session.expire_lease(4000));
+    for (const auto reason : {RemoteInputPauseReason::kLocalPause,
+                             RemoteInputPauseReason::kDisconnected,
+                             RemoteInputPauseReason::kNoVideo,
+                             RemoteInputPauseReason::kLeaseExpired}) {
+        session.pause(reason);
+        session.reset_for_geometry_change();
+        EXPECT_EQ(session.state(), RemoteInputSessionState::kPaused);
+        EXPECT_EQ(session.pause_reason(), reason);
+        EXPECT_FALSE(session.enqueue_batch(1, {key_event(InputEventType::kKeyDown, 0x1E)}, 4100));
+    }
+    session.set_authorized(false);
+    session.reset_for_geometry_change();
+    EXPECT_EQ(session.state(), RemoteInputSessionState::kDenied);
+    EXPECT_FALSE(session.request_active(4200));
+    EXPECT_TRUE(backend.injected_events().empty());
+}
+
 TEST(RemoteInputSessionTests, StateSyncNeverInventsPressedKeys) {
     redclaw::input::InputPolicyGate gate;
     redclaw::input::InMemoryInputInjectorBackend backend;

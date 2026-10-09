@@ -33,6 +33,7 @@ enum class LocalInputSuspensionReason : std::uint32_t {
     kGeometryTransaction = 1U << 2U,
     kLocalUiFocus = 1U << 3U,
     kWorkspaceTransfer = 1U << 4U,
+    kCaptureRegionChange = 1U << 5U,
 };
 
 class ControllerRemoteInputCapture final : public QObject, public QAbstractNativeEventFilter {
@@ -58,6 +59,10 @@ public:
     void set_qa_observers(QaSendObserver send, QaAckObserver ack);
     void set_remote_frame_size(QSize size);
     void set_desktop_geometry_revision(std::uint64_t revision);
+    void begin_capture_region_change(std::uint64_t revision);
+    void confirm_capture_region_change(std::uint64_t revision);
+    void reject_capture_region_change(std::uint64_t revision);
+    void present_capture_region(std::uint64_t revision);
     bool acknowledge_input_sequence(std::uint64_t sequence, std::uint64_t consumed_us, std::uint64_t runtime_received_us);
     [[nodiscard]] bool activate(QString* error = nullptr);
     void pause(bool notify_peer, const QString& reason);
@@ -81,6 +86,7 @@ public:
     [[nodiscard]] QString local_suspension_reason() const;
     [[nodiscard]] QSize remote_frame_size() const;
     [[nodiscard]] std::uint64_t desktop_geometry_revision() const;
+    [[nodiscard]] std::uint64_t pending_capture_region_revision() const { return pending_capture_region_revision_; }
     [[nodiscard]] QRect content_rect() const;
     [[nodiscard]] bool map_content_position(
         const QPointF& position,
@@ -123,6 +129,7 @@ private:
     void send_state_sync();
     void send_release_all();
     void clear_local_input_state();
+    void complete_capture_region_change();
     [[nodiscard]] bool send_message(redclaw::protocol::StreamControlMessageV1 message);
     [[nodiscard]] bool normalized_position(
         const QPointF& position,
@@ -150,6 +157,9 @@ private:
     QaAckObserver qa_ack_observer_;
     QSize remote_frame_size_;
     std::uint64_t desktop_geometry_revision_ = 0;
+    std::uint64_t pending_capture_region_revision_ = 0;
+    std::uint64_t applied_capture_region_revision_ = 0;
+    std::uint64_t presented_capture_region_revision_ = 0;
     bool active_ = false;
     bool pausing_ = false;
     bool canvas_keyboard_target_ = false;

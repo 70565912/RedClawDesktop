@@ -44,6 +44,7 @@
 #include "ui/playback_window_lifecycle.h"
 #include "ui/remote_input_capture.h"
 #include "ui/stun_server_policy.h"
+#include "runtime/input_control_boundary.h"
 
 namespace redclaw::ui {
 // Exercise queue scheduling without installing hooks or touching the desktop.
@@ -69,6 +70,126 @@ public:
 }  // namespace redclaw::ui
 
 namespace {
+
+TEST(ControllerRemoteInputCapture, NavigationWaitsForConfirmationAndPresentationInEitherOrder) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  using Type = redclaw::protocol::StreamControlMessageTypeV1;
+  for (const bool frame_first : {false, true}) {
+    SCOPED_TRACE(frame_first);
+    redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+    std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+    capture.set_send_message_callback([&](const auto& message, QString*) {
+      sent.push_back(message); return true;
+    });
+    Peer::start(capture);
+    Peer::key(capture, true, 0x36, 0xA1, false);
+    Peer::flush(capture);
+    capture.begin_capture_region_change(2);
+    EXPECT_TRUE(capture.control_enabled());
+    EXPECT_FALSE(capture.input_forwarding());
+    ASSERT_EQ(sent.size(), 2U);
+    EXPECT_EQ(sent.back().type, Type::kInputStateSync);
+    EXPECT_TRUE(sent.back().pressed_scan_codes.empty());
+    EXPECT_EQ(sent.back().desktop_geometry_revision, 1U);
+    EXPECT_EQ(capture.queued_critical_event_count(), 0U);
+    capture.present_capture_region(1); // The frozen old frame cannot resume input.
+    if (frame_first) capture.present_capture_region(2);
+    else capture.confirm_capture_region_change(2);
+    EXPECT_FALSE(capture.input_forwarding());
+    if (frame_first) capture.confirm_capture_region_change(2);
+    else capture.present_capture_region(2);
+    EXPECT_TRUE(capture.control_enabled());
+    EXPECT_TRUE(capture.input_forwarding());
+    EXPECT_EQ(capture.desktop_geometry_revision(), 2U);
+    Peer::synchronize(capture);
+    EXPECT_EQ(sent.back().desktop_geometry_revision, 2U);
+    EXPECT_TRUE(sent.back().pressed_scan_codes.empty());
+    EXPECT_EQ(std::count_if(sent.begin(), sent.end(), [](const auto& message) {
+      return message.type == Type::kInputReleaseAll;
+    }), 0);
+    capture.pause(false, "navigation fixture complete");
+  }
+}
+
+TEST(ControllerRemoteInputCapture, RapidNavigationRetainsIndependentWindowAndFocusSuspensions) {
+  using Reason = redclaw::ui::LocalInputSuspensionReason;
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  capture.set_send_message_callback([](const auto&, QString*) { return true; });
+  redclaw::ui::ControllerRemoteInputCaptureTestPeer::start(capture);
+  capture.begin_capture_region_change(2);
+  capture.begin_capture_region_change(3);
+  capture.confirm_capture_region_change(2);
+  capture.present_capture_region(2);
+  capture.reject_capture_region_change(2);
+  EXPECT_TRUE(capture.control_enabled());
+  EXPECT_FALSE(capture.input_forwarding());
+  capture.set_local_suspension(Reason::kGeometryTransaction, true);
+  capture.set_local_suspension(Reason::kLocalUiFocus, true);
+  capture.set_local_suspension(Reason::kGeometryTransaction, false);
+  EXPECT_TRUE(capture.local_suspension_reason().contains("capture_region_change"));
+  capture.confirm_capture_region_change(3);
+  capture.present_capture_region(3);
+  EXPECT_EQ(capture.local_suspension_reason(), "local_ui_focus");
+  EXPECT_FALSE(capture.input_forwarding());
+  capture.set_local_suspension(Reason::kLocalUiFocus, false);
+  EXPECT_TRUE(capture.input_forwarding());
+  capture.pause(false, "navigation fixture complete");
+}
+
+TEST(ControllerRemoteInputCapture, NavigationRejectAndLateCompletionPreserveOriginalControlState) {
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  capture.set_send_message_callback([](const auto&, QString*) { return true; });
+  capture.begin_capture_region_change(2);
+  capture.confirm_capture_region_change(2);
+  capture.present_capture_region(2);
+  EXPECT_FALSE(capture.control_enabled()); // View-only stays view-only.
+  redclaw::ui::ControllerRemoteInputCaptureTestPeer::start(capture);
+  capture.begin_capture_region_change(3);
+  capture.reject_capture_region_change(3);
+  EXPECT_TRUE(capture.control_enabled());
+  EXPECT_TRUE(capture.input_forwarding());
+  capture.begin_capture_region_change(4);
+  capture.pause(true, "explicit stop during navigation");
+  capture.present_capture_region(4);
+  capture.confirm_capture_region_change(4);
+  EXPECT_FALSE(capture.control_enabled());
+  EXPECT_FALSE(capture.input_forwarding());
+}
+
+TEST(RemoteInputControlBoundary, NavigationKeepsStopAndDiscardsObsoleteInput) {
+  using Type = redclaw::protocol::StreamControlMessageTypeV1;
+  std::deque<redclaw::protocol::StreamControlMessageV1> messages;
+  for (const auto type : {Type::kInputBatch, Type::kInputReleaseAll,
+                         Type::kInputStateSync, Type::kInputControlRequest,
+                         Type::kInputControlRequest}) {
+    auto& message = messages.emplace_back();
+    message.type = type;
+    message.input_requested_active = messages.size() == 5;
+  }
+  redclaw::runtime::discard_obsolete_remote_input(messages);
+  ASSERT_EQ(messages.size(), 2U);
+  EXPECT_EQ(messages[0].type, Type::kInputReleaseAll);
+  EXPECT_EQ(messages[1].type, Type::kInputControlRequest);
+  EXPECT_FALSE(messages[1].input_requested_active);
+}
+
+TEST(RemoteInputControlBoundary, NavigationWaitKeepsOnlyEmptyLeaseSyncAndStops) {
+  using Type = redclaw::protocol::StreamControlMessageTypeV1;
+  std::deque<redclaw::protocol::StreamControlMessageV1> messages(5);
+  messages[0].type = Type::kInputBatch;
+  messages[1].type = Type::kInputStateSync;
+  messages[2].type = Type::kInputStateSync;
+  messages[2].pressed_scan_codes = {0x36};
+  messages[3].type = Type::kInputStateSync;
+  messages[3].pressed_mouse_buttons = 1;
+  messages[4].type = Type::kInputReleaseAll;
+  redclaw::runtime::discard_obsolete_remote_input(messages, true);
+  ASSERT_EQ(messages.size(), 2U);
+  EXPECT_EQ(messages[0].type, Type::kInputStateSync);
+  EXPECT_TRUE(messages[0].pressed_scan_codes.empty());
+  EXPECT_EQ(messages[0].pressed_mouse_buttons, 0U);
+  EXPECT_EQ(messages[1].type, Type::kInputReleaseAll);
+}
 
 TEST(ControllerRemoteInputOrdering, ShiftFlagsStayConsistentAcrossBatchesRepeatsAndSnapshots) {
   using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
@@ -1100,8 +1221,14 @@ TEST(ControllerRemoteInputCapture, NewControlGrantRetainsAnExistingTransferPause
   capture.set_remote_frame_size({640, 480}); capture.set_desktop_geometry_revision(1);
   capture.set_send_message_callback([](const auto&, QString*) { return true; });
   capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, true);
+  capture.begin_capture_region_change(2);
   QString error; ASSERT_TRUE(capture.activate(&error)) << error.toStdString();
   EXPECT_TRUE(capture.control_enabled()); EXPECT_FALSE(capture.input_forwarding());
+  EXPECT_TRUE(capture.local_suspension_reason().contains("workspace_transfer_busy"));
+  EXPECT_TRUE(capture.local_suspension_reason().contains("capture_region_change"));
+  capture.confirm_capture_region_change(2);
+  capture.present_capture_region(2);
+  EXPECT_FALSE(capture.local_suspension_reason().contains("capture_region_change"));
   EXPECT_TRUE(capture.local_suspension_reason().contains("workspace_transfer_busy"));
   capture.pause(false, "transfer grant fixture complete");
 }
