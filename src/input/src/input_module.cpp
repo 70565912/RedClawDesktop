@@ -653,6 +653,9 @@ bool RemoteInputSession::enqueue_batch(
     last_received_sequence_ = sequence;
     ++stats_.received_batches;
     for (auto& event : events) {
+        if (event.type == InputEventType::kKeyDown || event.type == InputEventType::kKeyUp) {
+            event.extended = normalize_key_extended_flag(event.scan_code, event.extended);
+        }
         queue_.push_back({std::move(event), sequence});
     }
     stats_.queue_peak = (std::max)(stats_.queue_peak, queue_.size());
@@ -695,7 +698,8 @@ bool RemoteInputSession::synchronize_state(
         const std::uint16_t scan_code = encoded & 0x7FFFU;
         if (scan_code != 0) {
             remote_keys.insert(static_cast<std::uint32_t>(scan_code)
-                | ((encoded & 0x8000U) != 0 ? 0x10000U : 0U));
+                | (normalize_key_extended_flag(scan_code, (encoded & 0x8000U) != 0)
+                    ? 0x10000U : 0U));
         }
     }
     std::vector<InputEvent> releases;

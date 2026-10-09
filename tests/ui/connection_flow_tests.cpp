@@ -61,10 +61,50 @@ public:
   }
   static void flush(ControllerRemoteInputCapture& capture) { capture.flush_batch(); }
   static void synchronize(ControllerRemoteInputCapture& capture) { capture.send_state_sync(); }
+  static void key(ControllerRemoteInputCapture& capture, bool down,
+                  std::uint16_t scan, std::uint16_t vk, bool extended) {
+    capture.enqueue_keyboard_event(down, scan, vk, extended);
+  }
 };
 }  // namespace redclaw::ui
 
 namespace {
+
+TEST(ControllerRemoteInputOrdering, ShiftFlagsStayConsistentAcrossBatchesRepeatsAndSnapshots) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  using MessageType = redclaw::protocol::StreamControlMessageTypeV1;
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+  capture.set_send_message_callback([&](const auto& message, QString*) {
+    sent.push_back(message); return true;
+  });
+  Peer::start(capture);
+  Peer::key(capture, true, 0x2A, 0xA0, false);
+  Peer::key(capture, true, 0x36, 0xA1, true);
+  Peer::key(capture, true, 0x1D, 0xA3, true);
+  Peer::synchronize(capture);
+  ASSERT_EQ(sent.size(), 2U);
+  ASSERT_EQ(sent[0].type, MessageType::kInputBatch);
+  ASSERT_EQ(sent[0].input_events.size(), 3U);
+  EXPECT_FALSE(sent[0].input_events[0].extended);
+  EXPECT_FALSE(sent[0].input_events[1].extended);
+  EXPECT_TRUE(sent[0].input_events[2].extended);
+  EXPECT_EQ(sent[1].pressed_scan_codes, (std::vector<std::uint16_t>{0x2A, 0x36, 0x801D}));
+  Peer::key(capture, true, 0x36, 0xA1, false);
+  Peer::key(capture, false, 0x2A, 0xA0, true);
+  Peer::synchronize(capture);
+  ASSERT_EQ(sent.size(), 4U);
+  ASSERT_EQ(sent[2].input_events.size(), 2U);
+  EXPECT_TRUE(sent[2].input_events[0].repeat);
+  EXPECT_FALSE(sent[2].input_events[0].extended);
+  EXPECT_FALSE(sent[2].input_events[1].extended);
+  EXPECT_EQ(sent[3].pressed_scan_codes, (std::vector<std::uint16_t>{0x36, 0x801D}));
+  Peer::key(capture, false, 0x36, 0xA1, true);
+  Peer::key(capture, false, 0x1D, 0xA3, true);
+  Peer::synchronize(capture);
+  ASSERT_EQ(sent.size(), 6U);
+  EXPECT_TRUE(sent[5].pressed_scan_codes.empty());
+}
 
 TEST(ControllerRemoteInputOrdering, ReleasedModifierSnapshotCannotOvertakeQueuedChord) {
   using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;

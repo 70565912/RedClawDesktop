@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-10-09 — Correct right Shift remote input (M05-T01)
+
+- Share scan-code extended-flag normalization between Controller capture and Host input sessions: Shift scan codes `0x2A`/`0x36` never carry the E0 flag used by scan-code injection. Preserve genuine extended keys such as right Ctrl/Alt. Normalize before pressed-key tracking and state reconciliation, including batches and snapshots from existing Controllers; the v1 wire schema and authorization gates remain unchanged.
+- Debug main build through `build.ps1 -NoPublish` and the focused input-session/UI CTest suites pass (2/2 suites, zero failures/skips). Deterministic regressions cover batches, repeats, mixed extended flags, held-state reconciliation and cleanup; read-only Windows scan-code mapping identifies both Shifts and right Ctrl/Alt correctly. Initial compilation selected VS2026 STL with the configured VS2022 compiler; importing the matching VS2022 environment fixes the build without persistent toolchain changes. Physical keyboard/application consumption is not requalified. Candidate publication and the authorized local controlled Host replacement are tracked by local receipt `right-shift-20261009`.
+
 ## 2026-10-01 — Publish and verify v0.1.6
 
 - Commit `24bad14` and annotated tag `v0.1.6` are pushed to public origin; GitHub Pre-release contains the Windows x64 ZIP and SHA256SUMS.txt. Final ZIP: 336 files, 355,871,643 bytes, hash12 `7415034eb54a`; EXE hash12 `c299311c033d`. Both uploaded asset sizes/full server SHA256 digests match local files. The downloaded checksum text matches byte-for-byte; remote peeled tag and embedded source/EXE manifest match the release commit and binary.

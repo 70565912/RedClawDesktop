@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-10-01
+Updated: 2026-10-09
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.6` Developer Preview. The v0.1.5 package remains the preceding audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -34,9 +34,9 @@ Updated: 2026-09-21
 
 ## M05 Input
 
-Updated: 2026-09-22
+Updated: 2026-10-09
 
-- `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done.
+- `M05-T01` Authorized ordinary-desktop keyboard and mouse input — done. Right Shift E0-flag normalization now covers Controller batches/repeats/snapshots and Host reconciliation of existing Controllers. Debug main build and the two focused input/UI suites pass; physical keyboard/application consumption has not been requalified. See the [development log](../logs/DEVLOG.md).
 - `M05-T02` Wider DPI/rotation/multi-display validation — in-progress. Host injection now uses per-monitor DPI awareness v2 for each `SendInput` batch so absolute positions match physical capture pixels; the wire protocol is unchanged and a Host update is sufficient. Rotation and multi-display field tracking are not requalified, and the peer Host was not replaced with this binary. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md).
 - `M05-T04` Remote chord ordering and remote clipboard shortcuts — done (local candidate); pending input precedes state snapshots, and remote copy/cut keeps subsequent paste remote until the local clipboard changes. Seventeen focused input/UI/navigation cases, Debug build/publication and startup passed. Running Controller preserved; physical keyboard/application consumption has not been requalified.
 - `M05-T03` Opt-in input-stage and native target delivery diagnostics — in-progress; Debug DHT build and seven focused suites passed. A physical temporary target visibly consumed a GUI click and QA-protocol digit; the peer aligned six received/sent batches, twelve injected events, zero rejected and an empty queue. The visible target response qualifies application consumption; separate peer readback is not required again. Physical-keyboard Hook capture is an optional developer evaluation; software-injected keys remain filtered and no manual follow-up is required. The target later disappeared and input was paused. Preserve these distinct transport, API and application evidence levels; the historical incident remains unresolved.

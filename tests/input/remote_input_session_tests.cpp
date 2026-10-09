@@ -2,6 +2,14 @@
 
 #include "redclaw/input/input_module.h"
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 namespace {
 
 redclaw::input::InputEvent key_event(
@@ -95,6 +103,58 @@ TEST(RemoteInputSessionTests, DeniedSessionNeverInvokesBackend) {
     EXPECT_FALSE(session.request_active(1000, &error));
     EXPECT_TRUE(backend.injected_events().empty());
     EXPECT_EQ(session.state(), redclaw::input::RemoteInputSessionState::kDenied);
+}
+
+TEST(RemoteInputSessionTests, ExistingControllerShiftFlagsDoNotReleaseHeldChords) {
+    using Type = redclaw::input::InputEventType;
+    redclaw::input::InputPolicyGate gate;
+    redclaw::input::InMemoryInputInjectorBackend backend;
+    redclaw::input::RemoteInputSession session(gate, backend);
+    session.set_authorized(true);
+    ASSERT_TRUE(session.request_active(1000));
+    auto left = key_event(Type::kKeyDown, 0x2A);
+    auto right = key_event(Type::kKeyDown, 0x36);
+    right.extended = true;
+    auto control = key_event(Type::kKeyDown, 0x1D);
+    control.extended = true;
+    auto alt = key_event(Type::kKeyDown, 0x38);
+    alt.extended = true;
+    ASSERT_TRUE(session.enqueue_batch(1, {left, right, control, alt}, 1100));
+    ASSERT_TRUE(session.synchronize_state(2, {0x2A, 0x8036, 0x801D, 0x8038}, 0, 1200));
+    ASSERT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_FALSE(backend.injected_events()[0].extended);
+    EXPECT_FALSE(backend.injected_events()[1].extended);
+    EXPECT_TRUE(backend.injected_events()[2].extended);
+    EXPECT_TRUE(backend.injected_events()[3].extended);
+#if defined(_WIN32)
+    const std::vector<UINT> expected_keys{VK_LSHIFT, VK_RSHIFT, VK_RCONTROL, VK_RMENU};
+    for (std::size_t i = 0; i < expected_keys.size(); ++i) {
+        const auto& event = backend.injected_events()[i];
+        const UINT scan = event.scan_code | (event.extended ? 0xE000U : 0U);
+        EXPECT_EQ(MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX), expected_keys[i]);
+    }
+#endif
+    // A newer snapshot may clear the flag while an older KeyUp still sets it.
+    ASSERT_TRUE(session.synchronize_state(3, {0x2A, 0x36, 0x801D, 0x8038}, 0, 1300));
+    EXPECT_EQ(backend.injected_events().size(), 4U);
+    auto repeat = right;
+    repeat.repeat = true;
+    ASSERT_TRUE(session.enqueue_batch(4, {repeat, key_event(Type::kKeyDown, 0x1E),
+                                          key_event(Type::kKeyUp, 0x1E)}, 1400));
+    ASSERT_TRUE(session.drain(1400));
+    ASSERT_EQ(backend.injected_events().size(), 7U);
+    EXPECT_FALSE(backend.injected_events()[4].extended);
+    right.type = Type::kKeyUp;
+    ASSERT_TRUE(session.enqueue_batch(5, {right}, 1500));
+    ASSERT_TRUE(session.drain(1500));
+    ASSERT_EQ(backend.injected_events().size(), 8U);
+    EXPECT_FALSE(backend.injected_events().back().extended);
+    session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause);
+    ASSERT_EQ(backend.injected_events().size(), 11U);
+    EXPECT_EQ(backend.injected_events()[8].scan_code, 0x2A);
+    EXPECT_FALSE(backend.injected_events()[8].extended);
+    EXPECT_TRUE(backend.injected_events()[9].extended);
+    EXPECT_TRUE(backend.injected_events()[10].extended);
 }
 
 TEST(RemoteInputSessionTests, AppliesBatchSuppressesDuplicateDownAndReleases) {

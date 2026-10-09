@@ -963,13 +963,21 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
         && has_any({VK_MENU, VK_LMENU, VK_RMENU})) {
         return 1;
     }
-    const bool extended = (keyboard->flags & LLKHF_EXTENDED) != 0;
-    const std::uint32_t identity = keyboard->scanCode | (extended ? 0x10000U : 0U);
+    enqueue_keyboard_event(key_down, static_cast<std::uint16_t>(keyboard->scanCode),
+                           virtual_key, (keyboard->flags & LLKHF_EXTENDED) != 0);
+    return 1;
+}
+#endif
+
+void ControllerRemoteInputCapture::enqueue_keyboard_event(
+    bool key_down, std::uint16_t scan_code, std::uint16_t virtual_key, bool extended) {
+    extended = redclaw::input::normalize_key_extended_flag(scan_code, extended);
+    const std::uint32_t identity = scan_code | (extended ? 0x10000U : 0U);
     redclaw::protocol::RemoteInputEventV1 event;
     event.type = key_down
         ? redclaw::protocol::RemoteInputEventTypeV1::kKeyDown
         : redclaw::protocol::RemoteInputEventTypeV1::kKeyUp;
-    event.scan_code = static_cast<std::uint16_t>(keyboard->scanCode);
+    event.scan_code = scan_code;
     event.virtual_key = virtual_key;
     event.extended = extended;
     event.repeat = key_down && pressed_keys_.contains(identity);
@@ -979,8 +987,6 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
         pressed_keys_.erase(identity);
     }
     enqueue_critical(std::move(event));
-    return 1;
 }
-#endif
 
 }  // namespace redclaw::ui
