@@ -132,10 +132,11 @@ if (-not [string]::IsNullOrWhiteSpace($NetworkBindAddress)) {
         throw 'NetworkBindAddress must be an IPv4 address assigned to the selected local network exit.'
     }
 }
-if ([string]::IsNullOrWhiteSpace($RuntimeExe)) {
+$usePublishedRuntime = [string]::IsNullOrWhiteSpace($RuntimeExe)
+if ($usePublishedRuntime) {
     $RuntimeExe = Join-Path $repoRoot ("release\{0}\redclaw_desktop.exe" -f $Configuration)
 }
-$runtimePath = (Resolve-Path -LiteralPath $RuntimeExe).Path
+$runtimePath = [System.IO.Path]::GetFullPath($RuntimeExe)
 if ([string]::IsNullOrWhiteSpace($CoordinationJournalPath)) {
     $CoordinationJournalPath = Join-Path $env:LOCALAPPDATA 'RedClawDesktop\coordination\coordination-v1.jsonl'
 }
@@ -176,6 +177,11 @@ if ($DryRun) {
     exit 0
 }
 
+$existing = Get-Process -Name 'redclaw_desktop' -ErrorAction SilentlyContinue
+if (@($existing).Count -gt 0) {
+    throw ('A RedClawDesktop process is already running. Refusing to start a second supervisor. PIDs: ' + (($existing.Id) -join ','))
+}
+
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($IceServerFile)) {
@@ -184,16 +190,14 @@ if (-not [string]::IsNullOrWhiteSpace($IceServerFile)) {
 
 if (-not $SkipPrep) {
     & (Join-Path $PSScriptRoot 'prepare-dht-remote-validation.ps1') `
-        -Role both -Configuration $Configuration -SessionCode $SessionCode | Out-Host
+        -Role both -Configuration $Configuration -SessionCode $SessionCode `
+        -BuildIfStale:($usePublishedRuntime -and $Configuration -eq 'Debug') | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "prepare-dht-remote-validation.ps1 failed with exit code $LASTEXITCODE"
     }
 }
 
-$existing = Get-Process -Name 'redclaw_desktop' -ErrorAction SilentlyContinue
-if (@($existing).Count -gt 0) {
-    throw ('A RedClawDesktop process is already running. Refusing to start a second supervisor. PIDs: ' + (($existing.Id) -join ','))
-}
+$runtimePath = (Resolve-Path -LiteralPath $RuntimeExe).Path
 
 $gitSha = (& git rev-parse HEAD).Trim()
 $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()

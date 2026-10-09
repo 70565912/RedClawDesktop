@@ -36,6 +36,8 @@ param(
 
     [switch]$NoExistingReportRegression,
 
+    [switch]$BuildIfStale,
+
     [switch]$Json
 )
 
@@ -99,16 +101,21 @@ function Get-RuntimeFreshnessCheck {
 
     $runtimeItem = Get-Item -Path $RuntimeExe
     $sourceFiles = @(
-        "src/main.cpp",
-        "src/service/src/dht_rendezvous.cpp",
-        "src/service/src/dht_rendezvous_libtorrent.cpp",
-        "src/service/include/redclaw/service/dht_rendezvous.h",
-        "src/helper/src/runtime_profile.cpp",
-        "src/helper/include/redclaw/helper/runtime_profile.h",
         "CMakeLists.txt",
-        "src/service/CMakeLists.txt",
-        "vcpkg.json"
+        "CMakePresets.json",
+        "CMakeUserPresets.json",
+        "vcpkg.json",
+        "vcpkg-configuration.json"
     )
+    $sourceRoot = Join-Path $RepoRoot 'src'
+    if (Test-Path -LiteralPath $sourceRoot) {
+        $sourceFiles += Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
+            Where-Object {
+                $_.Extension -in @('.cpp', '.cc', '.c', '.h', '.hpp', '.cmake', '.in', '.proto', '.html', '.css', '.js') -or
+                $_.Name -eq 'CMakeLists.txt'
+            } |
+            ForEach-Object { $_.FullName.Substring($RepoRoot.Length + 1) }
+    }
 
     $existingSources = @()
     foreach ($relativePath in $sourceFiles) {
@@ -234,6 +241,27 @@ $checks += New-CheckResult -Name "bootstrap_preflight_script" -Passed (Test-Path
 $checks += New-CheckResult -Name "published_runtime" -Passed (Test-Path $runtimeExe) -Detail $runtimeExe
 $checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot
 $checks += New-CheckResult -Name "session_code_shape" -Passed (Test-SessionCodeShape -Code $SessionCode) -Detail (Get-RedactedSessionCode -Code $SessionCode)
+
+$failedChecks = @($checks | Where-Object { -not $_.passed })
+$runtimeFailures = @($failedChecks | Where-Object {
+    $_.name -eq 'published_runtime' -or
+    ($_.name -eq 'published_runtime_fresh' -and
+        ($_.detail -eq 'runtime_missing' -or $_.detail.StartsWith('newer_source_than_runtime:')))
+})
+if ($BuildIfStale -and $runtimeFailures.Count -gt 0 -and $runtimeFailures.Count -eq $failedChecks.Count) {
+    if (@(Get-Process -Name 'redclaw_desktop' -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw 'A RedClawDesktop process is running. Close it before rebuilding and publishing the runtime.'
+    }
+    Write-Host '[dht-prep] Published runtime is missing or older than source. Building and publishing before startup...'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'build.ps1') `
+        -Configuration $Configuration -Target redclaw_desktop | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "build.ps1 failed with exit code $LASTEXITCODE. Runtime startup cancelled."
+    }
+    $checks = @($checks | Where-Object { $_.name -notin @('published_runtime', 'published_runtime_fresh') })
+    $checks += New-CheckResult -Name "published_runtime" -Passed (Test-Path $runtimeExe) -Detail $runtimeExe
+    $checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot
+}
 
 $roles = if ($Role -eq "both") { @("host", "controller") } else { @($Role) }
 $commands = @()

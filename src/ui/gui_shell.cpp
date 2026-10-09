@@ -4498,6 +4498,8 @@ bool launch_gui_shell(
       remote_input_capture->set_remote_frame_size(remote_frame_size);
       remote_input_capture->present_capture_region(
           direct_frame.capture_region_revision);
+      desktop_navigation_panel->observe_capture_region_revision(
+          direct_frame.capture_region_revision);
       // Only update the status label and banner when something meaningful
       // changes (resolution, backend).  Updating every frame causes Qt to
       // re-layout playback_window_status, which can deliver a resizeEvent to
@@ -5090,6 +5092,8 @@ bool launch_gui_shell(
             remote_input_state = control.input_state;
             remote_input_reason = control.input_reason;
             remote_input_capture->set_desktop_geometry_revision(
+                control.desktop_geometry_revision);
+            desktop_navigation_panel->observe_capture_region_revision(
                 control.desktop_geometry_revision);
             if (!remote_input_authorized && remote_input_capture->active()) {
               remote_input_capture->pause(false, "Host authorization was revoked.");

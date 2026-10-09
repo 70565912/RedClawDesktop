@@ -90,6 +90,27 @@ TEST(DesktopNavigationPanelTests, SwitchFailureReturnsToConfirmedDisplay) {
   EXPECT_EQ(panel.pending_region_revision(), 0U);
 }
 
+TEST(DesktopNavigationPanelTests, HostRevisionOnAnotherDisplayAdvancesNextRequest) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.set_display_catalog(displays(), 1);
+  panel.set_transport_available(true);
+  panel.apply_region_applied(region_message(
+      redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionApplied,
+      "display-b", 11));
+  EXPECT_EQ(panel.selected_display_id(), QString("display-a"));
+  std::uint64_t requested_revision = 0;
+  panel.set_region_request_callback(
+      [&](const std::string&, std::uint16_t, std::uint16_t,
+          std::uint16_t, std::uint16_t, std::uint64_t revision) {
+        requested_revision = revision;
+        return true;
+      });
+  auto* combo = panel.findChild<QComboBox*>();
+  ASSERT_NE(combo, nullptr);
+  combo->setCurrentIndex(1);
+  EXPECT_EQ(requested_revision, 12U);
+}
+
 TEST(DesktopNavigationPanelTests, SelectionCommitsOnlyOnMouseReleaseAndIsRemembered) {
   redclaw::ui::DesktopNavigationPanel panel;
   panel.resize(520, 360);
@@ -156,6 +177,61 @@ TEST(DesktopNavigationPanelTests, SelectionCommitsOnlyOnMouseReleaseAndIsRemembe
   combo->setCurrentIndex(0);
   EXPECT_EQ(last_display, "display-a");
   EXPECT_EQ(last_right, remembered_right);
+}
+
+TEST(DesktopNavigationPanelTests, ObservedHostRevisionSurvivesCatalogRefreshAndPendingRequest) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.set_display_catalog(displays(), 1);
+  panel.set_transport_available(true);
+  panel.observe_capture_region_revision(11);
+  panel.observe_capture_region_revision(0);
+  panel.observe_capture_region_revision(3);
+  panel.set_display_catalog(displays(), 1);
+  std::uint64_t requested_revision = 0;
+  panel.set_region_request_callback(
+      [&](const std::string&, std::uint16_t, std::uint16_t,
+          std::uint16_t, std::uint16_t, std::uint64_t revision) {
+        requested_revision = revision;
+        return true;
+      });
+  auto* combo = panel.findChild<QComboBox*>();
+  ASSERT_NE(combo, nullptr);
+  combo->setCurrentIndex(1);
+  EXPECT_EQ(requested_revision, 12U);
+  panel.observe_capture_region_revision(11);
+  panel.observe_capture_region_revision(12);
+  EXPECT_EQ(panel.pending_region_revision(), 12U);
+  EXPECT_EQ(panel.confirmed_display_id(), QString("display-a"));
+  EXPECT_EQ(panel.selected_display_id(), QString("display-b"));
+  panel.apply_region_applied(region_message(
+      redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionApplied,
+      "display-b", 12));
+  EXPECT_EQ(panel.pending_region_revision(), 0U);
+  EXPECT_EQ(panel.confirmed_display_id(), QString("display-b"));
+  combo->setCurrentIndex(0);
+  EXPECT_EQ(requested_revision, 13U);
+}
+
+TEST(DesktopNavigationPanelTests, NewHostSessionResetsObservedRegionRevision) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.set_display_catalog(displays(), 1);
+  panel.set_transport_available(true);
+  panel.observe_capture_region_revision(900);
+  panel.set_transport_available(false);
+  panel.set_display_catalog(displays(), 1);
+  panel.set_transport_available(true);
+  panel.observe_capture_region_revision(1);
+  std::uint64_t requested_revision = 0;
+  panel.set_region_request_callback(
+      [&](const std::string&, std::uint16_t, std::uint16_t,
+          std::uint16_t, std::uint16_t, std::uint64_t revision) {
+        requested_revision = revision;
+        return true;
+      });
+  auto* combo = panel.findChild<QComboBox*>();
+  ASSERT_NE(combo, nullptr);
+  combo->setCurrentIndex(1);
+  EXPECT_EQ(requested_revision, 2U);
 }
 
 TEST(DesktopNavigationPanelTests, IndependentNavigationFailedSendRollsBack) {
