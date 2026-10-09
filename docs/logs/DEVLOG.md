@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-10 — Qualify v0.1.7 publication
+
+- Commit and push the navigation/startup/upgrade repairs and synchronized CMake/vcpkg, bilingual download links and release notes as `5c520a4`. Standard Release configure/build/publication passes, with build and published EXE hashes equal (hash12 `20073E63D7E2`). Rebuild the three related Release input/UI/capture suites serially: 182 cases pass, zero failures/skips. Reuse the unchanged script paths' eleven startup fixtures and two independent rollback/parent-exit fixtures; script syntax checks pass with zero analyzer errors and the same fifteen existing startup-script findings. No full CTest or new physical/performance gate.
+- Two publication preflights report an account-check failure, while separate checks confirm the expected public account. A task-local copy of the standard entrypoint retains every gate and mutation, pins its original repository script directory and adds account-probe error details; its account gate passes. The initial failed query cause is not identified, and no credential or authentication setting is changed.
+- Initial ZIP extraction successfully produces `--help`, but temporary-file cleanup fails on the extracted executable. Dispose the exited probe Process before deleting its image; the same 336-file archive then passes checksum, required-entry, startup and cleanup checks. Retain the first failure and publish only after the final source-tagged archive repeats the complete package gate. The package helper repair does not change compiled program sources; the Release binaries/tests remain attributable to their unchanged source hashes. Local evidence: `release-v0.1.7-20261010`.
+
 ## 2026-10-10 — Synchronize Controller desktop-navigation revisions (M05-T01)
 
 - Reproduce the reported display-selection snap-back in the running Controller: the navigation panel shows `Rejected: stale_region_revision`. The connected Host advertises geometry revision 11, while a restarted navigation panel begins requests at 2. A deterministic regression fails before repair with expected revision 12 versus actual 2.

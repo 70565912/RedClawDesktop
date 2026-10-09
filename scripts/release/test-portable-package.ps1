@@ -93,7 +93,12 @@ try {
         -WindowStyle Hidden `
         -PassThru `
         -Wait
-    $helpExitCode = $process.ExitCode
+    try {
+        $helpExitCode = $process.ExitCode
+    } finally {
+        # Release the exited process handle before deleting its extracted image.
+        $process.Dispose()
+    }
     $helpText = @(
         Get-Content -LiteralPath $standardOutputPath -Raw -ErrorAction SilentlyContinue
         Get-Content -LiteralPath $standardErrorPath -Raw -ErrorAction SilentlyContinue
