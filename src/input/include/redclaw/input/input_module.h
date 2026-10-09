@@ -16,6 +16,13 @@ namespace redclaw::input {
 // both sender and receiver are 64-bit. Use one local marker for both event kinds.
 inline constexpr std::uintptr_t kRedClawInputExtraInfo = 0x52434449UL;
 
+// The Windows low-level hook can mark right Shift extended, but neither Shift
+// scan code has the E0 prefix required by KEYEVENTF_EXTENDEDKEY injection.
+[[nodiscard]] constexpr bool normalize_key_extended_flag(
+    std::uint16_t scan_code, bool extended) {
+    return extended && scan_code != 0x2AU && scan_code != 0x36U;
+}
+
 enum class InputPermissionPolicy {
 	kDenyAll,
 	kStandardDesktopOnly,

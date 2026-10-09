@@ -116,6 +116,8 @@ private:
     [[nodiscard]] bool install_keyboard_capture(QString* error);
     void uninstall_keyboard_capture();
     void enqueue_critical(redclaw::protocol::RemoteInputEventV1 event);
+    void enqueue_keyboard_event(bool key_down, std::uint16_t scan_code,
+                                std::uint16_t virtual_key, bool extended);
     void enqueue_mouse_move(std::uint16_t normalized_x, std::uint16_t normalized_y);
     void flush_batch();
     void send_state_sync();
