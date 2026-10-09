@@ -151,8 +151,26 @@ function ConvertTo-UpgradeArgument {
 
 function Write-UpgradeReceipt {
     param([string]$Path, [string]$Phase, [int]$TargetPid, [string]$Detail = '')
-    [ordered]@{schema='redclaw.runtime-upgrade.status.v1'; operation_id=(Split-Path (Split-Path $Path) -Leaf); worker_pid=$PID; phase=$Phase; target_pid=$TargetPid; updated_at=[DateTimeOffset]::UtcNow.ToString('o'); detail=$Detail} |
-        ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
+    $json = [ordered]@{schema='redclaw.runtime-upgrade.status.v1'; operation_id=(Split-Path (Split-Path $Path) -Leaf); worker_pid=$PID; phase=$Phase; target_pid=$TargetPid; updated_at=[DateTimeOffset]::UtcNow.ToString('o'); detail=$Detail} |
+        ConvertTo-Json
+    $temporaryPath = $Path + '.tmp.' + [guid]::NewGuid().ToString('N')
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $json, [Text.UTF8Encoding]::new($false))
+        # Readers poll this receipt during handoff. Publish complete JSON and
+        # tolerate a short read handle without failing the upgrade worker.
+        for ($attempt = 0; ; $attempt++) {
+            try {
+                if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporaryPath, $Path, [NullString]::Value) }
+                else { [IO.File]::Move($temporaryPath, $Path) }
+                break
+            } catch [IO.IOException] {
+                if ($attempt -ge 9) { throw }
+                Start-Sleep -Milliseconds 50
+            }
+        }
+    } finally {
+        if ([IO.File]::Exists($temporaryPath)) { [IO.File]::Delete($temporaryPath) }
+    }
 }
 
 function Get-UpgradeReceipt {

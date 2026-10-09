@@ -328,8 +328,16 @@ void DesktopNavigationPanel::set_thumbnail(
       QString::fromStdString(display_id), thumbnail, thumbnail_revision);
 }
 
+void DesktopNavigationPanel::observe_capture_region_revision(std::uint64_t revision) {
+  if (revision == 0) return;
+  next_region_revision_ = (std::max)(next_region_revision_, revision + 1);
+}
+
 void DesktopNavigationPanel::apply_region_applied(
     const redclaw::protocol::StreamControlMessageV1& message) {
+  // The Host can retain a newer region when this Controller reconnects.
+  // Observe its revision even when the acknowledgement concerns another display.
+  observe_capture_region_revision(message.capture_region_revision);
   if (message.capture_region_revision < pending_region_revision_
       || QString::fromStdString(message.display_id) != selected_display_id()) {
     return;
@@ -341,8 +349,6 @@ void DesktopNavigationPanel::apply_region_applied(
       static_cast<qreal>(message.region_bottom - message.region_top) / 65535.0);
   selection_widget_->set_confirmed_region(confirmed);
   confirmed_display_id_ = QString::fromStdString(message.display_id);
-  next_region_revision_ = (std::max)(
-      next_region_revision_, message.capture_region_revision + 1);
   pending_region_revision_ = 0;
   status_label_->setText(QString("Applied revision %1").arg(message.capture_region_revision));
 }
@@ -368,6 +374,7 @@ void DesktopNavigationPanel::set_transport_available(bool available) {
     // Revisions belong to the Host session and restart after a Host replacement.
     catalog_revision_ = 0;
     pending_region_revision_ = 0;
+    next_region_revision_ = 2;
     selection_widget_->reset_session();
   }
   transport_available_ = available;
@@ -403,6 +410,10 @@ QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
   snapshot.insert("display_id", selected_display_id());
   snapshot.insert("catalog_revision", qint64(catalog_revision_));
   snapshot.insert("transport_available", transport_available_);
+  snapshot.insert("confirmed_display_id", confirmed_display_id_);
+  snapshot.insert("next_region_revision", qint64(next_region_revision_));
+  snapshot.insert("pending_region_revision", qint64(pending_region_revision_));
+  snapshot.insert("status", status_label_->text());
   return snapshot;
 }
 

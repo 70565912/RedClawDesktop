@@ -41,6 +41,7 @@ class DesktopNavigationPanel final : public QWidget {
       const std::string& display_id,
       const QImage& thumbnail,
       std::uint64_t thumbnail_revision);
+  void observe_capture_region_revision(std::uint64_t revision);
   void apply_region_applied(
       const redclaw::protocol::StreamControlMessageV1& message);
   void apply_region_rejected(

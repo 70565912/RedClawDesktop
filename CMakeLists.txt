@@ -27,7 +27,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
 endif()
 
 project(RedClawDesktop
-  VERSION 0.1.6
+  VERSION 0.1.7
   DESCRIPTION "Modular CMake skeleton for RedClawDesktop"
   LANGUAGES CXX
 )
