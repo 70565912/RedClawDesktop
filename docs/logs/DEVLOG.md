@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-10 — Publish and verify v0.1.7
+
+- Annotated tag `v0.1.7` and source `19c7080` are pushed to public origin. The standard entrypoint's final run packages and repeats the complete extracted startup/cleanup gate before uploading the same ZIP and checksum file as a GitHub Pre-release. Final archive: 336 files, 355,870,306 bytes, SHA256 hash12 `4daa9c88a994`; Release EXE hash12 `20073e63d7e2`. No serving-runtime replacement is performed by publication.
+- Both GitHub asset sizes and full server SHA256 digests match local files. The downloaded checksum text matches byte-for-byte; the remote peeled tag and inner source/EXE manifest match the published commit and binary. [Released-package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/37961231591) and source Docs Governance pass. Source CI unit tests remain running at this verification snapshot; no all-CI/full-CTest or new Release physical/performance assertion. Preserve the earlier account-query and temporary-cleanup failures, the handle-release repair and its successful repeated package checks.
+- Update release notes, runtime state and the public ledger with the verified identity. Local evidence: `release-v0.1.7-20261010`; historical validation references and the existing runtime's operator confirmation remain separately scoped.
+
 ## 2026-10-10 — Qualify v0.1.7 publication
 
 - Commit and push the navigation/startup/upgrade repairs and synchronized CMake/vcpkg, bilingual download links and release notes as `5c520a4`. Standard Release configure/build/publication passes, with build and published EXE hashes equal (hash12 `20073E63D7E2`). Rebuild the three related Release input/UI/capture suites serially: 182 cases pass, zero failures/skips. Reuse the unchanged script paths' eleven startup fixtures and two independent rollback/parent-exit fixtures; script syntax checks pass with zero analyzer errors and the same fifteen existing startup-script findings. No full CTest or new physical/performance gate.
