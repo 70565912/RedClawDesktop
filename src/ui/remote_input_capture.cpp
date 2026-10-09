@@ -130,6 +130,41 @@ void ControllerRemoteInputCapture::set_desktop_geometry_revision(std::uint64_t r
     desktop_geometry_revision_ = revision;
 }
 
+void ControllerRemoteInputCapture::begin_capture_region_change(std::uint64_t revision) {
+    if (revision == 0) return;
+    pending_capture_region_revision_ = revision;
+    applied_capture_region_revision_ = 0;
+    set_local_suspension(LocalInputSuspensionReason::kCaptureRegionChange, true);
+}
+
+void ControllerRemoteInputCapture::confirm_capture_region_change(std::uint64_t revision) {
+    if (revision != pending_capture_region_revision_) return;
+    applied_capture_region_revision_ = revision;
+    complete_capture_region_change();
+}
+
+void ControllerRemoteInputCapture::reject_capture_region_change(std::uint64_t revision) {
+    if (revision != pending_capture_region_revision_) return;
+    pending_capture_region_revision_ = 0;
+    applied_capture_region_revision_ = 0;
+    set_local_suspension(LocalInputSuspensionReason::kCaptureRegionChange, false);
+}
+
+void ControllerRemoteInputCapture::present_capture_region(std::uint64_t revision) {
+    desktop_geometry_revision_ = revision;
+    presented_capture_region_revision_ = revision;
+    complete_capture_region_change();
+}
+
+void ControllerRemoteInputCapture::complete_capture_region_change() {
+    if (pending_capture_region_revision_ == 0
+        || applied_capture_region_revision_ != pending_capture_region_revision_
+        || presented_capture_region_revision_ < pending_capture_region_revision_) return;
+    pending_capture_region_revision_ = 0;
+    applied_capture_region_revision_ = 0;
+    set_local_suspension(LocalInputSuspensionReason::kCaptureRegionChange, false);
+}
+
 bool ControllerRemoteInputCapture::acknowledge_input_sequence(
     std::uint64_t sequence,
     std::uint64_t consumed_us, std::uint64_t runtime_received_us) {
@@ -171,7 +206,8 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     canvas_->setFocus(Qt::OtherFocusReason);
     const std::uint32_t retained_flags = local_suspension_flags_
         & (static_cast<std::uint32_t>(LocalInputSuspensionReason::kGeometryTransaction)
-            | static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer));
+            | static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer)
+            | static_cast<std::uint32_t>(LocalInputSuspensionReason::kCaptureRegionChange));
     local_suspension_flags_ = retained_flags;
     if (window_ == nullptr || !window_->isVisible() || window_->isMinimized()) {
         local_suspension_flags_ |=
@@ -206,6 +242,9 @@ void ControllerRemoteInputCapture::pause(bool notify_peer, const QString& reason
     canvas_keyboard_target_ = false;
     local_suspension_release_sent_ = false;
     local_suspension_flags_ = 0;
+    pending_capture_region_revision_ = 0;
+    applied_capture_region_revision_ = 0;
+    presented_capture_region_revision_ = 0;
     flush_timer_->stop();
     state_sync_timer_->stop();
     uninstall_keyboard_capture();
@@ -380,6 +419,10 @@ QString ControllerRemoteInputCapture::local_suspension_reason() const {
     if ((local_suspension_flags_
          & static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer)) != 0) {
         reasons.push_back("workspace_transfer_busy");
+    }
+    if ((local_suspension_flags_
+         & static_cast<std::uint32_t>(LocalInputSuspensionReason::kCaptureRegionChange)) != 0) {
+        reasons.push_back("capture_region_change");
     }
     return reasons.join(',');
 }

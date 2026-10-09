@@ -52,7 +52,6 @@ class DesktopNavigationPanel final : public QWidget {
   [[nodiscard]] QString confirmed_display_id() const;
   [[nodiscard]] QRectF selected_normalized_region() const;
   [[nodiscard]] std::uint64_t pending_region_revision() const;
-  [[nodiscard]] bool pending_request_changes_display() const;
   [[nodiscard]] QJsonObject diagnostic_snapshot() const;
 
  private:

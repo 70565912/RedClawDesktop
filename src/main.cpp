@@ -67,6 +67,7 @@
 #include "redclaw/helper/direct_frame_shared_memory.h"
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
+#include "runtime/input_control_boundary.h"
 #include "runtime/audio_stream_runtime.h"
 #include "runtime/navigation_thumbnail_worker.h"
 #include "runtime/runtime_options.h"
@@ -3155,6 +3156,7 @@ int run_runtime_mode(
     redclaw::capture::CaptureStreamGate stream_capture_gate;
     std::atomic<std::uint32_t> peer_capture_status_version{0};
     std::uint64_t applied_capture_input_pause_revision = 0;
+    std::uint64_t applied_capture_input_reset_revision = 0;
     redclaw::capture::CaptureBackendTelemetry stream_capture_telemetry_snapshot;
     redclaw::capture::EncoderExecutionDiagnostics stream_encoder_diagnostics_snapshot;
     HostStreamStageTelemetry stream_host_stage_telemetry_snapshot;
@@ -3402,7 +3404,9 @@ int run_runtime_mode(
                 const auto capture = stream_capture_gate.snapshot();
                 const bool visible = capture.availability == redclaw::capture::CaptureAvailability::kRunning
                     && (peer_capture_status_version.load() == 0 || capture.presented)
-                    && capture.input_pause_revision == applied_capture_input_pause_revision;
+                    && !capture.navigation_pending
+                    && capture.input_pause_revision == applied_capture_input_pause_revision
+                    && capture.input_reset_revision == applied_capture_input_reset_revision;
                 bool channel_valid = false;
                 {
                     std::lock_guard lock(callback_mutex);
@@ -5870,6 +5874,9 @@ int run_runtime_mode(
                     .revision = region_request->capture_region_revision};
                 const bool display_changed = !stream_selected_display.has_value()
                     || stream_selected_display->id != requested_display->id;
+                stream_capture_gate.begin_geometry_change(display_changed
+                    ? redclaw::capture::CaptureGeometryChange::kDisplay
+                    : redclaw::capture::CaptureGeometryChange::kRegion);
                 if (display_changed) {
                     stream_capture_region_rollback_display = stream_selected_display;
                     stream_capture_region_rollback_region = stream_active_capture_region;
@@ -5883,13 +5890,7 @@ int run_runtime_mode(
                     stream_selected_display = *requested_display;
                     stream_active_capture_region = region;
                     stream_capture_region_apply_pending = *region_request;
-                    pending_remote_input_messages.clear();
-                    if (display_changed) {
-                        remote_input_session.pause(
-                            redclaw::input::RemoteInputPauseReason::kGeometryChanged);
-                    } else {
-                        remote_input_session.release_all();
-                    }
+                    redclaw::runtime::discard_obsolete_remote_input(pending_remote_input_messages);
                 }
                 {
                     std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
@@ -5917,6 +5918,7 @@ int run_runtime_mode(
             std::string start_error;
             if (!stream_capture_session.start(capture_config, &start_error)) {
                 const auto unavailable = stream_capture_session.telemetry();
+                (void)apply_capture_availability(unavailable);
                 stream_capture_started = unavailable.availability == redclaw::capture::CaptureAvailability::kPaused;
                 runtime_loop_wake.notify();
                 std::optional<redclaw::protocol::StreamControlMessageV1> failed_region;
@@ -7510,17 +7512,20 @@ int run_runtime_mode(
                 remote_input_session.set_transfer_blocked(true, now_unix_ms());
                 // Drop old ordinary input at the transfer boundary, but never
                 // discard an independently requested stop/revocation.
-                std::erase_if(remote_input_messages, [](const auto& message) {
-                    return message.type != redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll
-                        && !(message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest && !message.input_requested_active);
-                });
+                redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
             }
             remote_input_session.set_transfer_blocked(transfer_operation_gate.blocks_mutation(), now_unix_ms());
             const auto capture_state = stream_capture_gate.snapshot();
+            if (capture_state.input_reset_revision != applied_capture_input_reset_revision) {
+                applied_capture_input_reset_revision = capture_state.input_reset_revision;
+                remote_input_session.reset_for_geometry_change();
+                redclaw::runtime::discard_obsolete_remote_input(remote_input_messages, true);
+                status_changed = true;
+            }
             const bool capture_available = capture_state.availability == redclaw::capture::CaptureAvailability::kRunning
                 && (peer_capture_status_version.load() == 0 || capture_state.presented);
             const bool capture_input_pause_pending = capture_state.input_pause_revision != applied_capture_input_pause_revision;
-            if (!capture_available || capture_input_pause_pending) {
+            if ((!capture_available && !capture_state.navigation_pending) || capture_input_pause_pending) {
                 applied_capture_input_pause_revision = capture_state.input_pause_revision;
                 if (!remote_input_messages.empty() || capture_input_pause_pending
                     || remote_input_session.state() == redclaw::input::RemoteInputSessionState::kActive) {
@@ -7528,6 +7533,8 @@ int run_runtime_mode(
                     status_changed = true;
                 }
                 remote_input_messages.clear();
+            } else if (capture_state.navigation_pending) {
+                redclaw::runtime::discard_obsolete_remote_input(remote_input_messages, true);
             }
             if (disconnected) {
                 remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected);
@@ -7558,13 +7565,14 @@ int run_runtime_mode(
             const bool geometry_changed = geometry_shape_changed || geometry_revision_changed;
             if (geometry_changed
                 && remote_input_session.state() == redclaw::input::RemoteInputSessionState::kActive) {
-                if (geometry_shape_changed) {
+                if (!redclaw::input::is_valid_desktop_geometry(current_geometry)
+                    || (geometry_shape_changed && !geometry_revision_changed)) {
                     remote_input_session.pause(
                         redclaw::input::RemoteInputPauseReason::kGeometryChanged);
                 } else {
-                    remote_input_session.release_all();
+                    remote_input_session.reset_for_geometry_change();
                 }
-                remote_input_messages.clear();
+                redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
                 status_changed = true;
             }
 
@@ -7590,7 +7598,7 @@ int run_runtime_mode(
                 if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch) {
                     if (command.desktop_geometry_revision != current_geometry.revision) {
                         input_qa_receipts.command(redclaw::runtime::InputQaStage::kGeometryRejected, command);
-                        remote_input_session.release_all();
+                        remote_input_session.reset_for_geometry_change();
                         status_changed = true;
                         continue;
                     }
@@ -7614,8 +7622,9 @@ int run_runtime_mode(
                     continue;
                 }
                 if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputStateSync) {
-                    if (command.desktop_geometry_revision != current_geometry.revision) {
-                        remote_input_session.release_all();
+                    if (command.desktop_geometry_revision != current_geometry.revision
+                        && !capture_state.navigation_pending) {
+                        remote_input_session.reset_for_geometry_change();
                         status_changed = true;
                         continue;
                     }

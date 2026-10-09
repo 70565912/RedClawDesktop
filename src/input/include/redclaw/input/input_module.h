@@ -293,6 +293,9 @@ public:
 	[[nodiscard]] bool expire_lease(std::uint64_t now_ms);
 	void pause(RemoteInputPauseReason reason);
 	void release_all();
+    // Discard input tied to the old capture geometry while retaining consent
+    // and its existing lease. A geometry reset never starts a paused session.
+    void reset_for_geometry_change();
     void set_injection_observer(std::function<void(const InputInjectionReceipt&)> observer);
 
 	[[nodiscard]] bool authorized() const;

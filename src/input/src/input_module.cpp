@@ -878,6 +878,12 @@ void RemoteInputSession::release_all() {
     ++stats_.release_all_count;
 }
 
+void RemoteInputSession::reset_for_geometry_change() {
+    ++eligibility_revision_;
+    release_all();
+    queue_.clear();
+}
+
 bool RemoteInputSession::authorized() const { return authorized_; }
 RemoteInputSessionState RemoteInputSession::state() const { return state_; }
 RemoteInputPauseReason RemoteInputSession::pause_reason() const { return pause_reason_; }

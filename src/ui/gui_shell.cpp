@@ -2951,9 +2951,6 @@ bool launch_gui_shell(
   bool remote_input_authorized = false;
   bool remote_input_frame_ready = false;
   bool remote_input_request_pending = false;
-  std::uint64_t pending_capture_geometry_revision = 0;
-  std::uint64_t applied_capture_geometry_revision = 0;
-  std::uint64_t last_presented_capture_geometry_revision = 0;
   auto remote_input_state = redclaw::protocol::RemoteInputControlStateV1::kUnavailable;
   auto remote_input_reason = redclaw::protocol::RemoteInputStatusReasonV1::kNone;
   qint64 last_remote_input_metrics_log_ms = 0;
@@ -4230,8 +4227,6 @@ bool launch_gui_shell(
         if (role_combo->currentText() != "controller" || !controller.is_running()) {
           return false;
         }
-        const bool display_changed =
-            desktop_navigation_panel->pending_request_changes_display();
         redclaw::protocol::StreamControlMessageV1 request;
         request.type = redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRequest;
         request.session_epoch = "local";
@@ -4249,19 +4244,9 @@ bool launch_gui_shell(
           append_log(session_log, "Capture region request failed: " + send_error);
           return false;
         }
-        if (remote_input_capture->active()) {
-          if (display_changed) {
-            pending_capture_geometry_revision = 0;
-            applied_capture_geometry_revision = 0;
-            remote_input_capture->pause(
-                true, "Desktop display changed. Click Start Control to resume.");
-          } else {
-            pending_capture_geometry_revision = revision;
-            applied_capture_geometry_revision = 0;
-            remote_input_capture->set_local_suspension(
-                LocalInputSuspensionReason::kGeometryTransaction, true);
-          }
-        }
+        if (QString::fromStdString(display_id) != desktop_navigation_panel->confirmed_display_id())
+          capture_playback_state.begin_navigation();
+        remote_input_capture->begin_capture_region_change(revision);
         return true;
       });
 
@@ -4328,9 +4313,6 @@ bool launch_gui_shell(
     remote_input_reason = redclaw::protocol::RemoteInputStatusReasonV1::kDisconnected;
     remote_input_frame_ready = false;
     remote_input_request_pending = false;
-    pending_capture_geometry_revision = 0;
-    applied_capture_geometry_revision = 0;
-    last_presented_capture_geometry_revision = 0;
     remote_input_capture->set_remote_frame_size({});
     remote_input_capture->set_desktop_geometry_revision(0);
     refresh_remote_control_ui();
@@ -4514,22 +4496,16 @@ bool launch_gui_shell(
       // a same-resolution reconnect must restore the geometry as well.
       GuiLatencyScope geometry_timing(GuiStage::kGeometry);
       remote_input_capture->set_remote_frame_size(remote_frame_size);
-      last_presented_capture_geometry_revision = direct_frame.capture_region_revision;
-      remote_input_capture->set_desktop_geometry_revision(
+      remote_input_capture->present_capture_region(
           direct_frame.capture_region_revision);
-      if (pending_capture_geometry_revision != 0
-          && applied_capture_geometry_revision >= pending_capture_geometry_revision
-          && last_presented_capture_geometry_revision >= pending_capture_geometry_revision) {
-        pending_capture_geometry_revision = 0;
-        applied_capture_geometry_revision = 0;
-        remote_input_capture->set_local_suspension(
-            LocalInputSuspensionReason::kGeometryTransaction, false);
-      }
       // Only update the status label and banner when something meaningful
       // changes (resolution, backend).  Updating every frame causes Qt to
       // re-layout playback_window_status, which can deliver a resizeEvent to
       // playback_canvas_widget → resize_swap_chain() → DXGI flicker.
-      const QString new_status = capture_playback_state.waiting() ? QString::fromUtf8("画面已暂停，等待 Host 恢复采集。") :
+      const QString new_status = capture_playback_state.waiting()
+          ? (capture_playback_state.rearm_required()
+              ? QString::fromUtf8("画面已暂停，等待 Host 恢复采集。")
+              : QString::fromUtf8("正在切换桌面，等待新画面。")) :
           QString("Remote desktop live (%1x%2, backend: %3).")
               .arg(QString::number(direct_frame.width),
                    QString::number(direct_frame.height),
@@ -5042,16 +5018,22 @@ bool launch_gui_shell(
             capture_playback_state.observe(control);
             retry_capture_button->setVisible(capture_playback_state.retry_available());
             if (capture_playback_state.waiting()) {
-              remote_input_capture->pause(true, "Host capture unavailable.");
-              remote_input_frame_ready = false;
-              remote_input_request_pending = false;
-              set_playback_status_text(QString::fromUtf8("画面已暂停。恢复后请重新点击 Start Control 开启控制。"));
+              if (capture_playback_state.rearm_required()) {
+                remote_input_capture->pause(true, "Host capture unavailable.");
+                remote_input_frame_ready = false;
+                remote_input_request_pending = false;
+                set_playback_status_text(QString::fromUtf8("画面已暂停。恢复后请重新点击 Start Control 开启控制。"));
+              } else {
+                set_playback_status_text(QString::fromUtf8("正在切换桌面，等待新画面。"));
+              }
               // Capture may pause before the first frame opens the remote window.
               // Present the recovery controls without marking a frame as ready.
               present_playback_window();
             } else if (was_waiting) {
               remote_input_frame_ready = true;
-              set_playback_status_text(QString::fromUtf8("画面已恢复。请点击 Start Control 开启控制。"));
+              set_playback_status_text(capture_playback_state.rearm_required()
+                  ? QString::fromUtf8("画面已恢复。请点击 Start Control 开启控制。")
+                  : QString::fromUtf8("桌面已切换。"));
             }
             refresh_remote_control_ui();
             source_activity_revision = control.source_activity_revision;
@@ -5084,16 +5066,8 @@ bool launch_gui_shell(
 #endif
             remote_input_capture->set_desktop_geometry_revision(
                 control.capture_region_revision);
-            if (pending_capture_geometry_revision == control.capture_region_revision) {
-              applied_capture_geometry_revision = control.capture_region_revision;
-              if (last_presented_capture_geometry_revision
-                  >= pending_capture_geometry_revision) {
-                pending_capture_geometry_revision = 0;
-                applied_capture_geometry_revision = 0;
-                remote_input_capture->set_local_suspension(
-                    LocalInputSuspensionReason::kGeometryTransaction, false);
-              }
-            }
+            remote_input_capture->confirm_capture_region_change(
+                control.capture_region_revision);
             remote_input_request_pending = false;
             refresh_remote_control_ui();
             return;
@@ -5101,12 +5075,10 @@ bool launch_gui_shell(
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected) {
             desktop_navigation_panel->apply_region_rejected(control);
-            if (pending_capture_geometry_revision == control.capture_region_revision) {
-              pending_capture_geometry_revision = 0;
-              applied_capture_geometry_revision = 0;
-              remote_input_capture->set_local_suspension(
-                  LocalInputSuspensionReason::kGeometryTransaction, false);
-            }
+            if (control.capture_region_revision == remote_input_capture->pending_capture_region_revision())
+              capture_playback_state.cancel_navigation();
+            remote_input_capture->reject_capture_region_change(
+                control.capture_region_revision);
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kInputCapabilities) {
@@ -5156,7 +5128,7 @@ bool launch_gui_shell(
             const QString input_reason_text = QString::fromLatin1(
                 input_reason_name.data(), static_cast<qsizetype>(input_reason_name.size()));
             if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive
-                && !capture_playback_state.control_allowed()) {
+                && capture_playback_state.rearm_required()) {
               remote_input_capture->pause(false, "Capture recovery requires a new user control request.");
               (void)send_input_control_request(false);
             } else if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive) {
