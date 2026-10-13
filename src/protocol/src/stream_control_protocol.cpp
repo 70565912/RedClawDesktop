@@ -404,9 +404,18 @@ bool validate_stream_control_message_v1(const StreamControlMessageV1& message, s
         message.type == StreamControlMessageTypeV1::kCaptureRegionRequest
         || message.type == StreamControlMessageTypeV1::kCaptureRegionApplied
         || message.type == StreamControlMessageTypeV1::kCaptureRegionRejected;
+    if (capture_region_message && message.capture_region_command_version > 1) {
+        assign_error("protocol_version_incompatible: capture region command", error);
+        return false;
+    }
+    const bool command_identity_valid = message.capture_region_command_version == 1
+        ? message.capture_region_request_id != 0
+        : message.capture_region_revision != 0 && message.capture_region_request_id == 0;
     if (capture_region_message
         && (!valid_token(message.display_id, kMaxDesktopDisplayIdBytes)
-            || message.capture_region_revision == 0
+            || !command_identity_valid
+            || (message.type == StreamControlMessageTypeV1::kCaptureRegionApplied
+                && message.capture_region_revision == 0)
             || message.region_left >= message.region_right
             || message.region_top >= message.region_bottom)) {
         assign_error("capture region request metadata is invalid", error);

@@ -39,6 +39,7 @@
 #include "redclaw/protocol/audio_packet.h"
 #include "redclaw/protocol/protocol_module.h"
 #include "redclaw/protocol/stream_control_protocol.h"
+#include "redclaw/protocol/capture_region_control.h"
 #include "redclaw/protocol/agent_protocol.h"
 #include "redclaw/agent/agent_providers.h"
 #include "redclaw/agent/remote_agent_broker.h"
@@ -2975,7 +2976,6 @@ int run_runtime_mode(
     std::deque<redclaw::protocol::StreamControlMessageV1> pending_remote_log_messages;
     std::deque<redclaw::protocol::StreamControlMessageV1> pending_local_control_requests;
     std::optional<redclaw::protocol::StreamControlMessageV1> last_local_viewport_request;
-    std::optional<redclaw::protocol::StreamControlMessageV1> last_local_capture_region_request;
     std::optional<redclaw::protocol::StreamControlMessageV1> last_local_log_follow_request;
     std::uint32_t local_viewport_reconnect_extra_sends = 0;
     std::string local_control_input_buffer;
@@ -3568,6 +3568,7 @@ int run_runtime_mode(
         auto catalog = make_control_message(
             redclaw::protocol::StreamControlMessageTypeV1::kDesktopDisplayCatalog);
         catalog.display_catalog_revision = stream_navigation_catalog_revision;
+        catalog.capture_region_command_version = redclaw::protocol::kCaptureRegionCommandVersion;
         catalog.desktop_displays.reserve(stream_capture_displays.size());
         for (const auto& display : stream_capture_displays) {
             catalog.desktop_displays.push_back({
@@ -4804,27 +4805,11 @@ int run_runtime_mode(
             if (control.type
                     == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRequest
                 && options.role == RuntimeRole::kHost) {
-                bool stale = false;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
-                    stale = control.capture_region_revision <= stream_capture_region_revision;
-                    if (!stale) {
-                        stream_pending_capture_region_request = control;
-                    }
+                    stream_pending_capture_region_request = control;
                 }
-                if (stale) {
-                    auto rejected = make_control_message(
-                        redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected);
-                    rejected.display_id = control.display_id;
-                    rejected.region_left = control.region_left;
-                    rejected.region_top = control.region_top;
-                    rejected.region_right = control.region_right;
-                    rejected.region_bottom = control.region_bottom;
-                    rejected.capture_region_revision = control.capture_region_revision;
-                    rejected.payload = "stale_region_revision";
-                    std::string rejected_error;
-                    (void)send_control_message(rejected, &rejected_error);
-                }
+                stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
                 return;
             }
             if (control.type
@@ -5853,19 +5838,22 @@ int run_runtime_mode(
                     return display.id == region_request->display_id;
                 });
             const bool transfer_busy = transfer_operation_gate.blocks_mutation();
-            if (transfer_busy || requested_display == stream_capture_displays.end()) {
+            const auto assigned_revision = redclaw::protocol::assign_capture_region_revision(
+                *region_request, (std::max)(stream_capture_region_revision,
+                    stream_active_capture_region.revision));
+            if (transfer_busy || requested_display == stream_capture_displays.end()
+                || !assigned_revision.has_value()) {
                 auto rejected = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected);
-                rejected.display_id = region_request->display_id;
-                rejected.region_left = region_request->region_left;
-                rejected.region_top = region_request->region_top;
-                rejected.region_right = region_request->region_right;
-                rejected.region_bottom = region_request->region_bottom;
-                rejected.capture_region_revision = region_request->capture_region_revision;
-                rejected.payload = transfer_busy ? "workspace_transfer_busy" : "display_unavailable";
+                redclaw::protocol::copy_capture_region_reply(*region_request, rejected);
+                rejected.payload = transfer_busy ? "workspace_transfer_busy"
+                    : requested_display == stream_capture_displays.end() ? "display_unavailable"
+                    : region_request->capture_region_command_version != 0
+                        ? "capture_region_revision_exhausted" : "stale_region_revision";
                 std::string rejected_error;
                 (void)send_control_message(rejected, &rejected_error);
             } else {
+                region_request->capture_region_revision = *assigned_revision;
                 const redclaw::capture::CaptureRegionSelection region{
                     .left = region_request->region_left,
                     .top = region_request->region_top,
@@ -5935,12 +5923,7 @@ int run_runtime_mode(
                 if (failed_region.has_value()) {
                     auto rejected = make_control_message(
                         redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected);
-                    rejected.display_id = failed_region->display_id;
-                    rejected.region_left = failed_region->region_left;
-                    rejected.region_top = failed_region->region_top;
-                    rejected.region_right = failed_region->region_right;
-                    rejected.region_bottom = failed_region->region_bottom;
-                    rejected.capture_region_revision = failed_region->capture_region_revision;
+                    redclaw::protocol::copy_capture_region_reply(*failed_region, rejected);
                     rejected.payload = "capture_switch_failed";
                     std::string rejected_error;
                     (void)send_control_message(rejected, &rejected_error);
@@ -6050,12 +6033,7 @@ int run_runtime_mode(
                 stream_capture_started = false;
                 auto rejected = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected);
-                rejected.display_id = failed_region->display_id;
-                rejected.region_left = failed_region->region_left;
-                rejected.region_top = failed_region->region_top;
-                rejected.region_right = failed_region->region_right;
-                rejected.region_bottom = failed_region->region_bottom;
-                rejected.capture_region_revision = failed_region->capture_region_revision;
+                redclaw::protocol::copy_capture_region_reply(*failed_region, rejected);
                 rejected.payload = "capture_switch_failed";
                 std::string rejected_error;
                 (void)send_control_message(rejected, &rejected_error);
@@ -6158,11 +6136,7 @@ int run_runtime_mode(
                 canvas_height);
             auto applied = make_control_message(
                 redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionApplied);
-            applied.display_id = applied_region->display_id;
-            applied.region_left = applied_region->region_left;
-            applied.region_top = applied_region->region_top;
-            applied.region_right = applied_region->region_right;
-            applied.region_bottom = applied_region->region_bottom;
+            redclaw::protocol::copy_capture_region_reply(*applied_region, applied);
             applied.capture_region_revision = active_region.revision;
             applied.encoded_width = canvas_width;
             applied.encoded_height = canvas_height;
@@ -7278,7 +7252,6 @@ int run_runtime_mode(
             } else if (command.type
                        == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRequest) {
                 stream_decoder_recovery_coordinator.reset();
-                last_local_capture_region_request = command;
             } else if (command.log_mode == redclaw::protocol::RemoteLogModeV1::kFollow) {
                 last_local_log_follow_request = command;
             } else if (command.log_mode == redclaw::protocol::RemoteLogModeV1::kStop) {
@@ -8269,10 +8242,8 @@ int run_runtime_mode(
                             local_viewport_reconnect_extra_sends =
                                 kDesktopStreamViewportReconnectExtraSends;
                         }
-                        if (last_local_capture_region_request.has_value()) {
-                            pending_local_control_requests.push_back(
-                                *last_local_capture_region_request);
-                        }
+                        // Navigation requests belong to the previous peer session.
+                        // Wait for its new catalog/capabilities before another command.
                         if (last_local_log_follow_request.has_value()) {
                             pending_local_control_requests.push_back(*last_local_log_follow_request);
                         }

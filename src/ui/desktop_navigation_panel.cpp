@@ -1,4 +1,5 @@
 #include "ui/desktop_navigation_panel.h"
+#include "redclaw/protocol/capture_region_control.h"
 
 #include <QComboBox>
 #include <QHash>
@@ -292,12 +293,13 @@ void DesktopNavigationPanel::set_region_request_callback(
 
 void DesktopNavigationPanel::set_display_catalog(
     const std::vector<redclaw::protocol::DesktopDisplayV1>& displays,
-    std::uint64_t catalog_revision) {
+    std::uint64_t catalog_revision, std::uint32_t command_version) {
   if (catalog_revision == 0 || catalog_revision < catalog_revision_ || displays.empty()) {
     return;
   }
   const QString prior = selected_display_id();
   catalog_revision_ = catalog_revision;
+  command_version_ = (std::min)(command_version, redclaw::protocol::kCaptureRegionCommandVersion);
   displays_ = displays;
   display_combo_->blockSignals(true);
   display_combo_->clear();
@@ -329,7 +331,7 @@ void DesktopNavigationPanel::set_thumbnail(
 }
 
 void DesktopNavigationPanel::observe_capture_region_revision(std::uint64_t revision) {
-  if (revision == 0) return;
+  if (command_version_ != 0 || revision == 0) return;
   next_region_revision_ = (std::max)(next_region_revision_, revision + 1);
 }
 
@@ -338,7 +340,8 @@ void DesktopNavigationPanel::apply_region_applied(
   // The Host can retain a newer region when this Controller reconnects.
   // Observe its revision even when the acknowledgement concerns another display.
   observe_capture_region_revision(message.capture_region_revision);
-  if (message.capture_region_revision < pending_region_revision_
+  if (pending_region_revision_ == 0
+      || redclaw::protocol::capture_region_request_token(message) != pending_region_revision_
       || QString::fromStdString(message.display_id) != selected_display_id()) {
     return;
   }
@@ -350,12 +353,13 @@ void DesktopNavigationPanel::apply_region_applied(
   selection_widget_->set_confirmed_region(confirmed);
   confirmed_display_id_ = QString::fromStdString(message.display_id);
   pending_region_revision_ = 0;
-  status_label_->setText(QString("Applied revision %1").arg(message.capture_region_revision));
+  status_label_->setText("Applied");
 }
 
 void DesktopNavigationPanel::apply_region_rejected(
     const redclaw::protocol::StreamControlMessageV1& message) {
-  if (message.capture_region_revision != pending_region_revision_) return;
+  if (pending_region_revision_ == 0
+      || redclaw::protocol::capture_region_request_token(message) != pending_region_revision_) return;
   selection_widget_->rollback();
   pending_region_revision_ = 0;
   const int confirmed_index = display_combo_->findData(confirmed_display_id_);
@@ -373,6 +377,7 @@ void DesktopNavigationPanel::set_transport_available(bool available) {
   if (!available) {
     // Revisions belong to the Host session and restart after a Host replacement.
     catalog_revision_ = 0;
+    command_version_ = 0;
     pending_region_revision_ = 0;
     next_region_revision_ = 2;
     selection_widget_->reset_session();
@@ -409,6 +414,7 @@ QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
   snapshot.insert("version", 1);
   snapshot.insert("display_id", selected_display_id());
   snapshot.insert("catalog_revision", qint64(catalog_revision_));
+  snapshot.insert("capture_region_command_version", int(command_version_));
   snapshot.insert("transport_available", transport_available_);
   snapshot.insert("confirmed_display_id", confirmed_display_id_);
   snapshot.insert("next_region_revision", qint64(next_region_revision_));
@@ -438,7 +444,7 @@ void DesktopNavigationPanel::commit_current_selection() {
   };
   const std::uint64_t revision = next_region_revision_++;
   pending_region_revision_ = revision;
-  status_label_->setText(QString("Applying revision %1...").arg(revision));
+  status_label_->setText("Switching...");
   if (request_callback_(
       selected_display_id().toStdString(),
       to_bound(region.left()),

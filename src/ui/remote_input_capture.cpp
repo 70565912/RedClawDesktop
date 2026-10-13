@@ -137,8 +137,9 @@ void ControllerRemoteInputCapture::begin_capture_region_change(std::uint64_t rev
     set_local_suspension(LocalInputSuspensionReason::kCaptureRegionChange, true);
 }
 
-void ControllerRemoteInputCapture::confirm_capture_region_change(std::uint64_t revision) {
-    if (revision != pending_capture_region_revision_) return;
+void ControllerRemoteInputCapture::confirm_capture_region_change(
+    std::uint64_t request_id, std::uint64_t revision) {
+    if (request_id == 0 || request_id != pending_capture_region_revision_ || revision == 0) return;
     applied_capture_region_revision_ = revision;
     complete_capture_region_change();
 }
@@ -158,8 +159,8 @@ void ControllerRemoteInputCapture::present_capture_region(std::uint64_t revision
 
 void ControllerRemoteInputCapture::complete_capture_region_change() {
     if (pending_capture_region_revision_ == 0
-        || applied_capture_region_revision_ != pending_capture_region_revision_
-        || presented_capture_region_revision_ < pending_capture_region_revision_) return;
+        || applied_capture_region_revision_ == 0
+        || presented_capture_region_revision_ < applied_capture_region_revision_) return;
     pending_capture_region_revision_ = 0;
     applied_capture_region_revision_ = 0;
     set_local_suspension(LocalInputSuspensionReason::kCaptureRegionChange, false);

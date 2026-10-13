@@ -1,10 +1,92 @@
 #include <gtest/gtest.h>
 
 #include "redclaw/protocol/stream_control_protocol.h"
+#include "redclaw/protocol/capture_region_control.h"
 #include "redclaw/protocol/compressed_protobuf.h"
 #include "redclaw_wire.pb.h"
 
 namespace {
+
+TEST(CaptureRegionCommandTests, RestartedControllerUsesHostRevisionAndCorrelatedWireReply) {
+    using namespace redclaw::protocol;
+    StreamControlMessageV1 request;
+    request.type = StreamControlMessageTypeV1::kCaptureRegionRequest;
+    request.session_epoch = "reconnected";
+    request.message_id = 1;
+    request.sent_at_ms = 1;
+    request.display_id = "display-b";
+    request.region_right = request.region_bottom = 65535;
+    set_capture_region_request_identity(request, 2, 1);
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(request));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.capture_region_revision, 0U);
+    auto assigned = assign_capture_region_revision(parsed.value, 900);
+    ASSERT_TRUE(assigned.has_value());
+    EXPECT_EQ(*assigned, 901U);
+    parsed.value.capture_region_revision = *assigned;
+    auto reply = request;
+    reply.type = StreamControlMessageTypeV1::kCaptureRegionApplied;
+    copy_capture_region_reply(parsed.value, reply);
+    reply.encoded_width = reply.content_rect_width = 1920;
+    reply.encoded_height = reply.content_rect_height = 1080;
+    auto applied = parse_stream_control_message_v1(serialize_stream_control_message_v1(reply));
+    ASSERT_TRUE(applied.ok) << applied.error;
+    EXPECT_EQ(capture_region_request_token(applied.value), 2U);
+    EXPECT_EQ(applied.value.capture_region_revision, 901U);
+    set_capture_region_request_identity(request, 3, 1);
+    EXPECT_EQ(assign_capture_region_revision(request, 901), 902U);
+    // Another Controller can start its request IDs over without reusing geometry.
+    set_capture_region_request_identity(request, 1, 1);
+    EXPECT_EQ(assign_capture_region_revision(request, 902), 903U);
+}
+
+TEST(CaptureRegionCommandTests, LegacyDirectionsKeepPublishedWireSemantics) {
+    using namespace redclaw::protocol;
+    StreamControlMessageV1 request;
+    request.type = StreamControlMessageTypeV1::kCaptureRegionRequest;
+    request.session_epoch = "legacy";
+    request.message_id = request.sent_at_ms = 1;
+    request.display_id = "display-a";
+    request.region_right = request.region_bottom = 65535;
+    set_capture_region_request_identity(request, 12, 0);
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(request));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.capture_region_command_version, 0U);
+    EXPECT_EQ(parsed.value.capture_region_request_id, 0U);
+    EXPECT_EQ(parsed.value.capture_region_revision, 12U);
+    EXPECT_EQ(assign_capture_region_revision(parsed.value, 11), 12U);
+    EXPECT_FALSE(assign_capture_region_revision(parsed.value, 12).has_value());
+    StreamControlMessageV1 reply;
+    copy_capture_region_reply(parsed.value, reply);
+    EXPECT_EQ(capture_region_request_token(reply), 12U);
+    EXPECT_EQ(reply.capture_region_request_id, 0U);
+}
+
+TEST(CaptureRegionCommandTests, RejectionBeforeCaptureKeepsRequestIdentity) {
+    using namespace redclaw::protocol;
+    StreamControlMessageV1 request;
+    request.type = StreamControlMessageTypeV1::kCaptureRegionRejected;
+    request.session_epoch = "epoch";
+    request.message_id = request.sent_at_ms = 1;
+    request.display_id = "unavailable";
+    request.region_right = request.region_bottom = 65535;
+    set_capture_region_request_identity(request, 2, 1);
+    request.payload = "display_unavailable";
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(request));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(capture_region_request_token(parsed.value), 2U);
+    EXPECT_EQ(parsed.value.capture_region_revision, 0U);
+    request.capture_region_command_version = 2;
+    std::string error;
+    EXPECT_FALSE(validate_stream_control_message_v1(request, &error));
+    EXPECT_NE(error.find("protocol_version_incompatible"), std::string::npos);
+    request.capture_region_command_version = 1;
+    request.capture_region_request_id = 0;
+    EXPECT_FALSE(validate_stream_control_message_v1(request));
+    set_capture_region_request_identity(request, 2, 1);
+    EXPECT_FALSE(assign_capture_region_revision(request,
+        std::numeric_limits<std::uint64_t>::max()).has_value());
+}
 
 redclaw::protocol::StreamControlMessageV1 make_message(
     redclaw::protocol::StreamControlMessageTypeV1 type) {
@@ -455,6 +537,7 @@ TEST(StreamControlProtocolTests, DesktopDisplayCatalogPreservesVirtualDesktopGeo
     auto catalog = make_message(
         redclaw::protocol::StreamControlMessageTypeV1::kDesktopDisplayCatalog);
     catalog.display_catalog_revision = 7;
+    catalog.capture_region_command_version = 1;
     catalog.desktop_displays = {
         {
             .display_id = "luid-1-output-0",
@@ -483,6 +566,7 @@ TEST(StreamControlProtocolTests, DesktopDisplayCatalogPreservesVirtualDesktopGeo
     ASSERT_TRUE(parsed.ok) << parsed.error;
     ASSERT_EQ(parsed.value.desktop_displays.size(), 2U);
     EXPECT_EQ(parsed.value.display_catalog_revision, 7U);
+    EXPECT_EQ(parsed.value.capture_region_command_version, 1U);
     EXPECT_EQ(parsed.value.desktop_displays[1].desktop_origin_x, -1080);
     EXPECT_EQ(parsed.value.desktop_displays[1].desktop_origin_y, -240);
     EXPECT_EQ(parsed.value.desktop_displays[1].rotation, 90U);

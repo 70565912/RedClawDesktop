@@ -41,9 +41,27 @@ Mouse coordinates are calculated against the latest successfully displayed frame
 
 Entering a local suspension clears unsent events and locally tracked keys/buttons, immediately sends an empty `input_state_sync`, and continues empty syncs every 500 ms. Host releases its tracked input but remains `active`, so the three-second lease does not expire during a long minimize or focus loss. `input_release_all` is reserved for a real terminal transition. Reconnect never automatically restores Controller control intent.
 
-Desktop navigation retains the previous control intent when changing displays or capture regions. The input owner waits for both the matching Host region acknowledgement and a successfully presented frame before clearing `capture_region_change`; window resize, local panel focus and other suspension reasons remain independent. Rejection returns to the confirmed target without enabling a previously view-only Controller, and late completion cannot undo Stop. A requested display restart rejects old capture generations and keeps only empty lease syncs and explicit Stop messages until the new frame is presented. Geometry resets are consumed by the Host runtime loop, release held input and discard queued events without renewing consent. Normal navigation never requires another Start Control request; actual capture failure, authorization loss, disconnect and lease expiry still end control. The wire schema is unchanged. Both Controller navigation handling and Host capture/input handling require the repair for this behavior; older peers continue to connect normally and retain their existing navigation behavior.
+Desktop navigation retains the previous control intent when changing displays or capture regions. The input owner waits for both the matching Host region acknowledgement and a successfully presented frame before clearing `capture_region_change`; window resize, local panel focus and other suspension reasons remain independent. Rejection returns to the confirmed target without enabling a previously view-only Controller, and late completion cannot undo Stop. A requested display restart rejects old capture generations and keeps only empty lease syncs and explicit Stop messages until the new frame is presented. Geometry resets are consumed by the Host runtime loop, release held input and discard queued events without renewing consent. Normal navigation never requires another Start Control request; actual capture failure, authorization loss, disconnect and lease expiry still end control. That control-continuity repair kept the wire schema unchanged; the optional command capability below extends it separately. Both Controller navigation handling and Host capture/input handling require the continuity repair for this behavior; older peers continue to connect normally and retain their existing navigation behavior.
 
 When control is disabled, a mouse press on the playback canvas is consumed locally. One mouse-transparent, focus-free overlay displays a red prohibition symbol for two seconds, with either “未开始控制，请点击 Start Control” or the view-only reason. Repeated presses only restart the same timer. The overlay is an independent frameless surface, so D3D11/OpenGL/Qt canvas geometry and swap-chain resize counts do not change. `blocked_control_click_hint_total` records only the count.
+
+## Navigation command capability
+
+The Host advertises optional `capture_region_command_version=1` in its display catalog.
+An updated Controller echoes version 1 and sends `capture_region_request_id` for
+correlation; it does not propose a capture revision. The Host executes valid commands
+and assigns the next capture revision on its capture worker. Applied/rejected replies
+echo the request ID. Applied replies and video frames carry the Host-owned revision.
+The input owner matches the request ID, then waits for presentation of that revision
+before releasing navigation suspension. Old replies cannot finish a newer request.
+
+An absent capability selects the published legacy contract: requests supply a revision
+above the observed Host revision, and replies echo it. New Hosts continue accepting
+that contract for old Controllers. Optional fields are ignored by old readers;
+unsupported command semantics report `protocol_version_incompatible`. Authorization,
+focus, capture availability and lease checks are unchanged. Reconnect clears pending
+navigation and renegotiates from the next catalog; it never blindly replays a command
+from the previous peer session. A Host retaining the session retains its capture region.
 
 ## Host mapping and injection
 

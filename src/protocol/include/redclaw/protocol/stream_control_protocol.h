@@ -233,6 +233,10 @@ struct StreamControlMessageV1 {
     std::uint16_t region_right = 0;
     std::uint16_t region_bottom = 0;
     std::uint64_t capture_region_revision = 0;
+    // Advertised in the display catalog, echoed by negotiated requests/replies.
+    // Version 1 separates request correlation from Host-assigned geometry.
+    std::uint32_t capture_region_command_version = 0;
+    std::uint64_t capture_region_request_id = 0;
     std::uint32_t content_rect_x = 0;
     std::uint32_t content_rect_y = 0;
     std::uint32_t content_rect_width = 0;

@@ -94,9 +94,9 @@ TEST(ControllerRemoteInputCapture, NavigationWaitsForConfirmationAndPresentation
     EXPECT_EQ(capture.queued_critical_event_count(), 0U);
     capture.present_capture_region(1); // The frozen old frame cannot resume input.
     if (frame_first) capture.present_capture_region(2);
-    else capture.confirm_capture_region_change(2);
+    else capture.confirm_capture_region_change(2, 2);
     EXPECT_FALSE(capture.input_forwarding());
-    if (frame_first) capture.confirm_capture_region_change(2);
+    if (frame_first) capture.confirm_capture_region_change(2, 2);
     else capture.present_capture_region(2);
     EXPECT_TRUE(capture.control_enabled());
     EXPECT_TRUE(capture.input_forwarding());
@@ -111,6 +111,33 @@ TEST(ControllerRemoteInputCapture, NavigationWaitsForConfirmationAndPresentation
   }
 }
 
+TEST(ControllerRemoteInputCapture, HostAssignedGeometryCannotBeConfusedWithRequestIdentity) {
+  for (const bool frame_first : {false, true}) {
+    SCOPED_TRACE(frame_first);
+    redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+    capture.set_send_message_callback([](const auto&, QString*) { return true; });
+    redclaw::ui::ControllerRemoteInputCaptureTestPeer::start(capture);
+    capture.present_capture_region(900);
+    capture.begin_capture_region_change(2);
+    capture.confirm_capture_region_change(1, 901); // Older request, newer geometry.
+    EXPECT_FALSE(capture.input_forwarding());
+    if (frame_first) capture.present_capture_region(901);
+    else capture.confirm_capture_region_change(2, 901);
+    EXPECT_FALSE(capture.input_forwarding()); // Old revision 900 is greater than request ID 2.
+    if (frame_first) capture.confirm_capture_region_change(2, 901);
+    else capture.present_capture_region(901);
+    EXPECT_TRUE(capture.input_forwarding());
+    EXPECT_EQ(capture.desktop_geometry_revision(), 901U);
+    capture.begin_capture_region_change(3);
+    capture.confirm_capture_region_change(2, 902);
+    capture.reject_capture_region_change(2);
+    EXPECT_FALSE(capture.input_forwarding());
+    capture.reject_capture_region_change(3);
+    EXPECT_TRUE(capture.input_forwarding());
+    capture.pause(false, "fixture complete");
+  }
+}
+
 TEST(ControllerRemoteInputCapture, RapidNavigationRetainsIndependentWindowAndFocusSuspensions) {
   using Reason = redclaw::ui::LocalInputSuspensionReason;
   redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
@@ -118,7 +145,7 @@ TEST(ControllerRemoteInputCapture, RapidNavigationRetainsIndependentWindowAndFoc
   redclaw::ui::ControllerRemoteInputCaptureTestPeer::start(capture);
   capture.begin_capture_region_change(2);
   capture.begin_capture_region_change(3);
-  capture.confirm_capture_region_change(2);
+  capture.confirm_capture_region_change(2, 2);
   capture.present_capture_region(2);
   capture.reject_capture_region_change(2);
   EXPECT_TRUE(capture.control_enabled());
@@ -127,7 +154,7 @@ TEST(ControllerRemoteInputCapture, RapidNavigationRetainsIndependentWindowAndFoc
   capture.set_local_suspension(Reason::kLocalUiFocus, true);
   capture.set_local_suspension(Reason::kGeometryTransaction, false);
   EXPECT_TRUE(capture.local_suspension_reason().contains("capture_region_change"));
-  capture.confirm_capture_region_change(3);
+  capture.confirm_capture_region_change(3, 3);
   capture.present_capture_region(3);
   EXPECT_EQ(capture.local_suspension_reason(), "local_ui_focus");
   EXPECT_FALSE(capture.input_forwarding());
@@ -140,7 +167,7 @@ TEST(ControllerRemoteInputCapture, NavigationRejectAndLateCompletionPreserveOrig
   redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
   capture.set_send_message_callback([](const auto&, QString*) { return true; });
   capture.begin_capture_region_change(2);
-  capture.confirm_capture_region_change(2);
+  capture.confirm_capture_region_change(2, 2);
   capture.present_capture_region(2);
   EXPECT_FALSE(capture.control_enabled()); // View-only stays view-only.
   redclaw::ui::ControllerRemoteInputCaptureTestPeer::start(capture);
@@ -151,7 +178,7 @@ TEST(ControllerRemoteInputCapture, NavigationRejectAndLateCompletionPreserveOrig
   capture.begin_capture_region_change(4);
   capture.pause(true, "explicit stop during navigation");
   capture.present_capture_region(4);
-  capture.confirm_capture_region_change(4);
+  capture.confirm_capture_region_change(4, 4);
   EXPECT_FALSE(capture.control_enabled());
   EXPECT_FALSE(capture.input_forwarding());
 }
@@ -1226,7 +1253,7 @@ TEST(ControllerRemoteInputCapture, NewControlGrantRetainsAnExistingTransferPause
   EXPECT_TRUE(capture.control_enabled()); EXPECT_FALSE(capture.input_forwarding());
   EXPECT_TRUE(capture.local_suspension_reason().contains("workspace_transfer_busy"));
   EXPECT_TRUE(capture.local_suspension_reason().contains("capture_region_change"));
-  capture.confirm_capture_region_change(2);
+  capture.confirm_capture_region_change(2, 2);
   capture.present_capture_region(2);
   EXPECT_FALSE(capture.local_suspension_reason().contains("capture_region_change"));
   EXPECT_TRUE(capture.local_suspension_reason().contains("workspace_transfer_busy"));
