@@ -143,6 +143,7 @@
 #include "redclaw/render/audio_player.h"
 #include "redclaw/diag/diag_module.h"
 #include "redclaw/protocol/stream_control_protocol.h"
+#include "redclaw/protocol/capture_region_control.h"
 #include "redclaw/protocol/agent_protocol.h"
 #include "redclaw/render/render_module.h"
 #include "redclaw/helper/direct_frame_shared_memory.h"
@@ -4238,7 +4239,8 @@ bool launch_gui_shell(
         request.region_top = top;
         request.region_right = right;
         request.region_bottom = bottom;
-        request.capture_region_revision = revision;
+        redclaw::protocol::set_capture_region_request_identity(
+            request, revision, desktop_navigation_panel->capture_region_command_version());
         QString send_error;
         if (!controller.send_control_message(request, &send_error)) {
           append_log(session_log, "Capture region request failed: " + send_error);
@@ -5056,7 +5058,8 @@ bool launch_gui_shell(
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kDesktopDisplayCatalog) {
             desktop_navigation_panel->set_display_catalog(
-                control.desktop_displays, control.display_catalog_revision);
+                control.desktop_displays, control.display_catalog_revision,
+                control.capture_region_command_version);
             desktop_navigation_panel->set_transport_available(true);
             return;
           }
@@ -5066,10 +5069,8 @@ bool launch_gui_shell(
 #if defined(_WIN32) && !defined(NDEBUG)
             if (qa_input_probe) qa_input_probe->set_region(control);
 #endif
-            remote_input_capture->set_desktop_geometry_revision(
-                control.capture_region_revision);
             remote_input_capture->confirm_capture_region_change(
-                control.capture_region_revision);
+                redclaw::protocol::capture_region_request_token(control), control.capture_region_revision);
             remote_input_request_pending = false;
             refresh_remote_control_ui();
             return;
@@ -5077,10 +5078,11 @@ bool launch_gui_shell(
           if (control.type
               == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRejected) {
             desktop_navigation_panel->apply_region_rejected(control);
-            if (control.capture_region_revision == remote_input_capture->pending_capture_region_revision())
+            if (redclaw::protocol::capture_region_request_token(control)
+                == remote_input_capture->pending_capture_region_revision())
               capture_playback_state.cancel_navigation();
             remote_input_capture->reject_capture_region_change(
-                control.capture_region_revision);
+                redclaw::protocol::capture_region_request_token(control));
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kInputCapabilities) {

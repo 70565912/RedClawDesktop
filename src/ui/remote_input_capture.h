@@ -60,7 +60,7 @@ public:
     void set_remote_frame_size(QSize size);
     void set_desktop_geometry_revision(std::uint64_t revision);
     void begin_capture_region_change(std::uint64_t revision);
-    void confirm_capture_region_change(std::uint64_t revision);
+    void confirm_capture_region_change(std::uint64_t request_id, std::uint64_t revision);
     void reject_capture_region_change(std::uint64_t revision);
     void present_capture_region(std::uint64_t revision);
     bool acknowledge_input_sequence(std::uint64_t sequence, std::uint64_t consumed_us, std::uint64_t runtime_received_us);

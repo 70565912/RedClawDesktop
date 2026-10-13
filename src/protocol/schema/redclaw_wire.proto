@@ -295,6 +295,9 @@ message StreamControlMessageV1 {
   // channel stays closed. audio_playback_requested is set by the Controller.
   uint32 audio_version = 88;
   bool audio_playback_requested = 89;
+  // Optional navigation command capability; absent means legacy revision requests.
+  uint32 capture_region_command_version = 90;
+  uint64 capture_region_request_id = 91;
 }
 
 message WorkspaceControlV1 {

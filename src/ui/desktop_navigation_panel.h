@@ -36,7 +36,9 @@ class DesktopNavigationPanel final : public QWidget {
   void set_region_request_callback(RegionRequestCallback callback);
   void set_display_catalog(
       const std::vector<redclaw::protocol::DesktopDisplayV1>& displays,
-      std::uint64_t catalog_revision);
+      std::uint64_t catalog_revision,
+      std::uint32_t command_version = 0);
+  [[nodiscard]] std::uint32_t capture_region_command_version() const { return command_version_; }
   void set_thumbnail(
       const std::string& display_id,
       const QImage& thumbnail,
@@ -69,6 +71,7 @@ class DesktopNavigationPanel final : public QWidget {
   NavigationSelectionWidget* selection_widget_ = nullptr;
   std::vector<redclaw::protocol::DesktopDisplayV1> displays_;
   std::uint64_t catalog_revision_ = 0;
+  std::uint32_t command_version_ = 0;
   std::uint64_t next_region_revision_ = 2;
   std::uint64_t pending_region_revision_ = 0;
   QString confirmed_display_id_;

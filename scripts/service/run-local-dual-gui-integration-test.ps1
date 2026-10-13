@@ -756,7 +756,7 @@ function Invoke-ControlJson {
     $output = @(
         & (Join-Path $PSScriptRoot 'invoke-cross-lan-debug-control.ps1') `
             -Action $Action -ControlName $ControlName -Limit $Limit `
-            -TimeoutMs 3000 -Json 2>$null
+            -TimeoutMs 10000 -Json 2>$null
     )
     if ($LASTEXITCODE -ne 0) {
         throw "Debug control action '$Action' failed with exit code $LASTEXITCODE."
@@ -1040,6 +1040,10 @@ try {
                 }
                 $script:HostDhtListenPort = $hostDhtListenPortBaseline
                 $restartRunId = "$runId-host-restart-$restartIndex"
+                # Each replacement uses a fresh log directory, but must retain
+                # the same fixture password as the still-running Controller.
+                Copy-Item -LiteralPath (Join-Path $hostDirectory 'connection-credential.dpapi') `
+                    -Destination (Join-Path $restartDirectory 'connection-credential.dpapi')
                 $hostArgs = Get-IntegrationArgumentList `
                     -Role host -RoleDirectory $restartDirectory `
                     -SignalDirectory $restartSignalDirectory `

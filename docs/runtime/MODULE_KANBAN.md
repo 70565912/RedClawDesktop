@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-10-10
+Updated: 2026-10-13
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.7` Developer Preview, with verified Release build, 182 focused cases and local/GitHub package smoke. The v0.1.6 package remains the preceding optimization release; v0.1.5 remains the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -34,7 +34,7 @@ Updated: 2026-09-21
 
 ## M05 Input
 
-Updated: 2026-10-10
+Updated: 2026-10-13
 
 Controller navigation follow-up (2026-10-10, M05-T01 — done): fix display selection rejected after a Controller restart by synchronizing requests with the retained Host region revision. The old candidate reproduces `stale_region_revision`; Debug build, complete candidate publication and three focused suites pass 182 cases. Independent local Controller replacement completes with rollback retained and automatic reconnection; runtime confirms the second display applied with no pending request, and the operator verifies selection and normal control. See the [development log](../logs/DEVLOG.md) for rollout evidence.
 
@@ -63,14 +63,16 @@ Updated: 2026-09-20
 
 ## M09 Render
 
-- `M09-T01` D3D11 decoded-surface presentation with bounded CPU fallback — done.
+Updated: 2026-10-13
+
+- `M09-T01` D3D11 decoded-surface presentation with bounded CPU fallback — done. The Controller canvas now restores its render target after a failed buffer resize and rebuilds invalid output resources; legacy swap chains use buffer zero. Debug build/publication, three focused D3D11 cases and the authorized local Controller restart pass. Fresh receive/decode/presentation submissions match the operator-reported 28 FPS. A read-only 120-frame sample and isolated hardware/canvas replay both contain 119 distinct pixel hashes without failures. On 2026-10-13 the operator directly at the Controller confirms both picture and control recovered, closing this incident's visible-output/input acceptance. The initiating GPU/window event remains unproved. See the development log.
 - `M09-T02` Broader GPU/driver validation — in-progress.
 
 ## M10 UI
 
-Updated: 2026-10-09
+Updated: 2026-10-13
 
-- `M10-T01` Device-code Host/Controller GUI and playback workspace — done. The playback window titled `RedClaw` is an independent top-level window, not owned by `RedClaw Desktop`. Desktop navigation preserves control intent under M05-T01, including independent window/focus/geometry suspension. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md).
+- `M10-T01` Device-code Host/Controller GUI and playback workspace — done. The playback window titled `RedClaw` is an independent top-level window, not owned by `RedClaw Desktop`. Desktop navigation preserves control intent under M05-T01, including independent window/focus/geometry suspension. The 2026-10-13 repair separates negotiated navigation request IDs from Host-owned capture revisions, retains the published legacy contract, and discards previous-session navigation replay. Debug main build and 212 directly related automated cases pass, including input gating and D3D11 recovery. Isolated real-capture runtimes verify both mixed-version directions and the new command flow from Host revision 900 / request ID 2 to applied revision 901. Actual v0.1.6/v0.1.7 packages pass both compatibility directions; v0.1.4/v0.1.5 original packages fail startup before communication and remain unqualified. The DHT dual-GUI rolling Host upgrade and automatic reconnect pass. Authorized serving Controller delivery follows source commit/push; exact historical attribution remains unproved. See [ordinary desktop input](../architecture/ordinary-desktop-remote-input-v1.md) and the [development log](../logs/DEVLOG.md).
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
 - `M10-T03` Controller floating task workspace — done; four owned task windows, movable translucent task bar, local layout persistence, hide-only lifecycle and input isolation. Debug NoPublish build and 14 focused unattended cases passed, including a corrected initial-layout timing fixture's single-case recheck. Unaffected tests were not rerun; native visual/physical-keyboard/hardware evaluation remains optional. Working-tree delivery only: no publication, peer upgrade or session restart. See the [workspace presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03).
 - `M10-T04` Confirm user exits from a connected Host — done; main-window close, connection-page Exit and Stop Runtime ask before teardown, with Cancel as the default and escape action. Debug build and 10 focused unattended UI tests passed (6 new confirmation cases plus 4 existing lifecycle cases). Published/deployed locally as the X00-T27 dependency; no live dual-machine exit-dialog test or peer upgrade.

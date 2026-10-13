@@ -277,6 +277,8 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_region_right(message.region_right);
     encoded.set_region_bottom(message.region_bottom);
     encoded.set_capture_region_revision(message.capture_region_revision);
+    encoded.set_capture_region_command_version(message.capture_region_command_version);
+    encoded.set_capture_region_request_id(message.capture_region_request_id);
     encoded.set_content_rect_x(message.content_rect_x);
     encoded.set_content_rect_y(message.content_rect_y);
     encoded.set_content_rect_width(message.content_rect_width);
@@ -426,6 +428,8 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     if (encoded.region_bottom() > std::numeric_limits<std::uint16_t>::max()) return false;
     message.region_bottom = static_cast<std::uint16_t>(encoded.region_bottom());
     message.capture_region_revision = encoded.capture_region_revision();
+    message.capture_region_command_version = encoded.capture_region_command_version();
+    message.capture_region_request_id = encoded.capture_region_request_id();
     message.content_rect_x = encoded.content_rect_x();
     message.content_rect_y = encoded.content_rect_y();
     message.content_rect_width = encoded.content_rect_width();
