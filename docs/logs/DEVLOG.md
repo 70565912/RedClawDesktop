@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-13 — Switch the local Controller to a waiting Host (M10-T01)
+
+- The operator requests closing the local Controller and restarting as the controlled Host after testing and source publication. Reuse the already qualified Debug artifact from repairs `5446bfc` / `de4ab92`; all 212 focused cases and the DHT rolling test remain passed. Confirm remote main contains `242cd60` and every file in the 345-file installed bundle matches the tested candidate. No application-source change or rebuild is needed for this role-only operation.
+- Preserve the original Controller arguments for recovery, then gracefully close its GUI/runtime and launch the same published executable as Host. Reuse the configured session code, saved local Host password and network settings; require real capture and persistent Host waiting. Do not add remote Agent permission. The first independent launcher fails to import the Windows PowerShell security module before stopping anything; the current PowerShell 7 launcher succeeds with the same identity/ACL checks.
+- Verify both old Controller processes have exited and only the new Host GUI/runtime remain. Host Debug Control responds, DHT is reachable and session publication succeeds (publish/generation counts 1/1). At the acceptance sample it is waiting for a Controller, with no remote record or media yet; this is publication/startup acceptance, not a new dual-machine media/input result. The running EXE hash12 remains `c71b71179e90`. Local evidence: `navigation-command-20261013/host-switch`.
+
 ## 2026-10-13 — Separate navigation commands from capture geometry (M05-T01 / M10-T01)
 
 - Synchronize main to `deab9d8`, reconcile the equivalent upstream Controller revision repair, and retain the local D3D11 resource-lifecycle repair and its evidence. The original local patch remains backed up outside Git.
