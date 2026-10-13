@@ -57,6 +57,32 @@ TEST(D3D11Playback, NewFramesDuringDeferredGeometryUseTheActualOutputResource) {
     EXPECT_NE(renderer.canvas->present_frame(frame, &error), redclaw::ui::PresentOutcome::kFailed) << error.toStdString();
     renderer.canvas->commit_geometry(2);
     EXPECT_EQ(frame.pixels.size(), 0);
+
+    // Exercise the same canvas after surface/CPU fallback and session clearing.
+    // A retained swap chain must remain usable across every geometry commit.
+    QImage cpu_frame(640, 360, QImage::Format_RGB32);
+    cpu_frame.fill(QColor(40, 80, 120));
+    for (std::uint64_t revision = 3; revision < 35; ++revision) {
+        SCOPED_TRACE(revision);
+        renderer.canvas->set_geometry_transaction_active(true);
+        owner->resize(revision % 2 == 0 ? 900 : 420, revision % 2 == 0 ? 580 : 240);
+        QCoreApplication::processEvents();
+        error.clear();
+        ASSERT_NE(renderer.canvas->present_frame(frame, &error), redclaw::ui::PresentOutcome::kFailed)
+            << error.toStdString();
+        renderer.canvas->commit_geometry(revision);
+        error.clear();
+        ASSERT_NE(renderer.canvas->present_image(cpu_frame, &error), redclaw::ui::PresentOutcome::kFailed)
+            << error.toStdString();
+        renderer.canvas->clear_frame();
+        error.clear();
+        ASSERT_NE(renderer.canvas->present_frame(frame, &error), redclaw::ui::PresentOutcome::kFailed)
+            << error.toStdString();
+        error.clear();
+        ASSERT_NE(renderer.canvas->present_image(cpu_frame, &error), redclaw::ui::PresentOutcome::kFailed)
+            << error.toStdString();
+        QThread::msleep(10);
+    }
 }
 
 TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWatermarks) {

@@ -105,7 +105,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     const QSize phys = current_phys_size();
     if (phys != last_phys_size_) {
       last_phys_size_ = phys;
-      sync_swap_chain_size();
+      (void)sync_swap_chain_size();
     }
   }
 
@@ -134,7 +134,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       if (!ensure_device(error_detail) || !ensure_swap_chain(error_detail)) {
         return PresentOutcome::kFailed;
       }
-      sync_swap_chain_size();
+      if (!sync_swap_chain_size(error_detail)) {
+        return PresentOutcome::kFailed;
+      }
       preparation.finish();
       const auto outcome = present_d3d11_surface(frame, error_detail);
       if (outcome == PresentOutcome::kPresented) {
@@ -153,7 +155,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (!ensure_device(error_detail) || !ensure_swap_chain(error_detail) || !ensure_shaders(error_detail)) {
       return PresentOutcome::kFailed;
     }
-    sync_swap_chain_size();
+    if (!sync_swap_chain_size(error_detail)) {
+      return PresentOutcome::kFailed;
+    }
     const quint32 content_x = frame.content_rect_x;
     const quint32 content_y = frame.content_rect_y;
     const quint32 content_width = frame.content_rect_width == 0
@@ -290,7 +294,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
   bool ensure_swap_chain(QString* error_detail) {
     if (swap_chain_) {
-      return true;
+      if (render_target_ || create_render_target(error_detail)) {
+        return true;
+      }
+      release_output_resources();
+      swap_chain3_.Reset();
+      swap_chain_.Reset();
     }
     ComPtr<IDXGIDevice> dxgi_device;
     if (FAILED(device_.As(&dxgi_device)) || !dxgi_device) {
@@ -592,12 +601,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (!swap_chain3_) {
       swap_chain_.As(&swap_chain3_);
     }
-    if (swap_chain3_) {
+    DXGI_SWAP_CHAIN_DESC swap_desc{};
+    if (swap_chain3_ && SUCCEEDED(swap_chain_->GetDesc(&swap_desc))
+        && (swap_desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD
+            || swap_desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)) {
       buffer_index = swap_chain3_->GetCurrentBackBufferIndex();
-      DXGI_SWAP_CHAIN_DESC swap_desc{};
-      if (SUCCEEDED(swap_chain_->GetDesc(&swap_desc))) {
-        buffer_count = (std::max)(1U, swap_desc.BufferCount);
-      }
+      buffer_count = (std::max)(1U, swap_desc.BufferCount);
     }
     if (video_output_views_.size() != buffer_count) {
       video_output_views_.clear();
@@ -624,6 +633,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         *error_detail = QString("GetBuffer for video output failed: 0x%1")
                             .arg(static_cast<qulonglong>(hr), 0, 16);
       }
+      release_output_resources();
+      swap_chain3_.Reset();
+      swap_chain_.Reset();
       return nullptr;
     }
 
@@ -841,16 +853,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
                  qRound(height() * devicePixelRatioF()));
   }
 
-  void sync_swap_chain_size() {
-    if (geometry_transaction_active_ || !swap_chain_ || !context_) {
-      return;
-    }
-
-    const QSize phys = current_phys_size();
-    if (phys.width() <= 0 || phys.height() <= 0 || phys == swap_chain_phys_size_) {
-      return;
-    }
-
+  void release_output_resources() {
     context_->OMSetRenderTargets(0, nullptr, nullptr);
     render_target_.Reset();
     video_processor_.Reset();
@@ -859,6 +862,19 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     video_input_views_.clear();
     video_input_texture_.Reset();
     video_output_size_ = {};
+  }
+
+  bool sync_swap_chain_size(QString* error_detail = nullptr) {
+    if (geometry_transaction_active_ || !swap_chain_ || !context_) {
+      return swap_chain_ && render_target_;
+    }
+
+    const QSize phys = current_phys_size();
+    if (phys.width() <= 0 || phys.height() <= 0 || phys == swap_chain_phys_size_) {
+      return render_target_ || create_render_target(error_detail);
+    }
+
+    release_output_resources();
 
     const HRESULT resize_hr = swap_chain_->ResizeBuffers(
         0,
@@ -866,15 +882,17 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         static_cast<UINT>(phys.height()),
         DXGI_FORMAT_UNKNOWN,
         0);
-    if (FAILED(resize_hr)) {
-      return;
+    // ResizeBuffers can fail while an outstanding back-buffer reference exists.
+    // Restore the old buffer's target so subsequent CPU frames remain usable.
+    if (create_render_target(error_detail)) {
+      if (SUCCEEDED(resize_hr)) {
+        ++swap_chain_resize_count_;
+      }
+      return true;
     }
-
-    QString ignored;
-    if (create_render_target(&ignored)) {
-      swap_chain_phys_size_ = phys;
-      ++swap_chain_resize_count_;
-    }
+    swap_chain3_.Reset();
+    swap_chain_.Reset();
+    return ensure_swap_chain(error_detail);
   }
 
   void update_vertices() {
