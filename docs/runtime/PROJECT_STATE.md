@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-10-01
+Updated: 2026-10-14
 
 ## Current optimization work
 
@@ -234,6 +234,12 @@ run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
+RedClawDesktop [v0.1.8](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.8) is published on 2026-10-14 from `fc2cc67` as a Windows x64 Developer Preview / GitHub Pre-release. It separates negotiated navigation request IDs from Host capture revisions and repairs D3D11 playback resource recovery. See [release notes](../releases/v0.1.8.md).
+
+Standard Release build/publication and the full 125-suite automatic CTest collection pass without failures, disabled suites or skips. Five real-capture Release pairings cover new/new and v0.1.6/v0.1.7 in both directions, with 17 expected navigation results. The final ZIP has 342 files / 359,443,421 bytes; ZIP hash12 `527957708a01`, EXE hash12 `e3af2d1635ce`. Server asset digests/sizes and the embedded manifest match local artifacts. Local extracted startup and [GitHub package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/38505023571), including full cloud download/hash/startup verification, pass. The slow duplicate local download is retained as a partial file, not claimed as completed. Source Docs Governance passes; source CI unit tests remain in progress at this snapshot. v0.1.4/v0.1.5 original-package startup issues leave their live compatibility unqualified. No serving runtime is replaced by publication; evidence `release-v0.1.8-20261014`.
+
+### v0.1.7
+
 RedClawDesktop [v0.1.7](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.7) is published on 2026-10-10 from `19c7080` as a Windows x64 Developer Preview / GitHub Pre-release. It includes Controller navigation revision synchronization, retained control intent across desktop/region changes, right Shift normalization, Debug stale-runtime rebuild/publication and atomic upgrade receipts. See [release notes](../releases/v0.1.7.md).
 
 Standard Release build/publication and three rebuilt focused input/UI/capture suites pass 182 cases with zero failures/skips. The final ZIP has 336 files / 355,870,306 bytes; ZIP hash12 `4daa9c88a994`, EXE hash12 `20073e63d7e2`. Both server asset sizes/SHA256 digests, the downloaded checksum file, remote tag and embedded source/executable manifest are verified. Local extracted startup and [GitHub released-package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/37961231591) pass. Docs Governance passes; the separate source CI unit workflow is still running at this snapshot. The operator's second-display/control confirmation belongs to the prior Debug deployment, not a new Release performance gate. First preflight/temporary-cleanup failures and repairs remain recorded in the [development log](../logs/DEVLOG.md); evidence `release-v0.1.7-20261010`.
@@ -316,7 +322,7 @@ The repository is not a communication or signaling exchange. Cross-machine coord
 
 ## Resume point
 
-Current `main` includes the v0.1.7 navigation/input/startup/upgrade repairs, X00-T25 audio, accepted X00-T27–T29 optimizations, the T30 expiry refresh and Windows/Linux minimal checks. T30/T31 historical causes remain unknown after their operator-approved temporary closure. The published v0.1.7 checkpoint follows the release notes; its package/manifest/remote assets and cloud package smoke are verified. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
+Current `main` includes the v0.1.8 navigation-command separation and D3D11 recovery, the v0.1.7 input/startup/upgrade repairs, X00-T25 audio, accepted X00-T27–T29 optimizations, the T30 expiry refresh and Windows/Linux minimal checks. T30/T31 historical causes remain unknown after their operator-approved temporary closure. The published v0.1.8 checkpoint follows the release notes; its full Release CTest collection, mixed-version runtime checks, package/manifest/remote assets and cloud package smoke are verified. [v0.1.5](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.5) is the published package from `9a7483b`. The operator verified audible playback on a Debug Controller; the peer Host was not replaced. Physical cursor tracking on the remote peer was not requalified. Continue from this source. Do not stop a publishing Host before a session-independent rollback can relaunch the previous program.
 
 The workspace API implementation/candidate task is complete. The operator has now authorized documentation updates, a source commit and a push to GitHub. Switching the user's active runtime, upgrading the physical peer and publishing a GitHub Release binary remain separate operations requiring explicit authorization. Concurrent output/file testing preserved bounded memory and sub-250 ms GUI heartbeats, but recorded lower display rates; this is retained evidence, not a performance-fix claim. The periodic-stall investigation below remains open.
 
