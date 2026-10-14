@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-14 — Qualify v0.1.8 Developer Preview
+
+- Advance the CMake/vcpkg version and Chinese/English download entrypoints to v0.1.8, documenting the negotiated navigation-command/capture-revision separation and D3D11 resource recovery since v0.1.7. No application behavior is added during release preparation; prior Debug rollout and field-attribution limits remain recorded.
+- Build and publish all Release targets through `build.ps1` with the matching VS2022 environment. The full 125-suite Release CTest collection passes in 874.55 seconds, with zero failures, disabled suites or skipped cases. The long filtered-ICE and delayed-answer/lifecycle fixtures complete normally. The Release runtime then passes five real-capture pairings (new/new and v0.1.6/v0.1.7 in both directions), with 17 expected navigation results including one rejection/recovery. v0.1.4/v0.1.5 live coverage remains unqualified after their previously recorded original-package startup failures.
+- Prepare the clean source commit for the standard GitHub publication entrypoint, which checks the final archive before creating its annotated tag and uploading it as a Pre-release. Local evidence: `release-v0.1.8-20261014`. Publication does not perform another serving-runtime replacement.
+
 ## 2026-10-13 — Switch the local Controller to a waiting Host (M10-T01)
 
 - The operator requests closing the local Controller and restarting as the controlled Host after testing and source publication. Reuse the already qualified Debug artifact from repairs `5446bfc` / `de4ab92`; all 212 focused cases and the DHT rolling test remain passed. Confirm remote main contains `242cd60` and every file in the 345-file installed bundle matches the tested candidate. No application-source change or rebuild is needed for this role-only operation.
