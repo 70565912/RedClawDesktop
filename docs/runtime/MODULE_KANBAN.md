@@ -1,10 +1,12 @@
 # Module Kanban
 
-Updated: 2026-10-13
+Updated: 2026-10-14
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The current release checkpoint is the `v0.1.7` Developer Preview, with verified Release build, 182 focused cases and local/GitHub package smoke. The v0.1.6 package remains the preceding optimization release; v0.1.5 remains the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
 Status values: `done`, `in-progress`, `planned`.
+
+Release candidate v0.1.8 (2026-10-14): standard Release build/publication and all 125 automatic CTest suites pass without failures or skips. Five real-capture Release pairings cover new/new and v0.1.6/v0.1.7 in both directions; final archive verification and GitHub publication follow the clean source commit. See [release notes](../releases/v0.1.8.md).
 
 Validation routing follows the [automated-only release matrix](../testing/test-matrix.md). Human-assisted tests are excluded from automatic sequences and version-release requirements; the developer chooses any manual evaluation independently. Historical physical/native "pending" notes record unperformed coverage, not current release blockers or automatic follow-up tasks. Reclassification never claims those cases passed.
 
