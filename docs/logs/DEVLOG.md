@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-18 — Restore source CI compatibility with current FFmpeg
+
+- Historical CI run `38505461639` successfully installs FFmpeg 9.0.2 but fails compiling the capture module because `AVCodec::pix_fmts` is no longer available. Use the public `avcodec_get_supported_config` query for libavcodec 62+ and retain the original field access for older supported headers. Preserve null/error fallback and pixel-format preference order; no protocol, capture-size or codec-feature change.
+- Split vcpkg cache restore/save so a successful dependency configuration saves the exact existing cache key before application compilation. The historical dependency configuration takes 61 minutes 22 seconds; later source/test failures previously discarded that reusable work. Configuration must still succeed before saving; Windows Debug unit compilation and the original CTest gate remain unchanged.
+- Workflow YAML parsing and configure/save/build ordering checks pass. The existing six-case encoder-execution suite covers software startup, frame resize, fallback, B-frame rejection, keyframe requests and restart/clock behavior. Local Debug validation uses the standard build entrypoint with publication disabled; the repair commit's `ci-unit-tests` check records current-FFmpeg build/test acceptance. Retain the local reports alongside the AMF provenance and checksum-rejection evidence.
+
 ## 2026-10-18 — Repair AMD AMF dependency integrity in source CI
 
 - Fresh Windows CI runs `39092188087` and `39093458527` stop before compilation: upstream vcpkg records the original AMF 1.5.3 archive hash, while AMD's official same-named asset was uploaded on 2026-10-16 after the port's 2026-10-02 update. The current asset's SHA256 matches GitHub release metadata; all 57 headers match Git blob hashes at the full v1.5.3 commit, with no missing or extra files. The old archive is unavailable, so the reason for replacement and byte-level differences from that archive remain unknown.

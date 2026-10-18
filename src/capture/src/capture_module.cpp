@@ -665,11 +665,27 @@ bool has_any_encoder_named(const std::vector<std::string>& encoder_names) {
 }
 
 bool encoder_supports_pixel_format(const AVCodec* codec, AVPixelFormat pixel_format) {
-    if (codec == nullptr || codec->pix_fmts == nullptr) {
+    if (codec == nullptr) {
         return false;
     }
 
-    for (const AVPixelFormat* supported_format = codec->pix_fmts;
+#if LIBAVCODEC_VERSION_MAJOR >= 62
+    // Use the public query API on FFmpeg 8+; newer releases remove pix_fmts.
+    const void* configurations = nullptr;
+    if (avcodec_get_supported_config(
+            nullptr, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0, &configurations, nullptr) < 0) {
+        return false;
+    }
+    const auto* pixel_formats = static_cast<const AVPixelFormat*>(configurations);
+#else
+    const AVPixelFormat* pixel_formats = codec->pix_fmts;
+#endif
+    if (pixel_formats == nullptr) {
+        // Preserve the existing fallback when the codec does not enumerate formats.
+        return false;
+    }
+
+    for (const AVPixelFormat* supported_format = pixel_formats;
          *supported_format != AV_PIX_FMT_NONE;
          ++supported_format) {
         if (*supported_format == pixel_format) {
