@@ -38,7 +38,8 @@ jobs:
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        id: vcpkg_cache
+        uses: actions/cache/restore@v4
         with:
           path: build/vcpkg-binary-cache
           key: ${{ runner.os }}-vcpkg-${{ steps.vcpkg.outputs.commit }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
@@ -51,6 +52,14 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DBUILD_TESTING=ON `
             -DREDCLAW_TESTS_IN_DEFAULT_BUILD=OFF
+
+      # Preserve validated dependencies even when a later build/test step fails.
+      - name: Save configured vcpkg binary cache
+        if: steps.vcpkg_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: ${{ steps.vcpkg_cache.outputs.cache-primary-key }}
 
       - name: Build unit test targets (Debug)
         shell: pwsh

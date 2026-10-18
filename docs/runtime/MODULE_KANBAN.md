@@ -14,7 +14,9 @@ Validation routing follows the [automated-only release matrix](../testing/test-m
 
 ## M01 Capture
 
-Updated: 2026-09-21
+Updated: 2026-10-18
+
+FFmpeg source-CI compatibility (2026-10-18): use the public pixel-format capability query on FFmpeg 8+ and retain the legacy branch for older supported headers, fixing the FFmpeg 9 compile failure. Format preference and fallback remain unchanged. The existing encoder-execution regression and the repair commit's Windows `ci-unit-tests` check are the acceptance gates; see the development log.
 
 - `M01-T01` Windows Graphics Capture and Desktop Duplication backends — done.
 - `M01-T02` Multi-display product controls — planned.
@@ -120,7 +122,7 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 
 Updated: 2026-10-18
 
-AMF source-CI dependency repair (2026-10-18): the replacement official 1.5.3 asset matches GitHub's digest and all 57 headers match the tagged source commit. The registered overlay retains strict archive/license SHA512 checks and passes a fresh isolated vcpkg install with binary caching disabled and port checks enforced. Full Windows Debug build/unit acceptance is tracked by this repair commit's `ci-unit-tests` check. See [provenance and removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) and the development log.
+AMF source-CI dependency repair (2026-10-18): the replacement official 1.5.3 asset matches GitHub's digest and all 57 headers match the tagged source commit. The registered overlay retains strict archive/license SHA512 checks and passes a fresh isolated vcpkg install with binary caching disabled and port checks enforced. The follow-up also fixes the existing FFmpeg 9 compile incompatibility and saves validated dependency caches before the build. Full Windows Debug build/unit acceptance is tracked by the repair commit's `ci-unit-tests` check. See [provenance and removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) and the development log.
 
 Debug Host startup maintenance (2026-10-08) — done: the original command launcher was blocked by `published_runtime_fresh` because the published Debug executable preceded current sources. Standard `build.ps1 -Configuration Debug -Target redclaw_desktop` rebuilt and published successfully; the command launcher then exited 0. The operator-requested script follow-up now automatically builds/publishes an outdated or missing default Debug runtime, rechecks preparation, then continues startup; current outputs skip the build and failed builds cancel startup. Freshness covers native sources/headers, embedded source assets and build configuration. Eleven isolated integration scenarios pass, including stale-to-launch, failed build, unsuccessful publication and running-instance protection. The actual command entry refuses duplicate startup before publication; the existing Host remains running. Published/build executable hashes match; DHT is reachable with successful publication. No Controller is connected; dual-machine capture/display was not requalified. Local evidence: `cross-lan-gui-debug_host_20261008_093509` and `debug-startup-autobuild-20261008`. See the development log.
 
