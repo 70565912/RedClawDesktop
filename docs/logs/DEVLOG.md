@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-10-18 — Repair source-CI Windows environment regressions
+
+- Run `39131099228` verifies the AMF overlay, configures FFmpeg 9.0.2, saves the validated dependency cache and compiles all unit targets. CTest then passes 82 of 86 suites; four failures reveal default-owner, console-encoding and filename-conversion assumptions that the local environment did not expose.
+- Create a new Windows coordination journal with the current user's explicit owner SID and protected user-only DACL in one `CREATE_NEW` operation. A token's default owner can be a group on the runner. Keep rejection of preexisting files with a different owner or permissive ACL; do not take ownership, truncate existing files or relax access checks.
+- Prevent the Windows PowerShell 5.1 stdin writer from introducing a UTF-8 BOM at process creation, restoring the caller's console encoding immediately. Use explicit BOM-free stdin encoding where supported and retain strict native message validation. Add a UTF-8/BOM console roundtrip regression alongside the existing Unicode and four malformed-input rejection checks. Compare manifest fixture filenames as UTF-8 instead of converting through the system code page.
+- Standard Debug main build with publication disabled and all four previously failing CTest suites pass locally (8.61 seconds). The CLI regression also passes on PowerShell 7. Both scripts parse, with no new analyzer warnings against HEAD; six preexisting warnings remain. The Windows CI check on this follow-up commit is the full 86-suite acceptance gate. No release artifact, serving runtime, online protocol or persisted schema is changed. Evidence remains under `build/reports/ci-amf-integrity-20261018/`.
+
 ## 2026-10-18 — Restore source CI compatibility with current FFmpeg
 
 - Historical CI run `38505461639` successfully installs FFmpeg 9.0.2 but fails compiling the capture module because `AVCodec::pix_fmts` is no longer available. Use the public `avcodec_get_supported_config` query for libavcodec 62+ and retain the original field access for older supported headers. Preserve null/error fallback and pixel-format preference order; no protocol, capture-size or codec-feature change.

@@ -329,7 +329,7 @@ bool parse_record(std::string_view line, CoordinationJournalRecordV1* record,
     return validate_record(*record, error);
 }
 
-bool protect_owner_only(const std::filesystem::path& path, std::string* error) {
+bool create_owner_only(const std::filesystem::path& path, std::string* error) {
 #ifdef _WIN32
     HANDLE token = nullptr;
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == FALSE) {
@@ -347,22 +347,6 @@ bool protect_owner_only(const std::filesystem::path& path, std::string* error) {
         return false;
     }
     const auto* token_user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
-    const std::wstring path_text = path.wstring();
-    PSID owner_sid = nullptr;
-    PSECURITY_DESCRIPTOR security_descriptor = nullptr;
-    const DWORD owner_result = GetNamedSecurityInfoW(
-        const_cast<LPWSTR>(path_text.c_str()), SE_FILE_OBJECT,
-        OWNER_SECURITY_INFORMATION, &owner_sid, nullptr, nullptr, nullptr,
-        &security_descriptor);
-    const bool owner_matches = owner_result == ERROR_SUCCESS
-        && owner_sid != nullptr && EqualSid(owner_sid, token_user->User.Sid) != FALSE;
-    if (security_descriptor != nullptr) {
-        LocalFree(security_descriptor);
-    }
-    if (!owner_matches) {
-        assign_error("coordination journal is not owned by the current user", error);
-        return false;
-    }
     EXPLICIT_ACCESSW access{};
     access.grfAccessPermissions = GENERIC_READ | GENERIC_WRITE | DELETE;
     access.grfAccessMode = SET_ACCESS;
@@ -375,17 +359,32 @@ bool protect_owner_only(const std::filesystem::path& path, std::string* error) {
         assign_error("failed to build journal ACL", error);
         return false;
     }
-    const DWORD result = SetNamedSecurityInfoW(
-        const_cast<LPWSTR>(path_text.c_str()), SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-        nullptr, nullptr, acl, nullptr);
+    // A token's default owner may be a group. Bind the owner and protected DACL
+    // to the user at creation; never take ownership of or truncate an existing file.
+    SECURITY_DESCRIPTOR descriptor{};
+    const bool security_ok = InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION)
+        && SetSecurityDescriptorOwner(&descriptor, token_user->User.Sid, FALSE)
+        && SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE)
+        && SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), &descriptor, FALSE};
+    HANDLE file = security_ok
+        ? CreateFileW(path.c_str(), GENERIC_WRITE, 0, &attributes, CREATE_NEW,
+                      FILE_ATTRIBUTE_NORMAL, nullptr)
+        : INVALID_HANDLE_VALUE;
     LocalFree(acl);
-    if (result != ERROR_SUCCESS) {
-        assign_error("failed to apply current-user journal ACL", error);
+    if (file == INVALID_HANDLE_VALUE) {
+        assign_error("coordination journal cannot be created with current-user security", error);
         return false;
     }
+    CloseHandle(file);
     return true;
 #else
+    std::ofstream create(path, std::ios::binary | std::ios::trunc);
+    if (!create.is_open()) {
+        assign_error("coordination journal cannot be created", error);
+        return false;
+    }
+    create.close();
     if (::chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
         assign_error("failed to apply owner-only journal permissions", error);
         return false;
@@ -751,16 +750,10 @@ bool CoordinationJournalV1::append_unlocked(
             assign_error("coordination journal cannot be inspected", error);
             return false;
         }
-        std::ofstream create(path_, std::ios::binary | std::ios::trunc);
-        if (!create.is_open()) {
-            assign_error("coordination journal cannot be created", error);
+        if (!create_owner_only(path_, error)) {
             return false;
         }
-        create.close();
         created = true;
-    }
-    if (created && !protect_owner_only(path_, error)) {
-        return false;
     }
     if (created && !reload_unlocked(error)) return false;
     std::ofstream output(path_, std::ios::binary | std::ios::app);
