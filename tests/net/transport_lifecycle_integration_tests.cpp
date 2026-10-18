@@ -216,27 +216,30 @@ INSTANTIATE_TEST_SUITE_P(DhtSignaling, DelayedAnswerTransport,
     });
 
 TEST(TransportLifetime, ConcurrentSendStatsCloseAndRecreateAreGenerationBounded) {
-    std::atomic<bool> running{true};
     std::atomic<unsigned> reads{0};
     IceConnectivityWrapper wrapper;
     IceGatheringConfig config;
     config.initiate_offer = false;
     ASSERT_TRUE(wrapper.startGathering(config));
-    std::thread reader([&] {
-        while (running) {
+    std::promise<void> first_read;
+    auto reader_ready = first_read.get_future();
+    std::jthread reader([&](std::stop_token stop) {
+        while (!stop.stop_requested()) {
             DataChannelTransportStats stats;
             (void)wrapper.getDataChannelTransportStats(DataChannelKind::kMedia, &stats);
             (void)wrapper.sendDataChannelMessage(DataChannelKind::kControl, "fixture");
             (void)wrapper.connection_state();
-            ++reads;
+            if (++reads == 1) first_read.set_value();
             std::this_thread::yield();
         }
     });
+    // Require reader participation before the fast Release close/recreate loop.
+    ASSERT_EQ(reader_ready.wait_for(2s), std::future_status::ready);
     for (int i = 0; i < 30; ++i) {
         wrapper.close();
         EXPECT_TRUE(wrapper.startGathering(config));
     }
-    running = false;
+    reader.request_stop();
     reader.join();
     EXPECT_TRUE(wrapper.shutdown());
     EXPECT_FALSE(wrapper.startGathering(config));

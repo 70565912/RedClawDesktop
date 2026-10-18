@@ -162,11 +162,13 @@ TEST(AdaptivePacing, ProbeBoundaryDoesNotPauseOrdinaryMedia) {
 
 TEST(AdaptivePacing, KeyframeHistoryAndReceiverEchoDoNotBuildLatency) {
     using namespace std::chrono_literals;
-    DesktopMediaSendPacer pacer;
     std::mutex mutex;
     std::condition_variable ready;
     std::atomic<std::uint64_t> sent{0};
     std::atomic<bool> delay_first{true};
+    // Join callbacks before their synchronization state is destroyed, including
+    // an early return from a failed assertion.
+    DesktopMediaSendPacer pacer;
     ASSERT_TRUE(pacer.start(
         [&](std::span<const std::uint8_t>) {
             if (delay_first.exchange(false)) std::this_thread::sleep_for(150ms);
@@ -175,10 +177,16 @@ TEST(AdaptivePacing, KeyframeHistoryAndReceiverEchoDoNotBuildLatency) {
         [] { return MediaPacerTransportState{.open = true}; },
         [](const SentMediaTransportPacket&) {},
         [&](const MediaPacerFrameEvent& event) {
+            std::lock_guard lock(mutex);
             if (event.type == MediaPacerFrameEventType::kSent) ++sent;
             ready.notify_all();
         },
-        [&] { ready.notify_all(); }));
+        [&] {
+            // Pair with the waiter's mutex so readiness cannot change and
+            // notify between its predicate check and entering the wait.
+            std::lock_guard lock(mutex);
+            ready.notify_all();
+        }));
     MediaCongestionDecision policy;
     policy.decision_revision = 1;
     policy.pacing_bitrate_kbps = 100000;
@@ -223,10 +231,10 @@ TEST(AdaptivePacing, KeyframeHistoryAndReceiverEchoDoNotBuildLatency) {
 
 TEST(AdaptivePacing, TokenLimitedServiceDoesNotExpandFrameQueue) {
     using namespace std::chrono_literals;
-    DesktopMediaSendPacer pacer;
     std::mutex mutex;
     std::condition_variable ready;
     std::atomic<std::uint64_t> sent{0};
+    DesktopMediaSendPacer pacer;
     ASSERT_TRUE(pacer.start(
         [](std::span<const std::uint8_t>) {
             return MediaPacerSendResult{.accepted = true};
@@ -234,10 +242,14 @@ TEST(AdaptivePacing, TokenLimitedServiceDoesNotExpandFrameQueue) {
         [] { return MediaPacerTransportState{.open = true}; },
         [](const SentMediaTransportPacket&) {},
         [&](const MediaPacerFrameEvent& event) {
+            std::lock_guard lock(mutex);
             if (event.type == MediaPacerFrameEventType::kSent) ++sent;
             ready.notify_all();
         },
-        [&] { ready.notify_all(); }));
+        [&] {
+            std::lock_guard lock(mutex);
+            ready.notify_all();
+        }));
     MediaCongestionDecision policy;
     policy.decision_revision = 1;
     policy.pacing_bitrate_kbps = 1500;

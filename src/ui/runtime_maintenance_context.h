@@ -5,6 +5,7 @@
 namespace redclaw::ui {
 struct RuntimeMaintenanceSnapshot {
     QStringList gui_arguments, runtime_arguments;
+    [[nodiscard]] bool declares_agent_projects() const;
 };
 // One immutable, private context for each GUI-owned Host runtime. Receipts and
 // the independent worker live beside it, outside the replaceable runtime bundle.

@@ -27,9 +27,13 @@ Actual peer maintenance is a separately authorized operation, not a required man
 
 Every stop must follow a verified `independent_worker_owns_upgrade` handoff. Do not stop the Host/Agent first and leave a command that depends on its lifetime at `restart_pending`.
 
+When the retained GUI launch already enables Debug control, portable maintenance uses its normal `exit` action after verifying the connected named-pipe server belongs to the exact validated GUI. It does not query a diagnostic snapshot as an exit prerequisite. This avoids treating the connected Host's ordinary window-close confirmation as an unattended exit. Without an already enabled control endpoint, window close remains the fallback and a refused close fails safely. No endpoint is enabled during maintenance and no process is forcibly killed.
+
 ## Failure behavior
 
-Wrong process identity, a changed repository commit, ambiguous runtime ownership or corrupt candidate files reject the operation. A file-release failure leaves the original directory intact and restarts the stopped original GUI. If the installed candidate fails startup, the entire old directory and arguments are restored. Failed candidates and rollback directories remain available as local evidence. A DHT/ICE connection failure alone does not trigger repeated rollback.
+Wrong process identity, a changed repository commit, ambiguous runtime ownership or corrupt candidate files reject the operation. For a separately authorized Host replacement requiring re-publication, the portable launcher accepts `-RequireHostPublication`. Its optional plan field binds a fresh status record to the new GUI and a running Host, and requires nonzero DHT publication within 180 seconds. Failure enters the existing rollback path and checks publication of the restored Host. Old plans retain their process-start gate. Peer reconnection and actual media/input remain separate acceptance checks.
+
+A file-release failure leaves the original directory intact and restarts the stopped original GUI. If the installed candidate fails startup, the entire old directory and arguments are restored. Failed candidates and rollback directories remain available as local evidence. A DHT/ICE connection failure alone does not trigger repeated rollback.
 
 The full bundle file-release check waits briefly for WebView2 and other owned components to finish normal teardown after GUI/runtime exit. Persistent occupation still fails the gate; unrelated browsers are never stopped to force a swap.
 

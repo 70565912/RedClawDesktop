@@ -273,6 +273,8 @@ public:
     // consent, geometry and disconnect pauses. Entering releases all input.
     void set_transfer_blocked(bool blocked, std::uint64_t now_ms);
     [[nodiscard]] bool clipboard_paste_eligible() const;
+    [[nodiscard]] bool ordinary_input_recovery_eligible() const;
+    [[nodiscard]] bool ordinary_input_recovery_context_valid() const;
     [[nodiscard]] std::uint64_t eligibility_revision() const { return eligibility_revision_; }
     // Trusted clipboard coordinator only: one fixed Ctrl+V during its transfer
     // gate. This neither opens general input nor drains queued remote events.

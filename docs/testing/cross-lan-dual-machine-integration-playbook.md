@@ -84,6 +84,27 @@ Host 先启动并保持窗口打开：
 
 继续前应看到 DHT 已监听并进入等待/发布状态；连接、媒体和输入计数此时可以为零。
 
+### 本机 Host 突然退出时的独立取证
+
+需要排查整个 Host 窗口消失时，可显式改用下面的诊断启动入口。先从 [微软官方页面](https://learn.microsoft.com/en-us/sysinternals/downloads/procdump) 准备 ProcDump；默认查找 `build/tools/procdump/procdump64.exe`，也可通过 `-ProcDumpPath` 指定。启动器和 worker 都会验证微软数字签名，且拒绝与已有 RedClaw 实例并存。
+
+```powershell
+$diagnostics = .\scripts\service\start-debug-host-diagnostics.ps1 | ConvertFrom-Json
+Get-Content -LiteralPath $diagnostics.state_path -Raw
+```
+
+此入口通过当前交互用户的非管理员计划任务启动独立 worker，再调用标准 Debug Host 启动脚本，保留新旧检查、网络选择、受控接口和真实采集要求。worker 持有 GUI/运行子进程的原始进程句柄，记录十进制和十六进制退出码、父子关系、内存及收集器状态；对新的运行子进程继续附加。ProcDump 的 `-mm -e -t -n 2` 为未处理异常或进程结束采集 Mini 转储，不启用首轮异常转储、全局事后调试器或系统 WER 策略。
+
+输出目录仅授权当前用户访问：`monitor-state.json` 是最新心跳，`process-events.jsonl` 保存退出事件，各进程子目录保存转储和收集器日志，`symbols/` 保留可用的匹配 EXE/PDB。原始转储可能包含内存中的凭据，只留本机；对外只报告必要的脱敏结论。已有转储达到八份后不再为新进程追加收集器，已附加的每个收集器仍最多写两份；退出码观察继续。事件日志轮换，进程历史有上限；覆盖失效会反映在监控状态中。
+
+停止取证时写入正常脱离请求；不要强杀已附加的调试器或监控任务：
+
+```powershell
+New-Item -ItemType File -Path (Join-Path $diagnostics.evidence_directory 'stop-monitor.request')
+```
+
+正常脱离会使用 ProcDump 官方取消操作恢复目标执行，不停止 Host；GUI 与所有已观察运行子进程退出后，worker 保存最终回执并移除自己的单次任务。它不自动重启应用。退出码与转储用于缩小原因范围，不能单独证明哪个外部程序结束了进程。
+
 ## 5. 启动 Controller
 
 Host 已等待后，在 Controller 电脑运行：

@@ -58,6 +58,7 @@
 #include "redclaw/capture/capture_stream_gate.h"
 #include "redclaw/render/render_module.h"
 #include "redclaw/input/input_module.h"
+#include "redclaw/input/input_recovery.h"
 #include "redclaw/service/service_module.h"
 #include "redclaw/service/connection_negotiation.h"
 #include "redclaw/service/dht_rendezvous.h"
@@ -3050,10 +3051,11 @@ int run_runtime_mode(
         }, workspace_mutations_allowed);
     redclaw::input::InputPolicyGate remote_input_policy_gate;
     redclaw::input::WindowsSendInputInjectorBackend remote_input_backend;
+    redclaw::input::RecoveringInputInjectorBackend recovering_input_backend(remote_input_backend);
     redclaw::runtime::InputQaReceipts input_qa_receipts(
         options.agent_qa_fixture_provider || options.input_diagnostics, options.log_dir);
     redclaw::input::RemoteInputSession remote_input_session(
-        remote_input_policy_gate, remote_input_backend);
+        remote_input_policy_gate, recovering_input_backend);
     std::uint64_t applied_transfer_input_revision = 0;
     if ((options.agent_qa_fixture_provider || options.input_diagnostics) && options.role == RuntimeRole::kHost)
         remote_input_session.set_injection_observer([&input_qa_receipts](const auto& receipt) { input_qa_receipts.record(receipt); });
@@ -7619,6 +7621,18 @@ int run_runtime_mode(
             if (remote_input_session.expire_lease(now_unix_ms())) {
                 status_changed = true;
             }
+            const auto recovery_attempts_before = recovering_input_backend.stats().activation_attempts;
+            recovering_input_backend.poll(control_open && capture_available && !capture_state.navigation_pending
+                    && remote_input_session.ordinary_input_recovery_context_valid(),
+                runtime_loop_now_ms, remote_input_session.eligibility_revision(),
+                remote_input_session.ordinary_input_recovery_eligible());
+            if (recovering_input_backend.stats().activation_attempts != recovery_attempts_before) {
+                std::cout << "Input recovery attempts=" << recovering_input_backend.stats().activation_attempts
+                          << " stationary_samples=" << recovering_input_backend.stats().stationary_samples
+                          << " cursor_progress_samples=" << recovering_input_backend.stats().cursor_progress_samples
+                          << " foreground_activations=" << recovering_input_backend.stats().foreground_activations
+                          << " application_delivery=unverified" << '\n';
+            }
             if (remote_input_session.stats().last_applied_sequence != applied_sequence_before) {
                 status_changed = true;
             }
@@ -11433,6 +11447,7 @@ int run_runtime_mode(
 
                 if (options.role == RuntimeRole::kHost) {
                     const auto& input_stats = remote_input_session.stats();
+                    const auto& recovery_stats = recovering_input_backend.stats();
                     std::cout << "Runtime remote input stats role=" << role_name
                               << " authorized=" << (remote_input_session.authorized() ? "true" : "false")
                               << " state=" << static_cast<int>(remote_input_session.state())
@@ -11446,6 +11461,24 @@ int run_runtime_mode(
                               << " capabilities_total=" << remote_input_capabilities_total
                               << " status_total=" << remote_input_status_total
                               << '\n';
+                    std::cout << "Input recovery stats attempts=" << recovery_stats.activation_attempts
+                              << " foreground_activations=" << recovery_stats.foreground_activations
+                              << " observations=" << recovery_stats.observations_started
+                              << " gated=" << recovery_stats.observation_gated
+                              << " context_resets=" << recovery_stats.context_resets
+                              << " mixed_resets=" << recovery_stats.mixed_input_resets
+                              << " stale=" << recovery_stats.stale_samples
+                              << " target_changes=" << recovery_stats.changed_target_samples
+                              << " stationary=" << recovery_stats.stationary_samples
+                              << " progress=" << recovery_stats.cursor_progress_samples
+                              << " budget_suppressed=" << recovery_stats.budget_suppressed
+                              << " cooldown=" << recovery_stats.cooldown_stalls
+                              << " held_resets=" << recovery_stats.held_input_resets
+                              << " window_focus_losses=" << recovery_stats.window_focus_losses
+                              << " window_gate_closes=" << recovery_stats.window_gate_closes
+                              << " window_user_closes=" << recovery_stats.window_user_closes
+                              << " window_lifetime_ms=" << recovery_stats.last_window_lifetime_ms
+                              << " application_delivery=unverified" << '\n';
                 }
 
                 {
