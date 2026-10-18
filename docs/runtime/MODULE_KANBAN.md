@@ -2,7 +2,7 @@
 
 Updated: 2026-10-18
 
-This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. Source CI is blocked before compilation by an AMD AMF dependency-download hash mismatch; no integrity check is bypassed. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
+This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
 Status values: `done`, `in-progress`, `planned`.
 
@@ -118,7 +118,9 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 
 ## X00 Cross-module delivery
 
-Updated: 2026-10-01
+Updated: 2026-10-18
+
+AMF source-CI dependency repair (2026-10-18): the replacement official 1.5.3 asset matches GitHub's digest and all 57 headers match the tagged source commit. The registered overlay retains strict archive/license SHA512 checks and passes a fresh isolated vcpkg install with binary caching disabled and port checks enforced. Full Windows Debug build/unit acceptance is tracked by this repair commit's `ci-unit-tests` check. See [provenance and removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) and the development log.
 
 Debug Host startup maintenance (2026-10-08) — done: the original command launcher was blocked by `published_runtime_fresh` because the published Debug executable preceded current sources. Standard `build.ps1 -Configuration Debug -Target redclaw_desktop` rebuilt and published successfully; the command launcher then exited 0. The operator-requested script follow-up now automatically builds/publishes an outdated or missing default Debug runtime, rechecks preparation, then continues startup; current outputs skip the build and failed builds cancel startup. Freshness covers native sources/headers, embedded source assets and build configuration. Eleven isolated integration scenarios pass, including stale-to-launch, failed build, unsuccessful publication and running-instance protection. The actual command entry refuses duplicate startup before publication; the existing Host remains running. Published/build executable hashes match; DHT is reachable with successful publication. No Controller is connected; dual-machine capture/display was not requalified. Local evidence: `cross-lan-gui-debug_host_20261008_093509` and `debug-startup-autobuild-20261008`. See the development log.
 

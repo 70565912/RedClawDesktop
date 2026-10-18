@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-18 — Repair AMD AMF dependency integrity in source CI
+
+- Fresh Windows CI runs `39092188087` and `39093458527` stop before compilation: upstream vcpkg records the original AMF 1.5.3 archive hash, while AMD's official same-named asset was uploaded on 2026-10-16 after the port's 2026-10-02 update. The current asset's SHA256 matches GitHub release metadata; all 57 headers match Git blob hashes at the full v1.5.3 commit, with no missing or extra files. The old archive is unavailable, so the reason for replacement and byte-level differences from that archive remain unknown.
+- Register a narrowly scoped `amd-amf` overlay at 1.5.3#1. Pin the verified SHA512, use an asset-specific cache filename, and pin the unchanged, separately checksum-validated license to the full source commit. Keep FFmpeg AMF enabled and preserve all Windows Debug build/CTest gates. [Provenance and overlay removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) are recorded beside the port.
+- A fresh isolated vcpkg install with binary caching disabled and strict port checks passes, including fresh archive/license downloads, extraction, all 57 installed headers and package validation. Full Windows Debug build/unit acceptance is tracked by the `ci-unit-tests` check on this repair commit. Evidence: `build/reports/ci-amf-integrity-20261018/`. This dependency repair does not replace a running local or remote runtime or rewrite the v0.1.9 release.
+
 ## 2026-10-18 — Qualify v0.1.9 Developer Preview
 
 - Advance CMake/vcpkg metadata and both download entrypoints to v0.1.9. Include the accepted ordinary-input recovery, styled prompt and independently recoverable Host maintenance changes; retain the limits on filtering attribution and application consumption in the release notes.
