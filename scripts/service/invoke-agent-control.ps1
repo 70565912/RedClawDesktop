@@ -171,10 +171,25 @@ function Invoke-AgentWireCodec {
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $canSetInputEncoding = $null -ne $start.PSObject.Properties['StandardInputEncoding']
+    if ($canSetInputEncoding) {
+        $start.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+    }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $start
     try {
-        if (-not $process.Start()) { throw 'Unable to start Agent wire codec.' }
+        # Windows PowerShell 5.1 inherits the console encoding when Start creates
+        # its stdin writer. Suppress that writer's BOM, restoring the caller immediately.
+        $originalInputEncoding = [Console]::InputEncoding
+        $restoreInputEncoding = -not $canSetInputEncoding -and $originalInputEncoding.GetPreamble().Length -gt 0
+        try {
+            if ($restoreInputEncoding) {
+                [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+            }
+            if (-not $process.Start()) { throw 'Unable to start Agent wire codec.' }
+        } finally {
+            if ($restoreInputEncoding) { [Console]::InputEncoding = $originalInputEncoding }
+        }
         $output = $process.StandardOutput.ReadToEndAsync()
         $errors = $process.StandardError.ReadToEndAsync()
         # Windows PowerShell 5.1 has no ProcessStartInfo.StandardInputEncoding.
@@ -183,7 +198,8 @@ function Invoke-AgentWireCodec {
         $inputBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($InputText)
         $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
         $process.StandardInput.BaseStream.Flush()
-        $process.StandardInput.Close()
+        # Close the byte stream without flushing the unused text writer.
+        $process.StandardInput.BaseStream.Close()
         if (-not $process.WaitForExit($TimeoutMs)) {
             $process.Kill()
             $process.WaitForExit()

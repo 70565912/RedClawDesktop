@@ -370,11 +370,11 @@ TEST(TransferSourceManifest, ScansUnicodeAndEmptyFoldersWithoutIncludingItsOwned
         EXPECT_EQ(manifest.next(&entry), TransferManifestRead::kEnd);
         std::uint64_t spool_files = 0;
         for (const auto& item : std::filesystem::directory_iterator(tree.root))
-            if (item.path().filename().string().starts_with(".redclaw-manifest-")) ++spool_files;
+            if (item.path().filename().u8string().starts_with(u8".redclaw-manifest-")) ++spool_files;
         EXPECT_EQ(spool_files, 1U);
     }
     for (const auto& item : std::filesystem::directory_iterator(tree.root))
-        EXPECT_FALSE(item.path().filename().wstring().starts_with(L".redclaw-manifest-"));
+        EXPECT_FALSE(item.path().filename().u8string().starts_with(u8".redclaw-manifest-"));
 #endif
 }
 
@@ -392,7 +392,7 @@ TEST(TransferSourceManifest, ScanCancellationRemovesSpoolAndCannotBeReplayed) {
     EXPECT_EQ(error, "transfer_cancelled");
     EXPECT_EQ(read(tree.root / "folder/file"), "original");
     for (const auto& item : std::filesystem::directory_iterator(tree.root))
-        EXPECT_FALSE(item.path().filename().string().starts_with(".redclaw-manifest-"));
+        EXPECT_FALSE(item.path().filename().u8string().starts_with(u8".redclaw-manifest-"));
     TransferSourceEntry entry;
     EXPECT_EQ(manifest.next(&entry, &error), TransferManifestRead::kFailed);
     EXPECT_FALSE(manifest.scan(selected, tree.root, {}, &error));
@@ -464,7 +464,7 @@ TEST(TransferBatchSender, StreamsManifestWithBoundedWindowAndReceiverCommitRecei
     EXPECT_TRUE(std::filesystem::is_directory(destination / source_root.filename() / "empty"));
     EXPECT_EQ(partials(destination), 0U);
     for (const auto& item : std::filesystem::directory_iterator(tree.root))
-        EXPECT_FALSE(item.path().filename().wstring().starts_with(L".redclaw-manifest-"));
+        EXPECT_FALSE(item.path().filename().u8string().starts_with(u8".redclaw-manifest-"));
 #endif
 }
 
@@ -502,7 +502,7 @@ TEST(TransferBatchSender, ChangedSourceAndCancellationNeverReportCommittedBytes)
     EXPECT_EQ(cancelled.progress().committed_bytes, 0U);
     EXPECT_FALSE(cancelled.begin("new-epoch", "cancelled-source", TransferConflictV1::kKeepBoth));
     for (const auto& item : std::filesystem::directory_iterator(tree.root))
-        EXPECT_FALSE(item.path().filename().wstring().starts_with(L".redclaw-manifest-"));
+        EXPECT_FALSE(item.path().filename().u8string().starts_with(u8".redclaw-manifest-"));
 #endif
 }
 }

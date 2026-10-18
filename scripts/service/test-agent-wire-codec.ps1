@@ -50,5 +50,15 @@ foreach ($mutation in @('oversized', 'bad_provider', 'bad_type', 'trailing_bytes
     } catch { $rejected++ }
 }
 Assert-Codec ($rejected -eq 4) 'Invalid codec input was accepted.'
-[pscustomobject]@{ passed = $true; rejected_cases = $rejected; frame_bytes = $frame.Length; unicode_frame_bytes = $unicode.Length } |
+# Exercise the runner's UTF-8 console default, including its writer preamble.
+$originalInputEncoding = [Console]::InputEncoding
+try {
+    [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($true)
+    $utf8Frame = New-AgentFrame -Fields $fields -Identity $identity
+    Assert-Codec ((Read-AgentFrame -Frame $utf8Frame).text -eq $fields.text) 'UTF-8 console changed codec input bytes.'
+    Assert-Codec ([Console]::InputEncoding.GetPreamble().Length -eq 3) 'Codec did not restore the caller input encoding.'
+} finally {
+    [Console]::InputEncoding = $originalInputEncoding
+}
+[pscustomobject]@{ passed = $true; rejected_cases = $rejected; frame_bytes = $frame.Length; unicode_frame_bytes = $unicode.Length; utf8_bom_console_round_trip = $true } |
     ConvertTo-Json -Compress
