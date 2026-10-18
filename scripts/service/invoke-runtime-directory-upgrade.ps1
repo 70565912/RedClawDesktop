@@ -87,6 +87,10 @@ try {
     Write-UpgradeReceipt $plan.status_path 'starting' 0
     $newProcess = Start-UpgradedGui (Join-Path $formal 'redclaw_desktop.exe') @($plan.updated_arguments) $workingDirectory
     if (-not (Test-UpgradedGui $newProcess -RequireHostRuntime:$requireRuntime)) { throw 'upgrade_gui_or_runtime_start_failed' }
+    if ($plan.PSObject.Properties.Name -contains 'publication_status_path') {
+        Write-UpgradeReceipt $plan.status_path 'starting' $newProcess.Id 'waiting_for_host_publication'
+        if (-not (Test-UpgradedHostPublication $newProcess $plan.publication_status_path)) { throw 'upgrade_host_publication_failed' }
+    }
     # Network establishment has its own diagnostics. A running GUI waiting for
     # DHT/ICE is not a reason to repeatedly roll back a valid binary bundle.
     Write-UpgradeReceipt $plan.status_path 'completed' $newProcess.Id 'gui_healthy_connection_checked_separately'
@@ -107,6 +111,9 @@ try {
     if ($stopped -and $isUpdate) {
         $restored = Start-UpgradedGui (Join-Path $formal 'redclaw_desktop.exe') @($plan.original_arguments) $workingDirectory
         $healthy = Test-UpgradedGui $restored -RequireHostRuntime:$requireRuntime
+        if ($healthy -and $plan.PSObject.Properties.Name -contains 'publication_status_path') {
+            $healthy = Test-UpgradedHostPublication $restored $plan.publication_status_path
+        }
         Write-UpgradeReceipt $plan.status_path $(if($healthy){'rolled_back'}else{'rollback_start_failed'}) $restored.Id $failure
     } else { Write-UpgradeReceipt $plan.status_path $(if($stopped){'restart_start_failed'}else{'failed'}) $plan.target.pid $failure }
     } catch {

@@ -4,10 +4,10 @@
 
 **A Windows P2P remote desktop and remote Agent workspace for developers**
 
-[简体中文](README.md) · [Download v0.1.8](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.8) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
+[简体中文](README.md) · [Download v0.1.9](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.9) · [Developer docs](docs/README.md) · [Issues](https://github.com/70565912/RedClawDesktop/issues)
 
-[![Release](https://img.shields.io/badge/release-v0.1.8-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.8)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.8)
+[![Release](https://img.shields.io/badge/release-v0.1.9-blue)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.9)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?logo=windows)](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.9)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](CMakeLists.txt)
 [![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt)](https://www.qt.io/)
@@ -16,7 +16,7 @@
 
 RedClawDesktop connects a developer to their own Windows workstation by device code. One GUI combines the live desktop, explicitly authorized keyboard and mouse input, and interaction with AI coding Agents running on the Host. Online DHT rendezvous and ICE/STUN/TURN negotiation are used to establish a direct P2P connection whenever possible.
 
-> `v0.1.8` is a Windows x64 Developer Preview. It separates desktop-navigation request IDs from Host capture revisions and repairs D3D11 playback recovery over v0.1.7, while retaining legacy protocol compatibility. Connection passwords, optional remote audio, and the separate playback window remain available. It has no signed installer and does not claim coverage of every cross-site NAT and TURN combination. See the [release notes](docs/releases/v0.1.8.md).
+> `v0.1.9` is a Windows x64 Developer Preview. It adds a prompt for stalled remote input, promptly re-arms after recovery, and strengthens independently recoverable Host upgrades. Previous navigation and D3D11 recovery fixes remain included, with compatibility based on negotiated capabilities. Connection passwords, optional remote audio, and the separate playback window remain available. It has no signed installer and does not claim coverage of every cross-site NAT and TURN combination. See the [release notes](docs/releases/v0.1.9.md).
 
 ![RedClawDesktop connection page with device codes and connection passwords](docs/assets/redclaw-connection-homepage.png)
 
@@ -30,7 +30,7 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 ## Current capabilities
 
-| Capability | v0.1.8 status |
+| Capability | v0.1.9 status |
 | --- | --- |
 | Connection password | Required; passwordless v0.1.3 and earlier releases are rejected |
 | Windows Host and Controller GUI | Available |
@@ -39,7 +39,7 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 | WGC and Desktop Duplication capture | Available |
 | H.264/HEVC codecs and D3D11 presentation | Available; backend depends on hardware and drivers |
 | Remote system audio | Available. The Controller starts Host shared-mode capture. The output stays open while sound is on and is released when sound is turned off or the session ends. Both sides need the audio capability |
-| Authorized keyboard and mouse control | Available; secure-desktop cases fail closed |
+| Authorized keyboard and mouse control | Available with a recovery prompt for stalled ordinary-desktop mouse movement; secure-desktop cases fail closed |
 | Control, Media, and Agent channels | Available |
 | Codex and Cursor provider bridge | Available after Host-side setup and authorization |
 | Bidirectional file and folder transfer | Available with SHA256 verification, conflicts, cancellation and per-file results |
@@ -50,11 +50,11 @@ RedClawDesktop connects a developer to their own Windows workstation by device c
 
 ## Quick start
 
-1. Download `RedClawDesktop-windows-x64-v0.1.8.zip` and `SHA256SUMS.txt` from the [v0.1.8 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.8).
+1. Download `RedClawDesktop-windows-x64-v0.1.9.zip` and `SHA256SUMS.txt` from the [v0.1.9 Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.9).
 2. Verify the archive:
 
    ```powershell
-   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.8.zip -Algorithm SHA256
+   Get-FileHash .\RedClawDesktop-windows-x64-v0.1.9.zip -Algorithm SHA256
    ```
 
 3. Extract it into a new directory and run `redclaw_desktop.exe`. Host and Controller builds that implement connection authentication negotiate their common capabilities; connecting does not require identical versions or binaries.
@@ -110,7 +110,7 @@ The standard entry point builds the project and stages a runnable tree under `re
 
 ## Project status
 
-`v0.1.8` retains the real desktop, password, audio and Control/Media/Agent baseline, with separate navigation request IDs and capture revisions, D3D11 recovery, retained control intent, right Shift and startup/upgrade repairs, plus the X00-T27–T29 optimizations and T30 expiry-accounting refresh. T30/T31 historical stall causes remain unknown and are temporarily closed after bounded review; this is not acceptance of every end-to-end latency target. Automated acceptance is separate from optional manual development evaluation; local endpoint evidence is not proof of all cross-site networks. Strict performance targets remain engineering observations dependent on hardware, drivers, resolution, and network conditions.
+`v0.1.9` retains the real desktop, password, audio and Control/Media/Agent baseline, with separate navigation request IDs and capture revisions, D3D11 recovery, retained control intent, right Shift and startup/upgrade repairs, plus the X00-T27–T29 optimizations and T30 expiry-accounting refresh. T30/T31 historical stall causes remain unknown and are temporarily closed after bounded review; this is not acceptance of every end-to-end latency target. Automated acceptance is separate from optional manual development evaluation; local endpoint evidence is not proof of all cross-site networks. Strict performance targets remain engineering observations dependent on hardware, drivers, resolution, and network conditions.
 
 The next phase expands cross-site and TURN coverage, hardens unattended install and upgrade, adds code signing, and continues reducing GUI scheduling cost during large Agent output. See [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 

@@ -473,7 +473,8 @@ struct GuiAutoStartOptions {
 bool parse_gui_auto_start_options(
     const QStringList& args,
     GuiAutoStartOptions* options,
-    QString* error_detail) {
+    QString* error_detail,
+    bool restored_agent_projects = false) {
   if (options == nullptr) {
     return false;
   }
@@ -931,7 +932,7 @@ bool parse_gui_auto_start_options(
 #endif
   }
   if (options->allow_remote_agent
-      && options->agent_project_roots.isEmpty()) {
+      && options->agent_project_roots.isEmpty() && !restored_agent_projects) {
     if (error_detail != nullptr) {
       *error_detail =
           "--allow-remote-agent GUI automation requires --agent-project-root";
@@ -1767,6 +1768,7 @@ bool launch_gui_shell(
   QStringList maintenance_gui_arguments = QCoreApplication::arguments();
   QStringList maintenance_runtime_arguments;
   QString maintenance_previous_context;
+  bool restored_agent_projects = false;
   const auto resume_index = maintenance_gui_arguments.indexOf("--gui-maintenance-resume");
   if (resume_index >= 0) {
     const auto snapshot = resume_index + 1 < maintenance_gui_arguments.size()
@@ -1777,6 +1779,7 @@ bool launch_gui_shell(
     }
     maintenance_gui_arguments = snapshot->gui_arguments;
     maintenance_runtime_arguments = snapshot->runtime_arguments;
+    restored_agent_projects = snapshot->declares_agent_projects();
     maintenance_previous_context = QCoreApplication::arguments()[resume_index + 1];
   }
   auto gui_parse_arguments = maintenance_gui_arguments;
@@ -1784,7 +1787,7 @@ bool launch_gui_shell(
     gui_parse_arguments.append(maintenance_runtime_arguments);
     gui_parse_arguments << "--gui-auto-start" << "--gui-role" << "host";
   }
-  if (!parse_gui_auto_start_options(gui_parse_arguments, &gui_auto_start, &gui_auto_start_error)) {
+  if (!parse_gui_auto_start_options(gui_parse_arguments, &gui_auto_start, &gui_auto_start_error, restored_agent_projects)) {
     if (error_detail != nullptr) {
       *error_detail = gui_auto_start_error.toStdString();
     }

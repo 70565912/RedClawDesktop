@@ -74,3 +74,16 @@ add_test(
   NAME redclaw_target_routing_input_injection_adapter_tests
   COMMAND redclaw_target_routing_input_injection_adapter_tests
 )
+
+add_executable(redclaw_input_recovery_tests input/input_recovery_tests.cpp)
+target_link_libraries(redclaw_input_recovery_tests PRIVATE GTest::gtest_main redclaw_input)
+redclaw_apply_warnings(redclaw_input_recovery_tests)
+add_test(NAME redclaw_input_recovery_tests COMMAND redclaw_input_recovery_tests)
+
+# Explicit developer-selected desktop experiment; never part of CTest/CI.
+if(WIN32)
+  add_executable(redclaw_native_input_window_probe EXCLUDE_FROM_ALL
+    input/native_input_window_probe.cpp)
+  target_link_libraries(redclaw_native_input_window_probe PRIVATE redclaw_input user32 gdi32)
+  redclaw_apply_warnings(redclaw_native_input_window_probe)
+endif()

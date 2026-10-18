@@ -272,9 +272,9 @@ TEST(AgentConversationPanel, GroupsActivityAndShowsInlineApproval) {
   approval.event_kind = "approval_request";
   approval.text = "Allow the bounded build command?";
   panel.apply_task_message(approval);
-  QEventLoop flush;
-  QTimer::singleShot(150, &flush, &QEventLoop::quit);
-  flush.exec();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return !panel.findChildren<QFrame*>("agentActivityGroup").isEmpty();
+  }));
 
   EXPECT_TRUE(panel.approval_pending());
   auto* banner = panel.findChild<QFrame*>("agentApprovalBanner");
@@ -423,9 +423,12 @@ TEST(AgentConversationPanel, MissingHistoryIsOneLossNoticeNotAnAgentAnswer) {
   terminal.text.clear();
   panel.apply_task_message(terminal);
   panel.set_transport_state(true, true, false);
-  QEventLoop flush;
-  QTimer::singleShot(150, &flush, &QEventLoop::quit);
-  flush.exec();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    for (auto* label : panel.findChildren<QLabel*>("agentSystemError")) {
+      if (label->text().contains("missing text was not delivered")) return true;
+    }
+    return false;
+  }));
   int loss_notices = 0;
   for (auto* label : panel.findChildren<QLabel*>("agentSystemError")) {
     if (label->text().contains("missing text was not delivered")) ++loss_notices;
@@ -542,14 +545,9 @@ TEST(AgentConversationPanel, ApprovalAndTerminalEventsAreNotMergedWithActivity) 
   event.event_kind = "completed";
   event.text = "terminal result";
   panel.apply_task_message(event);
-  QEventLoop loop;
-  QTimer ready;
-  QObject::connect(&ready, &QTimer::timeout, &loop, [&] {
-    if (panel.findChildren<QFrame*>("agentActivityGroup").size() == 3) loop.quit();
-  });
-  ready.start(10);
-  QTimer::singleShot(1000, &loop, &QEventLoop::quit);
-  loop.exec();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return panel.findChildren<QFrame*>("agentActivityGroup").size() == 3;
+  }));
   EXPECT_EQ(panel.findChildren<QFrame*>("agentActivityGroup").size(), 3);
 }
 
@@ -568,17 +566,18 @@ TEST(AgentConversationPanel, TextUpdatesRetainExistingMessageWidget) {
   reply.event_kind = "agentMessage/delta";
   reply.text = "first ";
   panel.apply_task_message(reply);
-  const auto drain = [] {
-    QEventLoop loop;
-    QTimer::singleShot(150, &loop, &QEventLoop::quit);
-    loop.exec();
-  };
-  drain();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    return panel.findChild<QWidget*>("agentReplyText") != nullptr;
+  }));
   auto* original = panel.findChild<QWidget*>("agentReplyText");
   ASSERT_NE(original, nullptr);
   reply.text = "second";
   panel.apply_task_message(reply);
-  drain();
+  ASSERT_TRUE(wait_for_panel_render([&] {
+    auto* current = panel.findChild<QWidget*>("agentReplyText");
+    return current == original &&
+      static_cast<redclaw::ui::AgentMessageTextView*>(current)->toPlainText().contains("first second");
+  }));
   EXPECT_EQ(panel.findChild<QWidget*>("agentReplyText"), original);
   EXPECT_TRUE(static_cast<redclaw::ui::AgentMessageTextView*>(original)->toPlainText().contains("first second"));
 }

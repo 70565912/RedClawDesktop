@@ -86,6 +86,14 @@ bool read_arguments(const QJsonValue& value, QStringList& output) {
     return !output.isEmpty();
 }
 }
+bool RuntimeMaintenanceSnapshot::declares_agent_projects() const {
+    for (qsizetype i = 0; i + 1 < runtime_arguments.size(); ++i) {
+        if (runtime_arguments[i] != "--agent-project-root" && runtime_arguments[i] != "--agent-project-manifest") continue;
+        const auto value = runtime_arguments[i + 1].trimmed();
+        if (!value.isEmpty() && !value.startsWith("--")) return true;
+    }
+    return false;
+}
 bool RuntimeMaintenanceContext::prepare(QString* error) {
     path_.clear();
 #ifdef _WIN32

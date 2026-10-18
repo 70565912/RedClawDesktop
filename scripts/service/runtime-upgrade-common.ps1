@@ -238,24 +238,63 @@ function Start-UpgradedGui {
     return Start-Process -FilePath $Executable -ArgumentList $line -WorkingDirectory $WorkingDirectory -PassThru -WindowStyle Normal
 }
 
+function Get-UpgradeControlName {
+    param([string[]]$Arguments)
+    if ($Arguments -notcontains '--enable-debug-control') { return '' }
+    $index = [Array]::IndexOf($Arguments, '--debug-control-name')
+    if ($index -lt 0) { return 'RedClawDesktop.DebugControl.v1' }
+    if ($index + 1 -ge $Arguments.Count -or $Arguments[$index + 1] -notmatch '^[A-Za-z0-9_.:-]{1,128}$') {
+        throw 'upgrade_control_name_invalid'
+    }
+    return $Arguments[$index + 1]
+}
+
+function Request-UpgradeControlledExit {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions','',Justification='Lifecycle-only exit after independent worker handoff and exact pipe-server ownership validation.') ]
+    [CmdletBinding()]
+    param($Identity, [string]$ControlName)
+    if (-not ('RedClawUpgradePipeOwner' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class RedClawUpgradePipeOwner {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
+}
+'@
+    }
+    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', $ControlName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
+    try {
+        $pipe.Connect(5000)
+        [uint32]$serverId = 0
+        if (-not [RedClawUpgradePipeOwner]::GetNamedPipeServerProcessId($pipe.SafePipeHandle, [ref]$serverId) -or $serverId -ne [uint32]$Identity.pid) {
+            throw 'upgrade_control_identity_mismatch'
+        }
+        Assert-UpgradeIdentity $Identity
+        $request = @{schema='redclaw.debug-control.v1';request_id=([guid]::NewGuid().ToString('N'));action='exit'} | ConvertTo-Json -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($request + "`n")
+        $pipe.Write($bytes, 0, $bytes.Length)
+        $pipe.Flush()
+        $reader = [IO.StreamReader]::new($pipe, [Text.Encoding]::UTF8, $false, 4096, $true)
+        try {
+            # Keep the socket guard alive through the server's response. The
+            # response is not proof of exit; Stop-UpgradeGui checks release.
+            $reply = $reader.ReadLineAsync()
+            if ($reply.Wait(10000)) { [void]$reply.GetAwaiter().GetResult() }
+        } finally { $reader.Dispose() }
+    } finally { $pipe.Dispose() }
+}
+
 function Stop-UpgradeGui {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions','',Justification='Internal fixed step under the validated upgrade handoff.') ]
     [CmdletBinding()]
     param($Identity, [string]$ControlName, [string]$Role)
+    if ($Role -notin @('host','controller')) { throw 'upgrade_role_invalid' }
     Assert-UpgradeIdentity $Identity
     if ($ControlName) {
-        $response = & (Join-Path $PSScriptRoot 'invoke-cross-lan-debug-control.ps1') -Action status -Role $Role -ControlName $ControlName -Json | ConvertFrom-Json
-        # A sticky diagnostic write failure still carries the live identity.
-        # Require that identity, then ask the same process to exit.
-        $identityMatches = $null -ne $response.status -and
-            [int]$response.status.app_pid -eq [int]$Identity.pid -and
-            [string]$response.status.role -eq $Role
-        $diagnosticBarrierOnly = -not $response.ok -and
-            [string]$response.error_code -eq 'diagnostic_barrier_failed' -and
-            $identityMatches
-        if (-not $response.ok -and -not $diagnosticBarrierOnly) { throw 'upgrade_debug_status_unavailable' }
-        if (-not $identityMatches) { throw 'upgrade_control_identity_mismatch' }
-        & (Join-Path $PSScriptRoot 'invoke-cross-lan-debug-control.ps1') -Action exit -Role $Role -ControlName $ControlName -Json | Out-Null
+        # Validate the exact pipe owner, without a diagnostic snapshot request.
+        Request-UpgradeControlledExit $Identity $ControlName
     } else {
         $process = Get-Process -Id $Identity.pid
         if (-not $process.CloseMainWindow()) { throw 'upgrade_graceful_close_unavailable' }
@@ -284,6 +323,36 @@ function Test-UpgradedGui {
             if ($family.Count -eq 1 -and ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($family[0].started)).TotalSeconds -ge 2) { return $true }
         }
         Start-Sleep -Milliseconds 200
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    return $false
+}
+
+function Test-UpgradePublicationSnapshot {
+    param($Snapshot, [int]$GuiProcessId, [long]$StartedUnixMs, [long]$NowUnixMs)
+    if (-not $Snapshot) { return $false }
+    $fields = @($Snapshot.PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($required in @('app_pid','runtime_running','role','updated_at_unix_ms','dht')) {
+        if ($fields -notcontains $required) { return $false }
+    }
+    if ($null -eq $Snapshot.dht -or @($Snapshot.dht.PSObject.Properties | ForEach-Object { $_.Name }) -notcontains 'publish_success') { return $false }
+    # Bind readiness to this replacement, not a retained previous-run status.
+    return [int]$Snapshot.app_pid -eq $GuiProcessId -and $Snapshot.runtime_running -and $Snapshot.role -eq 'host' -and
+        [long]$Snapshot.updated_at_unix_ms -ge $StartedUnixMs -and
+        [long]$Snapshot.updated_at_unix_ms -le $NowUnixMs -and
+        $NowUnixMs - [long]$Snapshot.updated_at_unix_ms -le 15000 -and [long]$Snapshot.dht.publish_success -gt 0
+}
+
+function Test-UpgradedHostPublication {
+    param([Diagnostics.Process]$Process, [string]$StatusPath)
+    $started = ([DateTimeOffset]$Process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+    do {
+        $Process.Refresh()
+        if ($Process.HasExited) { return $false }
+        $snapshot = $null
+        try { $snapshot = Get-Content -LiteralPath $StatusPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $snapshot = $null }
+        if (Test-UpgradePublicationSnapshot -Snapshot $snapshot -GuiProcessId $Process.Id -StartedUnixMs $started -NowUnixMs ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())) { return $true }
+        Start-Sleep -Milliseconds 250
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     return $false
 }

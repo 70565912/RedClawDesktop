@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory)][string]$ContextPath,
     [Parameter(Mandatory)][ValidateSet('restart','update')][string]$Action,
     [string]$CandidateDirectory = '',
+    [switch]$RequireHostPublication,
     [ValidatePattern('^[0-9a-f]{32}$')][string]$OperationId = ([guid]::NewGuid().ToString('N')),
     [switch]$PlanOnly
 )
@@ -48,6 +49,9 @@ try {
         if ($existing.schema -ne 'redclaw.runtime-upgrade.plan.v2' -or $existing.action -ne $Action -or
             $existing.operation_id -ne $OperationId -or $existing.context_path -ne $receiptContexts[$receiptDirectory] -or
             ($Action -eq 'update' -and $existing.candidate_directory -ne [IO.Path]::GetFullPath($CandidateDirectory).TrimEnd('\'))) {
+            throw 'maintenance_operation_id_conflict'
+        }
+        if ([bool]($existing.PSObject.Properties.Name -contains 'publication_status_path') -ne [bool]$RequireHostPublication) {
             throw 'maintenance_operation_id_conflict'
         }
         $phase = 'prepared'
@@ -113,6 +117,14 @@ try {
     }
     $taskName = 'RedClaw-Maintenance-' + $OperationId
     $resumeArguments = @('--gui-maintenance-resume',[IO.Path]::GetFullPath($ContextPath))
+    $publicationStatus = ''
+    if ($RequireHostPublication) {
+        $runtimeArguments = @($context.runtime_arguments)
+        $logIndex = [Array]::IndexOf($runtimeArguments, '--log-dir')
+        if ($logIndex -lt 0 -or $logIndex + 1 -ge $runtimeArguments.Count -or
+            -not [IO.Path]::IsPathRooted($runtimeArguments[$logIndex + 1])) { throw 'maintenance_publication_status_unavailable' }
+        $publicationStatus = Join-Path $runtimeArguments[$logIndex + 1] 'status.json'
+    }
     # The GUI owns the retained settings and exact runtime arguments. They stay
     # in a private local context instead of entering terminal/peer messages.
     $plan = [ordered]@{
@@ -120,10 +132,12 @@ try {
         context_path=[IO.Path]::GetFullPath($ContextPath);target=$identity;runtime_identities=$runtimeIdentities;
         formal_directory=$formal;candidate_directory=$candidate;working_directory=$workingDirectory;
         original_manifest=$originalManifest;candidate_manifest=$candidateManifest;
-        original_arguments=$resumeArguments;updated_arguments=$resumeArguments;role='host';control_name='';
+        original_arguments=$resumeArguments;updated_arguments=$resumeArguments;role='host';
+        control_name=(Get-UpgradeControlName @($context.gui_arguments));
         status_path=$statusPath;acknowledgment_path=(Join-Path $operationDirectory 'handoff-ack.txt');
         rollback_directory=($formal+'.rollback.'+$OperationId);pending_directory=($formal+'.candidate.'+$OperationId)
     }
+    if ($RequireHostPublication) { $plan.publication_status_path = $publicationStatus }
     $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $planPath -Encoding UTF8
     $createdPlan = $true
     Protect-UpgradePath $planPath

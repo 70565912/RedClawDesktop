@@ -10,6 +10,20 @@
 #include <QTemporaryDir>
 
 namespace {
+TEST(RuntimeMaintenanceContext, RetainedProjectDeclarationDoesNotRequireDuplicateGuiRoots) {
+    redclaw::ui::RuntimeMaintenanceSnapshot snapshot;
+    EXPECT_FALSE(snapshot.declares_agent_projects());
+    snapshot.runtime_arguments = {"--allow-remote-agent", "--agent-project-manifest", "local-projects.txt"};
+    EXPECT_TRUE(snapshot.declares_agent_projects());
+    snapshot.runtime_arguments = {"--agent-project-root", "C:/already-approved"};
+    EXPECT_TRUE(snapshot.declares_agent_projects());
+    for (const auto& value : {QString{}, QString("  "), QString("--other-option")}) {
+        snapshot.runtime_arguments = {"--agent-project-manifest", value};
+        EXPECT_FALSE(snapshot.declares_agent_projects());
+    }
+    snapshot.runtime_arguments = {"--allow-remote-agent", "--agent-project-manifest"};
+    EXPECT_FALSE(snapshot.declares_agent_projects());
+}
 TEST(RuntimeMaintenanceContext, PrivateImmutableSnapshotPreservesArgumentsAndRefusesUnprotectedCopies) {
 #ifndef _WIN32
     GTEST_SKIP() << "Windows current-user maintenance context.";

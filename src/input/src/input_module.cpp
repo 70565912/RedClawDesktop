@@ -941,6 +941,12 @@ void RemoteInputSession::fail_closed(RemoteInputPauseReason reason) {
 bool RemoteInputSession::clipboard_paste_eligible() const {
     return authorized_ && state_ == RemoteInputSessionState::kActive && policy_gate_.can_inject(InputTarget::kUserDesktop);
 }
+bool RemoteInputSession::ordinary_input_recovery_eligible() const {
+    return ordinary_input_recovery_context_valid() && pressed_keys_.empty() && pressed_mouse_buttons_ == 0;
+}
+bool RemoteInputSession::ordinary_input_recovery_context_valid() const {
+    return clipboard_paste_eligible() && !transfer_blocked_;
+}
 bool RemoteInputSession::paste_verified_clipboard(std::uint64_t expected_revision, std::string* error) {
     if (!transfer_blocked_ || expected_revision != eligibility_revision_ || !clipboard_paste_eligible()) {
         if (error) *error = "clipboard_input_revoked";
