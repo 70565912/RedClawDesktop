@@ -234,9 +234,9 @@ run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
-### v0.1.10 candidate (2026-10-22)
+### v0.1.10 (2026-10-22)
 
-The operator requests source push and program publication. The candidate combines M10-T05 connected-Host update-restart protection with the retained Controller layout repair below. Standard Debug build, complete candidate startup and 28 focused cases pass; Release automatic qualification and final package publication are in progress. See [release notes](../releases/v0.1.10.md) and the [development log](../logs/DEVLOG.md). No peer protocol changes or live Host replacement are required for publication.
+RedClawDesktop [v0.1.10](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.10) is published from `9dddd4a` as a Windows x64 Developer Preview / GitHub Pre-release. It combines M10-T05 connected-Host update-restart protection with the retained Controller layout repair below. Standard Debug/Release builds, 28 focused cases and all 126 automatic Release CTest suites pass without failures or skips. Local real-capture fixtures pass v0.1.9 compatibility in both directions plus a DHT rolling Host upgrade and automatic Controller reconnect. The 336-file ZIP is 355,891,456 bytes (ZIP hash12 `b8926d4c6bef`, EXE hash12 `0cee72fba191`); local extracted startup, server size/digest checks and [cloud package verification](https://github.com/70565912/RedClawDesktop/actions/runs/39794819800) pass. Source Docs Governance passes; [source Windows CI](https://github.com/70565912/RedClawDesktop/actions/runs/39790047142) remains in dependency configuration. See [release notes](../releases/v0.1.10.md) and the [development log](../logs/DEVLOG.md). No peer protocol changes, actual system restart or serving Host replacement are part of publication; forced deadlines/critical shutdown remain outside the protection guarantee.
 
 ### v0.1.9
 

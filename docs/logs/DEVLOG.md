@@ -1,10 +1,12 @@
 # Development Log
 
-## 2026-10-22 — Prepare v0.1.10 publication
+## 2026-10-22 — Publish v0.1.10
 
 - The operator requests commit, push and program release, explicitly including the retained playback-layout repair. Advance CMake/vcpkg metadata, both download entrypoints and release notes to v0.1.10. Keep M10-T05 protection limits explicit and retain all existing input/auth/media compatibility boundaries.
 - The preflight verifies the public repository, main/origin alignment and latest v0.1.9 assets. Current-main Windows source CI passes in run `39137714202`, covering the earlier ownership/Unicode repairs. The local v0.1.9 ZIP matches its published SHA256 and provides the supported-version fixture.
-- The standard Release main build passes. Automatic CTests, supported-version checks and final archive publication are being qualified. Runtime evidence remains outside Git; no live Host or Client is replaced as part of this publication.
+- The standard Release main/all-test builds and publication pass. Full serial Release CTest passes all 126 automatic suites in 883.09 seconds, with zero failures, disabled suites, skipped suites or unexpected skipped cases. The 54 GoogleTest XML reports additionally account for 692 passing cases; other executables retain their own assertions in the full log. Evidence: `build/reports/release-v0.1.10-20261022/`.
+- Isolated real-capture GUI fixtures pass v0.1.9 Host/new Controller over online DHT, a rolling Host upgrade to v0.1.10 with the same Controller automatically recovering, and new Host/v0.1.9 Controller using diagnostic file signaling. Final samples present 576 and 142 frames respectively, with zero GUI decode/presentation failures and zero synthetic Host frames. The retained screenshots are inspected. These are local same-machine fixtures, not new cross-LAN, physical-input or all-historical-release acceptance.
+- Publish [v0.1.10](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.10) from `9dddd4a` as a Windows x64 Developer Preview / GitHub Pre-release. The 336-file ZIP is 355,891,456 bytes, ZIP hash12 `b8926d4c6bef`, EXE hash12 `0cee72fba191`. Extracted `--help` exits 0; server asset sizes/digests and embedded source/executable identity match locally. [Cloud package verification](https://github.com/70565912/RedClawDesktop/actions/runs/39794819800) passes after downloading the final assets on Windows. Source Docs Governance passes; [source Windows CI](https://github.com/70565912/RedClawDesktop/actions/runs/39790047142) is still configuring dependencies. The documentation-only qualification follow-up passes the same governance checks locally and avoids starting a duplicate source build, preserving that release-source CI run. Runtime evidence remains outside Git; no serving Host or Client is replaced and no actual update/restart is initiated by this publication.
 
 ## 2026-10-22 — Protect connected Hosts from Windows Update restarts (M10-T05)
 
