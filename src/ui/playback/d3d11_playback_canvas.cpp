@@ -5,6 +5,7 @@
 #include "playback_backends.h"
 #include "ui/gui_latency_probe.h"
 #include <QDateTime>
+#include <QLayout>
 #include <QPaintEngine>
 #include <QResizeEvent>
 #include <QShowEvent>
@@ -73,6 +74,13 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     D3D11_TEXTURE2D_DESC description{};
     if (video_input_texture_) video_input_texture_->GetDesc(&description);
     return {{"backend", "d3d11"}, {"last_presented_surface", latest_frame_is_surface_},
+      {"widget_x", x()}, {"widget_y", y()}, {"widget_width", width()}, {"widget_height", height()},
+      {"widget_minimum_height", minimumHeight()}, {"widget_maximum_height", maximumHeight()},
+      {"widget_vertical_policy", int(sizePolicy().verticalPolicy())},
+      {"parent_width", parentWidget() ? parentWidget()->width() : 0},
+      {"parent_height", parentWidget() ? parentWidget()->height() : 0},
+      {"parent_layout_height", parentWidget() && parentWidget()->layout() ? parentWidget()->layout()->geometry().height() : 0},
+      {"parent_layout_items", parentWidget() && parentWidget()->layout() ? parentWidget()->layout()->count() : 0},
       {"encoded_visible_width", int(video_source_width_)}, {"encoded_visible_height", int(video_source_height_)},
       {"texture_width", int(description.Width)}, {"texture_height", int(description.Height)},
       {"texture_format", int(description.Format)}, {"texture_array_size", int(description.ArraySize)},

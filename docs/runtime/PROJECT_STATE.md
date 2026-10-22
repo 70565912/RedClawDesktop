@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-10-18
+Updated: 2026-10-22
 
 ## Current optimization work
 
@@ -234,11 +234,21 @@ run is continuity evidence, not a passing latency/quality acceptance.
 
 ## Current release
 
+### v0.1.10 candidate (2026-10-22)
+
+The operator requests source push and program publication. The candidate combines M10-T05 connected-Host update-restart protection with the retained Controller layout repair below. Standard Debug build, complete candidate startup and 28 focused cases pass; Release automatic qualification and final package publication are in progress. See [release notes](../releases/v0.1.10.md) and the [development log](../logs/DEVLOG.md). No peer protocol changes or live Host replacement are required for publication.
+
+### v0.1.9
+
 RedClawDesktop [v0.1.9](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.9) is published on 2026-10-18 from `8c1c1d0` as a Windows x64 Developer Preview / GitHub Pre-release. It includes operator-accepted input-recovery rearming, the RedClaw-styled prompt and independent Host publication/rollback safeguards. Release build and final coverage of 126 automatic suites pass after correcting three test-fixture synchronization issues; original failures and focused rechecks remain explicit in the [development log](../logs/DEVLOG.md). The 336-file ZIP is 355,879,690 bytes (ZIP hash12 `644d7ad0e2cc`, EXE hash12 `d11860fa2e3b`); server digests, sizes and embedded identity match locally. Local extracted startup and [cloud package smoke](https://github.com/70565912/RedClawDesktop/actions/runs/39092547894) pass. Source Docs Governance passes, but [source CI](https://github.com/70565912/RedClawDesktop/actions/runs/39092188087) stops before compilation because the AMD AMF 1.5.3 dependency archive does not match its expected hash; integrity validation remains enforced. Local Debug is independently upgraded, its complete candidate/rollback manifests verified, and the Controller reconnects to real media. See [release notes](../releases/v0.1.9.md).
 
 ### Source-CI AMF dependency repair (2026-10-18)
 
 The historical v0.1.9 source-CI failure above is addressed by a [verified AMF 1.5.3 overlay](../../vcpkg-overlays/ports/amd-amf/README.md). AMD's replacement release asset matches its official SHA256 and all 57 headers match the full tagged source commit. A fresh isolated vcpkg install passes with archive/license SHA512 validation, binary caching disabled and strict port checks. The follow-up also replaces the removed FFmpeg 9 pixel-format field with the supported query API while retaining older-version compatibility, and saves validated dependencies before compilation. Run `39131099228` passes dependency configuration and unit compilation; 82 of 86 test suites pass. The follow-up repairs runner-specific journal ownership, PowerShell BOM handling and Unicode fixture conversion; all four affected suites pass locally. Full Windows acceptance is tracked by the `ci-unit-tests` check on the follow-up commit. The published release artifacts and serving runtimes retain their previously verified identities.
+
+### Controller reconnect layout follow-up (2026-10-18)
+
+The reported centered reconnect picture has a 1920x225 canvas and 400x224 video. The earlier D3D11 repair remains present. The current layout fix synchronizes a retained window before viewport measurement and on its first ready frame; the failing compact-layout regression now passes. Debug build/publication, 11 focused UI cases, the D3D11 integration suite and three isolated local real-capture reconnect rounds pass with full canvas geometry and zero decode/presentation failures. The daily Debug Controller is updated and left running. Its DHT is reachable but no remote publication is currently observed; the original complete field trigger and a new physical-peer reconnect are unverified. See the [development log](../logs/DEVLOG.md) and `playback-reconnect-layout-20261018` evidence.
 
 ### v0.1.8
 

@@ -19,6 +19,7 @@
 #include "ui/gui_diagnostic_writer.h"
 #include "ui/gui_quit_barrier.h"
 #include "ui/host_exit_confirmation.h"
+#include "ui/host_update_restart_guard.h"
 #include "ui/runtime_stdio_reader.h"
 #include "ui/runtime_control_writer.h"
 #include "ui/runtime_log_view.h"
@@ -3267,7 +3268,11 @@ bool launch_gui_shell(
     apply_status_pill(remote_desc_value, ready ? "good" : "warn");
   };
 
+  HostUpdateRestartGuard update_restart_guard(window, [session_log](const QString& message) {
+    append_log(session_log, message);
+  });
   auto set_live_link_state = [&](bool connected) {
+    if (!connected) update_restart_guard.stop();
     connected_value->setText(connected ? "Live" : "Pending");
     apply_status_pill(connected_value, connected ? "good" : "warn");
   };
@@ -4530,6 +4535,7 @@ bool launch_gui_shell(
         playback_control_hint->hide_hint();
         refresh_remote_control_ui();
         present_playback_window();
+        playback_geometry_controller->publish_initial_viewport();
       }
       if (connection_flow_model.snapshot().status != ConnectionFlowStatus::kComplete) {
         apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
@@ -5252,6 +5258,8 @@ bool launch_gui_shell(
             trimmed.toStdString(),
             &debug_status);
         if (debug_status_changed) {
+          update_restart_guard.observe_session(debug_status.role == "host", controller.is_running(),
+                                                debug_status.connected, debug_status.channel_open);
           agent_panel->set_transport_state(
               debug_status.agent_authorized,
               debug_status.agent_channel_open && controller.agent_pipe_stats().connected
@@ -6128,6 +6136,7 @@ bool launch_gui_shell(
            (debug_status.connected || debug_status.channel_open);
   });
   const auto stop_runtime = [&]() {
+    update_restart_guard.stop();
     manual_runtime_stop_requested = true;
     connection_flow_model.begin_stopping();
     refresh_connection_flow_page();

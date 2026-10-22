@@ -5,6 +5,7 @@
 #include "ui/remote_input_capture.h"
 #include <QCoreApplication>
 #include <QWidget>
+#include <QVBoxLayout>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -75,6 +76,44 @@ TEST(PlaybackGeometryLifecycleTests, QueuedCommitIsCancelledByStopOrControllerDe
     delete controller;
     QCoreApplication::processEvents();
     EXPECT_EQ(commits, 0);
+}
+
+TEST(PlaybackGeometryLifecycleTests, InitialViewportRepairsStaleLayoutBeforePublishing) {
+    QWidget window;
+    window.resize(1000, 720);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* canvas = new QWidget(&window);
+    canvas->setMinimumSize(320, 180);
+    canvas->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    layout->addWidget(canvas, 1);
+    redclaw::ui::PlaybackWindowGeometryController controller(&window, canvas);
+    QSize published;
+    unsigned commits = 0;
+    controller.set_viewport_committed_callback([&](QSize viewport, std::uint64_t) {
+        published = viewport;
+        ++commits;
+    });
+    window.show();
+    QCoreApplication::processEvents();
+    controller.start();
+    controller.publish_initial_viewport();
+    QCoreApplication::processEvents();
+    const auto initial_commits = commits;
+    ASSERT_GT(initial_commits, 0U);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        // Reproduce a retained compact layout while the window is already large.
+        // No further native resize is required when the same window reconnects.
+        layout->setGeometry(QRect(0, 200, window.width(), 180));
+        ASSERT_EQ(canvas->height(), 180);
+        controller.publish_initial_viewport();
+        QCoreApplication::processEvents();
+        EXPECT_EQ(canvas->geometry(), window.contentsRect());
+        EXPECT_EQ(published, QSize(qRound(window.width() * window.devicePixelRatioF()),
+                                  qRound(window.height() * window.devicePixelRatioF())));
+    }
+    // Repairing the same layout does not resend an unchanged viewport.
+    EXPECT_EQ(commits, initial_commits);
 }
 
 TEST(PlaybackGeometryTransactionTests, ManyPreviewsProduceOneCommit) {
