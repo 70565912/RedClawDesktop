@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QColor>
+#include <QLayout>
 #include <QPainter>
 #include <QPen>
 #include <QPointer>
@@ -130,6 +131,13 @@ public:
                 ++geometry_commit_total_;
             }
             set_active(false);
+            // A retained window can reconnect before its pending layout pass.
+            // Settle the canvas against the current client area before measuring
+            // it, otherwise a compact old layout also shrinks the Host encoder.
+            if (auto* layout = playback_window_->layout()) {
+                layout->invalidate();
+                layout->activate();
+            }
             const QSize viewport = physical_canvas_size();
             if (viewport.width() < 64 || viewport.height() < 64 || viewport == last_viewport_) {
                 return;

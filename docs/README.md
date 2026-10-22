@@ -10,6 +10,8 @@
 - [CMake Tools 故障排查](setup/cmake-tools-api-failure-troubleshooting.md)
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
+- [v0.1.10 Release notes](releases/v0.1.10.md)
+- [v0.1.9 Release notes](releases/v0.1.9.md)
 - [v0.1.8 Release notes](releases/v0.1.8.md)
 - [v0.1.7 Release notes](releases/v0.1.7.md)
 - [v0.1.6 Release notes](releases/v0.1.6.md)
@@ -44,6 +46,7 @@
 - [远端 Agent 桥](architecture/remote-development-agent-bridge-v1.md)
 - [P2P Debug Bridge](architecture/p2p-debug-bridge-v1.md)
 - [无人值守与开机接入](architecture/unattended-boot-access-design.md)
+- [Host 更新重启保护](architecture/host-update-restart-protection.md)
 - [网络出口选择与异地联线概率分析](architecture/network-exit-selection-analysis.md)
 
 ## 测试与联调

@@ -112,6 +112,7 @@ if(TARGET redclaw_ui_connection_flow)
     ui/runtime_maintenance_context_tests.cpp
     ui/playback_frame_progress_tests.cpp
     ui/playback_geometry_transaction_tests.cpp
+    ui/host_update_restart_guard_tests.cpp
   )
 
   target_link_libraries(redclaw_ui_connection_flow_tests PRIVATE

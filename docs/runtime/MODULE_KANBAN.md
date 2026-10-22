@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-10-18
+Updated: 2026-10-22
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -91,14 +91,16 @@ Updated: 2026-09-20
 
 ## M09 Render
 
-Updated: 2026-10-13
+Updated: 2026-10-18
+
+Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's reconnect has a 1920x225 canvas and 400x224 video; the earlier D3D11 repair remains present. Flush the pending client layout before viewport measurement and synchronize the reused window on its first ready frame. The compact-layout regression fails before repair, then all 11 focused geometry/workspace cases and the D3D11 suite pass. Standard Debug build/publication and three isolated real-capture reconnect rounds pass; every canvas fills its parent, with zero decode/presentation failures. The daily Controller is updated and retained. The original field event sequence and new physical-peer acceptance remain unverified while the remote Host has no observable publication. See the development log and `playback-reconnect-layout-20261018` evidence.
 
 - `M09-T01` D3D11 decoded-surface presentation with bounded CPU fallback — done. The Controller canvas now restores its render target after a failed buffer resize and rebuilds invalid output resources; legacy swap chains use buffer zero. Debug build/publication, three focused D3D11 cases and the authorized local Controller restart pass. Fresh receive/decode/presentation submissions match the operator-reported 28 FPS. A read-only 120-frame sample and isolated hardware/canvas replay both contain 119 distinct pixel hashes without failures. On 2026-10-13 the operator directly at the Controller confirms both picture and control recovered, closing this incident's visible-output/input acceptance. The initiating GPU/window event remains unproved. See the development log.
 - `M09-T02` Broader GPU/driver validation — in-progress.
 
 ## M10 UI
 
-Updated: 2026-10-18
+Updated: 2026-10-22
 
 Host independent observation (2026-10-16, M10-T01 — in-progress): explicit diagnostic startup and worker scripts now retain GUI/runtime exit codes and attach verified Microsoft ProcDump collectors for unhandled exceptions/termination. Current-user limited scheduling, private bounded evidence, saved EXE/PDB and safe detachment are verified. Four isolated exit/detach cases and PowerShell syntax/analyzer checks pass; initial sharing failures remain retained. The existing `e74f792` Debug artifact passes freshness/integrity checks, and the newly started controlled Host publishes/renews DHT with both collectors armed. Five-minute follow-up is active for new evidence; original exit attribution remains unknown, `incident_complete=false`. See the [diagnostic startup instructions](../testing/cross-lan-dual-machine-integration-playbook.md#本机-host-突然退出时的独立取证) and [development log](../logs/DEVLOG.md).
 
@@ -113,6 +115,7 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 - `M10-T02` Accessibility, localization, and product polish — in-progress.
 - `M10-T03` Controller floating task workspace — done; four owned task windows, movable translucent task bar, local layout persistence, hide-only lifecycle and input isolation. Debug NoPublish build and 14 focused unattended cases passed, including a corrected initial-layout timing fixture's single-case recheck. Unaffected tests were not rerun; native visual/physical-keyboard/hardware evaluation remains optional. Working-tree delivery only: no publication, peer upgrade or session restart. See the [workspace presentation contract](../architecture/remote-workspace-v013.md#floating-presentation-revision-m10-t03).
 - `M10-T04` Confirm user exits from a connected Host — done; main-window close, connection-page Exit and Stop Runtime ask before teardown, with Cancel as the default and escape action. Debug build and 10 focused unattended UI tests passed (6 new confirmation cases plus 4 existing lifecycle cases). Published/deployed locally as the X00-T27 dependency; no live dual-machine exit-dialog test or peer upgrade.
+- `M10-T05` Protect connected GUI Hosts from update restarts — done for implementation and local checks; elevated Hosts hold a renewable active-hours policy lease and veto cancelable shutdown queries. Disconnect/exit restores original settings, preserves external changes and recovers interrupted leases on the next elevated GUI startup. Existing install/download settings and wire capabilities are unchanged. Standard Debug build and 28 focused automatic cases pass, including 13 new policy/native/status checks. Complete candidate publication is separate from the serving runtime; no live system update or actual restart was triggered. Forced deadlines and critical shutdown remain outside the guarantee. See [behavior and boundaries](../architecture/host-update-restart-protection.md).
 
 ## M11 Portable Client
 
@@ -123,6 +126,8 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 Updated: 2026-10-18
 
 AMF source-CI dependency repair (2026-10-18): the replacement official 1.5.3 asset matches GitHub's digest and all 57 headers match the tagged source commit. The registered overlay retains strict archive/license SHA512 checks and passes a fresh isolated vcpkg install with binary caching disabled and port checks enforced. The follow-up also fixes the existing FFmpeg 9 compile incompatibility and saves validated dependency caches before the build. Run `39131099228` passes dependency configuration and compilation, then exposes four environment-dependent test-suite failures. The follow-up fixes explicit journal ownership at creation, BOM-free PowerShell input and Unicode fixture comparisons; all four suites pass locally. Full 86-suite acceptance is tracked by the follow-up commit's `ci-unit-tests` check. See [provenance and removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) and the development log.
+
+Debug Controller startup recovery (2026-10-18) — done: the retained failure is the stale published-runtime gate. The actual command entry rebuilds/publishes 321 Debug files, passes freshness and exits 0. A normal desktop-user launch reaches real streaming (92 decodes/91 presentations, zero failures); subsequent requested stops/restarts are recorded separately. Ten current listener cases and ten physical native constructor probes pass; the first diagnostic launch's transient DHT initialization cause remains unproved. Current GUI is retained. See the development log and `debug-controller-startup-20261018` evidence.
 
 Debug Host startup maintenance (2026-10-08) — done: the original command launcher was blocked by `published_runtime_fresh` because the published Debug executable preceded current sources. Standard `build.ps1 -Configuration Debug -Target redclaw_desktop` rebuilt and published successfully; the command launcher then exited 0. The operator-requested script follow-up now automatically builds/publishes an outdated or missing default Debug runtime, rechecks preparation, then continues startup; current outputs skip the build and failed builds cancel startup. Freshness covers native sources/headers, embedded source assets and build configuration. Eleven isolated integration scenarios pass, including stale-to-launch, failed build, unsuccessful publication and running-instance protection. The actual command entry refuses duplicate startup before publication; the existing Host remains running. Published/build executable hashes match; DHT is reachable with successful publication. No Controller is connected; dual-machine capture/display was not requalified. Local evidence: `cross-lan-gui-debug_host_20261008_093509` and `debug-startup-autobuild-20261008`. See the development log.
 
