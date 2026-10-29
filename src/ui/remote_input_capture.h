@@ -126,11 +126,12 @@ private:
                                 std::uint16_t virtual_key, bool extended);
     void enqueue_mouse_move(std::uint16_t normalized_x, std::uint16_t normalized_y);
     void flush_batch();
-    void send_state_sync();
+    void send_state_sync(bool release_during_transfer = false);
     void send_release_all();
     void clear_local_input_state();
     void complete_capture_region_change();
-    [[nodiscard]] bool send_message(redclaw::protocol::StreamControlMessageV1 message);
+    [[nodiscard]] bool send_message(redclaw::protocol::StreamControlMessageV1 message,
+                                    QString* error_detail = nullptr);
     [[nodiscard]] bool normalized_position(
         const QPointF& position,
         bool clamp_to_content,

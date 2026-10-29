@@ -70,6 +70,7 @@
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
 #include "runtime/input_control_boundary.h"
+#include "runtime/remote_input_inbox.h"
 #include "runtime/audio_stream_runtime.h"
 #include "runtime/navigation_thumbnail_worker.h"
 #include "runtime/runtime_options.h"
@@ -3066,7 +3067,7 @@ int run_runtime_mode(
         options.role == RuntimeRole::kHost && options.allow_remote_input);
     redclaw::input::DesktopGeometry remote_input_geometry;
     redclaw::input::DesktopGeometry last_advertised_input_geometry;
-    std::deque<redclaw::protocol::StreamControlMessageV1> pending_remote_input_messages;
+    redclaw::runtime::RemoteInputInbox remote_input_inbox;
     redclaw::runtime::RuntimeLoopWake runtime_loop_wake;
     redclaw::workspace::TerminalRuntimeBridge terminal_bridge(
         options.role == RuntimeRole::kHost, stream_control_epoch, std::filesystem::current_path(),
@@ -3081,7 +3082,6 @@ int run_runtime_mode(
         [] { return redclaw::capture::probe_capture_desktop(redclaw::capture::CaptureProbeDetail::kAccessOnly).access
             == redclaw::capture::CaptureDesktopAccess::kOrdinary; });
     terminal_bridge.connect_gui_from_environment();
-    bool remote_input_queue_overflow = false;
     bool remote_input_disconnect_pending = false;
     bool controller_remote_input_supported = false;
     bool controller_remote_input_authorized = false;
@@ -3413,11 +3413,8 @@ int run_runtime_mode(
                 {
                     std::lock_guard lock(callback_mutex);
                     channel_valid = stream_required_channels_ready && stream_control_channel_open
-                        && !remote_input_disconnect_pending && !remote_input_queue_overflow
-                        && std::none_of(pending_remote_input_messages.begin(), pending_remote_input_messages.end(), [](const auto& message) {
-                            return message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll
-                                || (message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest && !message.input_requested_active);
-                        });
+                        && !remote_input_disconnect_pending && !remote_input_inbox.overflow_pending()
+                        && !remote_input_inbox.has_stop();
                 }
                 return redclaw::workspace::ClipboardInputEligibility{
                     ordinary && visible && channel_valid && remote_input_session.clipboard_paste_eligible(), remote_input_session.eligibility_revision()};
@@ -5012,10 +5009,7 @@ int run_runtime_mode(
                  || control.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll)
                 && options.role == RuntimeRole::kHost) {
                 std::lock_guard<std::mutex> lock(callback_mutex);
-                if (pending_remote_input_messages.size() >= 64) {
-                    remote_input_queue_overflow = true;
-                } else {
-                    pending_remote_input_messages.push_back(control);
+                if (remote_input_inbox.enqueue(control, now_steady_ms())) {
                     input_qa_receipts.command(redclaw::runtime::InputQaStage::kPeerEnqueued, control);
                 }
                 runtime_loop_wake.notify();
@@ -5880,7 +5874,7 @@ int run_runtime_mode(
                     stream_selected_display = *requested_display;
                     stream_active_capture_region = region;
                     stream_capture_region_apply_pending = *region_request;
-                    redclaw::runtime::discard_obsolete_remote_input(pending_remote_input_messages);
+                    remote_input_inbox.discard_obsolete();
                 }
                 {
                     std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
@@ -7473,8 +7467,9 @@ int run_runtime_mode(
             redclaw::input::DesktopGeometry current_geometry;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
-                remote_input_messages.swap(pending_remote_input_messages);
-                queue_overflow = std::exchange(remote_input_queue_overflow, false);
+                auto received = remote_input_inbox.take(now_steady_ms());
+                remote_input_messages = std::move(received.messages);
+                queue_overflow = received.overflow;
                 disconnected = std::exchange(remote_input_disconnect_pending, false);
                 control_open = stream_control_channel_open;
                 current_geometry = remote_input_geometry;
@@ -7502,12 +7497,8 @@ int run_runtime_mode(
             const bool capture_input_pause_pending = capture_state.input_pause_revision != applied_capture_input_pause_revision;
             if ((!capture_available && !capture_state.navigation_pending) || capture_input_pause_pending) {
                 applied_capture_input_pause_revision = capture_state.input_pause_revision;
-                if (!remote_input_messages.empty() || capture_input_pause_pending
-                    || remote_input_session.state() == redclaw::input::RemoteInputSessionState::kActive) {
-                    remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo);
-                    status_changed = true;
-                }
-                remote_input_messages.clear();
+                status_changed = redclaw::runtime::pause_remote_input_for_capture(
+                    remote_input_session, remote_input_messages) || status_changed;
             } else if (capture_state.navigation_pending) {
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages, true);
             }
@@ -8066,7 +8057,7 @@ int run_runtime_mode(
                 stream_required_channels_ready = false;
                 stream_media_submission_paused.store(true);
                 stream_required_channels_ready_at_ms = 0;
-                pending_remote_input_messages.clear();
+                remote_input_inbox.clear();
                 remote_input_disconnect_pending = true;
                 last_advertised_input_geometry = {};
                 stream_remote_control_guard.reset();
@@ -8417,7 +8408,7 @@ int run_runtime_mode(
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             if (stream_control_channel_open
-                && pending_remote_input_messages.empty()
+                && remote_input_inbox.empty()
                 && remote_input_session.queued_event_count() == 0
                 && !pending_remote_log_messages.empty()) {
                 queued_log_message = std::move(pending_remote_log_messages.front());
@@ -11448,6 +11439,8 @@ int run_runtime_mode(
                 if (options.role == RuntimeRole::kHost) {
                     const auto& input_stats = remote_input_session.stats();
                     const auto& recovery_stats = recovering_input_backend.stats();
+                    redclaw::runtime::RemoteInputInbox::Stats inbox_stats;
+                    { std::lock_guard lock(callback_mutex); inbox_stats = remote_input_inbox.stats(); }
                     std::cout << "Runtime remote input stats role=" << role_name
                               << " authorized=" << (remote_input_session.authorized() ? "true" : "false")
                               << " state=" << static_cast<int>(remote_input_session.state())
@@ -11460,6 +11453,11 @@ int run_runtime_mode(
                               << " last_applied_sequence=" << input_stats.last_applied_sequence
                               << " capabilities_total=" << remote_input_capabilities_total
                               << " status_total=" << remote_input_status_total
+                              << " inbox_depth=" << inbox_stats.depth
+                              << " inbox_peak=" << inbox_stats.peak
+                              << " inbox_coalesced_total=" << inbox_stats.coalesced
+                              << " inbox_overflow_total=" << inbox_stats.overflows
+                              << " inbox_max_pending_ms=" << inbox_stats.max_pending_ms
                               << '\n';
                     std::cout << "Input recovery stats attempts=" << recovery_stats.activation_attempts
                               << " foreground_activations=" << recovery_stats.foreground_activations

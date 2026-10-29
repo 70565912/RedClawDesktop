@@ -1260,6 +1260,44 @@ TEST(ControllerRemoteInputCapture, NewControlGrantRetainsAnExistingTransferPause
   capture.pause(false, "transfer grant fixture complete");
 }
 
+TEST(ControllerRemoteInputCapture, LongTransferDoesNotConsumeUnacknowledgedSyncCapacity) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+  capture.set_send_message_callback([&](const auto& message, QString*) {
+    sent.push_back(message); return true;
+  });
+  Peer::start(capture);
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, true);
+  // Exercise 150 seconds of periodic sync callbacks without waiting or a peer.
+  // Old Hosts intentionally do not ACK input while the transfer gate is held.
+  for (int i = 0; i < 300; ++i)
+    Peer::synchronize(capture);
+  ASSERT_TRUE(capture.control_enabled());
+  EXPECT_FALSE(capture.input_forwarding());
+  ASSERT_EQ(sent.size(), 1U);
+  EXPECT_EQ(sent.front().type, redclaw::protocol::StreamControlMessageTypeV1::kInputStateSync);
+  EXPECT_TRUE(sent.front().pressed_scan_codes.empty());
+  EXPECT_EQ(sent.front().pressed_mouse_buttons, 0U);
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, false);
+  const auto before = sent.size();
+  Peer::synchronize(capture);
+  EXPECT_TRUE(capture.control_enabled()); EXPECT_EQ(sent.size(), before + 1);
+  capture.pause(false, "transfer duration fixture complete");
+}
+
+TEST(ControllerRemoteInputCapture, AcknowledgmentLimitStillStopsInputWithItsActualCause) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  QString reason;
+  capture.set_paused_callback([&](const QString& value) { reason = value; });
+  capture.set_send_message_callback([](const auto&, QString*) { return true; });
+  Peer::start(capture);
+  for (int i = 0; i <= 256; ++i) Peer::synchronize(capture);
+  EXPECT_FALSE(capture.control_enabled());
+  EXPECT_TRUE(reason.contains("acknowledgments stalled"));
+}
+
 TEST(ControllerRemoteInputCapture, ReadsLoopbackMarkerFromWindowsMessageQueue) {
   constexpr auto marker = redclaw::input::kRedClawInputExtraInfo;
   const LPARAM previous = SetMessageExtraInfo(static_cast<LPARAM>(marker));

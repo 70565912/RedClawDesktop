@@ -275,7 +275,7 @@ void ControllerRemoteInputCapture::set_local_suspension(
     }
     if (active_ && suspended && !local_suspension_release_sent_) {
         clear_local_input_state();
-        send_state_sync();
+        send_state_sync(reason == LocalInputSuspensionReason::kWorkspaceTransfer);
         local_suspension_release_sent_ = true;
     }
     if (local_suspension_flags_ == 0) {
@@ -800,15 +800,20 @@ void ControllerRemoteInputCapture::flush_batch() {
         --input_sequence_;
         return;
     }
-    if (!send_message(std::move(message))) {
-        pause(true, "The runtime input channel is unavailable.");
+    QString error;
+    if (!send_message(std::move(message), &error)) {
+        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error);
         return;
     }
     ++sent_batch_count_;
 }
 
-void ControllerRemoteInputCapture::send_state_sync() {
-    if (!active_) {
+void ControllerRemoteInputCapture::send_state_sync(bool release_during_transfer) {
+    // The Host transfer gate already releases held input and freezes its lease.
+    // Old peers do not ACK rejected syncs: do not fill the bounded ACK tracker
+    // while waiting for a long transfer. Normal sync resumes on the next tick.
+    if (!active_ || (!release_during_transfer && (local_suspension_flags_
+        & static_cast<std::uint32_t>(LocalInputSuspensionReason::kWorkspaceTransfer)) != 0)) {
         return;
     }
     // The snapshot includes transitions still in the event queue. Deliver those
@@ -829,8 +834,9 @@ void ControllerRemoteInputCapture::send_state_sync() {
             | ((key & 0x10000U) != 0 ? 0x8000U : 0U);
         message.pressed_scan_codes.push_back(encoded);
     }
-    if (!send_message(std::move(message))) {
-        pause(true, "The runtime input channel is unavailable.");
+    QString error;
+    if (!send_message(std::move(message), &error)) {
+        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error);
         return;
     }
 }
@@ -851,8 +857,9 @@ void ControllerRemoteInputCapture::clear_local_input_state() {
 }
 
 bool ControllerRemoteInputCapture::send_message(
-    redclaw::protocol::StreamControlMessageV1 message) {
+    redclaw::protocol::StreamControlMessageV1 message, QString* error_detail) {
     if (!send_message_callback_) {
+        if (error_detail) *error_detail = "The runtime input sender is unavailable.";
         return false;
     }
     message.session_epoch = "local";
@@ -868,10 +875,14 @@ bool ControllerRemoteInputCapture::send_message(
         || message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputStateSync) {
         const auto kind = message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch ? InputAckKind::kBatch
             : message.pressed_scan_codes.empty() && message.pressed_mouse_buttons == 0 ? InputAckKind::kEmptySync : InputAckKind::kStateSync;
-        if (!pending_input_acks_.remember(message.input_sequence, sent_us, kind)) return false;
+        if (!pending_input_acks_.remember(message.input_sequence, sent_us, kind)) {
+            if (error_detail) *error_detail = "Input acknowledgments stalled; the pending acknowledgment limit was reached.";
+            return false;
+        }
     }
     if (qa_send_observer_) qa_send_observer_(message, sent_us);
     const bool sent = send_message_callback_(message, &error);
+    if (error_detail) *error_detail = error;
     if (sent && message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch) {
         for (const auto& event : message.input_events) {
             const auto kind = static_cast<std::size_t>(event.type);
