@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-10-29 — Refresh Debug Controller and connect Host
+
+- Fetch origin and confirm main is current at `c4c7267`; preserve all eight pre-existing changed/untracked files. Build the current worktree through `build.ps1 -Configuration Debug -Target redclaw_desktop`, including the existing local code changes, and publish 321 Debug files. The built/published main EXE hashes match and the published `--help` entry exits successfully.
+- At the operator's explicit request, retain the original connection locator in ignored local configuration only and start the standard Controller with application-managed saved credentials. DHT/ICE connects and the session reaches `streaming`. A 10-second local sample records received +60, GUI decode +56 and presentation +56, with zero synthetic frames and no additional GUI decode/presentation failures. The playback label reports a live 1184x666 D3D11 desktop. Independent screenshot capture times out twice; no screenshot-based visual claim or remote-input test is made. Keep the Controller running. Local evidence: `debug-controller-connect-20261029`.
+
 ## 2026-10-29 — Keep private debug credentials out of GitHub (X00-T32)
 
 - Remove the shared live debug session code from startup defaults, profile templates, documentation and reused test literals. Supervisor startup now accepts an explicit private code or reads the ignored `local/cross-lan-session-code.txt`; absent/invalid values fail before preparation or runtime launch. Isolated local dual-GUI tests retain their own per-run random code generation.
