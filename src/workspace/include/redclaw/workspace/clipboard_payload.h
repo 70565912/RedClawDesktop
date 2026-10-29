@@ -41,6 +41,9 @@ public:
     ~PreparedClipboardPayload();
     bool load(const std::filesystem::path& received_directory, const std::atomic_bool& cancelled, std::string* error);
     bool publish(const std::function<bool()>& final_guard, std::string* error);
+    // Returns an independent HGLOBAL for the native OLE consumer; never publishes
+    // or takes clipboard ownership. Zero means unavailable. Caller frees it.
+    [[nodiscard]] std::uintptr_t clone_native_format(ClipboardPayloadFormat format) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

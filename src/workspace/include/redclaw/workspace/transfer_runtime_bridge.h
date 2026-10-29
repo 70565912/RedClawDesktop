@@ -4,6 +4,7 @@
 #include "redclaw/workspace/transfer_worker.h"
 #include "redclaw/workspace/directory_browser.h"
 #include "redclaw/workspace/clipboard_host_paste.h"
+#include "redclaw/workspace/clipboard_demand_session.h"
 #include <functional>
 
 namespace redclaw::workspace {
@@ -12,7 +13,7 @@ inline constexpr std::uint32_t kFileTransferCapabilityVersion = 1;
 #else
 inline constexpr std::uint32_t kFileTransferCapabilityVersion = 0;
 #endif
-inline constexpr std::uint32_t kClipboardCapabilityVersion = kFileTransferCapabilityVersion ? 4 : 0;
+inline constexpr std::uint32_t kClipboardCapabilityVersion = kFileTransferCapabilityVersion ? 5 : 0;
 // Coordinates one file batch on the existing Control v1 envelope. Callbacks
 // only enqueue bounded data; all transitions, control sends, and gate updates
 // belong to the runtime owner. Disk work belongs exclusively to TransferWorker.
@@ -49,7 +50,6 @@ private:
     void browse(const Control& request);
     void pump_browser();
     void pump_local_clipboard();
-    void notify_clipboard_change(std::uint64_t now);
     bool matches(const Control& message) const;
     bool source() const;
     bool clipboard() const { return purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboard; }
@@ -66,11 +66,9 @@ private:
     std::unique_ptr<TransferWorker> local_clipboard_source_;
     std::optional<std::string> local_clipboard_data_, local_clipboard_receipt_;
     ClipboardHostPaste clipboard_paste_;
+    std::unique_ptr<ClipboardDemandSession> native_clipboard_;
     ClipboardCapture clipboard_capture_;
     std::function<std::uint32_t()> clipboard_sequence_number_;
-    std::uint32_t observed_clipboard_sequence_ = 0, pending_clipboard_revision_ = 0;
-    bool clipboard_observed_ = false;
-    std::uint64_t next_clipboard_check_ms_ = 0;
     std::unique_ptr<DirectoryBrowser> browser_;
     std::string browse_operation_;
     std::optional<Control> pending_browse_, browse_reply_;
@@ -82,6 +80,7 @@ private:
     std::uint32_t clipboard_mode_ = 0;
     std::uint32_t clipboard_revision_ = 0;
     std::string clipboard_source_;
+    protocol::WorkspaceControlV1 native_request_;
     bool clipboard_ready_ = false, paste_submitted_ = false, paste_requested_ = false;
     protocol::TransferConflictV1 conflict_ = protocol::TransferConflictV1::kKeepBoth;
     std::deque<Control> outgoing_;

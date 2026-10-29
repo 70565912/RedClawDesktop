@@ -28,23 +28,6 @@ TransferCoordinator::Control request(Action action, const QString& id) {
 TransferCoordinator::TransferCoordinator(Send send, QObject* parent, std::function<std::uint32_t()> clipboard_sequence)
     : QObject(parent), send_(std::move(send)), clipboard_sequence_(clipboard_sequence
         ? std::move(clipboard_sequence) : workspace::clipboard_sequence_number) {}
-void TransferCoordinator::schedule_clipboard_return() {
-    if (!pending_clipboard_return_ || busy() || clipboard_return_scheduled_) return;
-    clipboard_return_scheduled_ = true;
-    QTimer::singleShot(0, this, [this] {
-        clipboard_return_scheduled_ = false;
-        if (!pending_clipboard_return_ || busy()) return;
-        auto copy = std::move(*pending_clipboard_return_); pending_clipboard_return_.reset();
-        if (clipboard_version_ < 4 || !return_local_sequence_ || clipboard_sequence_() != return_local_sequence_) return;
-        auto message = request(Action::kPrepare, "clipboard-return-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
-        auto& data = *message.workspace;
-        data.purpose = Purpose::kClipboard; data.direction = Direction::kToController; data.clipboard_mode = 2;
-        data.clipboard_revision = copy.workspace->clipboard_revision;
-        data.clipboard_sequence = return_local_sequence_;
-        QString error;
-        (void)submit(message, &error);
-    });
-}
 void TransferCoordinator::notify(const QString& id) { if (event && operations_.contains(id)) event(id, operations_[id].state); }
 bool TransferCoordinator::submit(const Control& message, QString* error) {
     if (!message.workspace || !protocol::validate_workspace_control_v1(*message.workspace)) {
@@ -101,17 +84,20 @@ void TransferCoordinator::receive(const Control& message) {
     const auto& value = *message.workspace;
     if (value.action == Action::kAvailability) {
         file_version_ = message.file_transfer_version; clipboard_version_ = message.clipboard_version; runtime_busy_ = value.active;
-        if (clipboard_version_ < 4) { pending_clipboard_return_.reset(); last_clipboard_revision_ = 0; clipboard_epoch_.clear(); }
-        schedule_clipboard_return(); return;
+
+        return;
     }
-    if (value.action == Action::kClipboardChanged) {
-        if (clipboard_version_ < 4 || !protocol::validate_workspace_control_v1(value)
-            || (clipboard_epoch_ == message.session_epoch && last_clipboard_revision_ == value.clipboard_revision)) return;
-        clipboard_epoch_ = message.session_epoch; last_clipboard_revision_ = value.clipboard_revision;
-        pending_clipboard_return_ = message; return_local_sequence_ = clipboard_sequence_();
-        schedule_clipboard_return(); return;
-    }
+    if (value.action == Action::kClipboardChanged) return;
     const auto id = QString::fromStdString(message.request_id);
+    if (clipboard_version_ >= 5 && !value.clipboard_token.empty()
+        && (value.action == Action::kClipboardConfirm || value.action == Action::kClipboardNativePending)) {
+        if (!active_.isEmpty() && active_ != id) return;
+        if (!operations_.contains(id)) {
+            while (order_.size() >= 128) { operations_.remove(order_.front()); order_.pop_front(); }
+            operations_[id] = {message, {{"ok", true}, {"operation_id", id}, {"state", "preparing"}}};
+            order_.push_back(id); active_ = id;
+        }
+    }
     if (!operations_.contains(id)) return;
     auto& operation = operations_[id]; auto& state = operation.state;
     if (value.action == Action::kPrepared && id == active_) next_source();
@@ -160,21 +146,23 @@ void TransferCoordinator::receive(const Control& message) {
         state["paste_submitted"] = value.paste_submitted;
         if (active_ == id) { active_.clear(); sources_.clear(); }
         if (browsing_ == id) browsing_.clear();
-    } else if (value.action == Action::kCancel) state["state"] = "cancelling";
+    } else if (value.action == Action::kClipboardConfirm) state["state"] = "awaiting_confirmation";
+    else if (value.action == Action::kClipboardNativePending) state["state"] = QString::fromStdString(value.error_code);
+    else if (value.action == Action::kCancel) state["state"] = "cancelling";
     else state["state"] = "transferring";
     state["error"] = QString::fromStdString(value.error_code);
     state["received_bytes"] = QString::number(value.completed_bytes); state["verified_bytes"] = QString::number(value.committed_bytes);
     state["total_bytes"] = QString::number(value.bytes); state["completed_files"] = QString::number(value.completed_files);
     state["skipped_entries"] = QString::number(value.skipped_entries); state["total_files"] = QString::number(value.files);
     notify(id);
-    schedule_clipboard_return();
+
 }
 void TransferCoordinator::disconnected() {
-    pending_clipboard_return_.reset(); last_clipboard_revision_ = 0; clipboard_epoch_.clear();
+
     file_version_ = clipboard_version_ = 0; runtime_busy_ = false;
     for (auto it = operations_.begin(); it != operations_.end(); ++it) {
         const auto state = it->state.value("state").toString();
-        if (state == "submitted" || state == "transferring" || state == "cancelling") {
+        if (state != "succeeded" && state != "failed" && state != "cancelled" && state != "unknown") {
             it->state["state"] = "unknown"; it->state["error"] = "workspace_connection_lost"; notify(it.key());
         }
     }

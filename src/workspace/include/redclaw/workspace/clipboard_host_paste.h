@@ -4,6 +4,7 @@
 #include <functional>
 
 namespace redclaw::workspace {
+class ClipboardDemandPort;
 struct ClipboardInputEligibility {
     bool eligible = false;
     std::uint64_t revision = 0;
@@ -16,6 +17,8 @@ struct ClipboardHostActions {
     std::function<bool()> publish_eligible;
     ClipboardCapture capture;
     std::function<std::uint32_t()> sequence = clipboard_sequence_number;
+    bool native_demand = false;
+    std::shared_ptr<ClipboardDemandPort> demand_port;
 };
 // Runtime-owner component. Expensive disk reads/allocation have already finished
 // on TransferWorker; final policy, focus and fixed input submission share the

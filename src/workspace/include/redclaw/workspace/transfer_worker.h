@@ -2,6 +2,7 @@
 #include "redclaw/workspace/transfer_batch_sender.h"
 #include "redclaw/workspace/transfer_batch_receiver.h"
 #include "redclaw/workspace/clipboard_payload.h"
+#include "redclaw/workspace/clipboard_description.h"
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -37,6 +38,9 @@ struct TransferWorkerConfig {
     std::string clipboard_source;
     bool retain_clipboard_snapshot = false;
     ClipboardCapture clipboard_capture;
+    bool clipboard_description_only = false;
+    std::vector<ClipboardFileSelection> clipboard_files;
+    bool reject_unconfirmed_clipboard_files = false;
 };
 // One operation owns one disk thread. Network callbacks enqueue bounded frames;
 // the runtime owner drains output and samples progress. No file operation runs
@@ -58,6 +62,7 @@ public:
     [[nodiscard]] bool output_empty() const;
     [[nodiscard]] TransferWorkerProgress progress() const;
     void cancel() noexcept;
+    std::shared_ptr<ClipboardDescription> clipboard_description() const;
 private:
     enum class CommandType { kSelect, kSelectionComplete, kStart, kPasteComplete };
     struct Command { CommandType type; std::filesystem::path path; std::string relative_root; };
@@ -72,6 +77,7 @@ private:
     TransferBatchReceiver receiver_;
     TransferResultJournal results_;
     std::unique_ptr<ClipboardSnapshot> snapshot_;
+    std::shared_ptr<ClipboardDescription> description_;
     std::unique_ptr<PreparedClipboardPayload> clipboard_payload_;
     bool awaiting_paste_ = false, paste_complete_ = false;
     bool clipboard_batch_created_ = false, clipboard_files_seen_ = false;

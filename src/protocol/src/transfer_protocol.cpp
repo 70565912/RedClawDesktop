@@ -16,22 +16,32 @@ bool reject(std::string* error, const char* code) { if (error) *error = code; re
 }
 bool validate_workspace_control_v1(const WorkspaceControlV1& m, std::string* error) {
     if (m.schema_version != 1) return reject(error, "protocol_version_incompatible");
-    if (m.action < WorkspaceActionV1::kPrepare || m.action > WorkspaceActionV1::kClipboardChanged
+    if (m.action < WorkspaceActionV1::kPrepare || m.action > WorkspaceActionV1::kClipboardMoveReceipt
         || m.direction < TransferDirectionV1::kToHost || m.direction > TransferDirectionV1::kToController
         || m.purpose < WorkspaceTransferPurposeV1::kFiles || m.purpose > WorkspaceTransferPurposeV1::kClipboardOpenCopy
         || m.conflict < TransferConflictV1::kKeepBoth || m.conflict > TransferConflictV1::kSkip)
         return reject(error, "workspace_unknown_value");
     const bool clipboard = m.purpose == WorkspaceTransferPurposeV1::kClipboard;
+    const bool native = !m.clipboard_token.empty();
+    if ((native && (!clipboard || m.clipboard_mode != 6 || !token(m.clipboard_token)))
+        || (m.action >= WorkspaceActionV1::kClipboardOffer && !native)
+        || (m.clipboard_mode == 6 && !native)
+        || m.clipboard_formats > 127 || m.clipboard_effect > 2
+        || m.clipboard_metadata.size() > 32U * 1024U || m.clipboard_pages > 2048
+        || (m.clipboard_pages && m.clipboard_page >= m.clipboard_pages)
+        || (!m.clipboard_metadata.empty() && m.action != WorkspaceActionV1::kClipboardDescription)
+        || (!native && (m.clipboard_formats || m.clipboard_move || m.clipboard_complete || m.clipboard_effect
+            || m.clipboard_page || m.clipboard_pages))) return reject(error, "clipboard_invalid_native_fields");
     const bool copy_action = m.purpose == WorkspaceTransferPurposeV1::kClipboardCleanup || m.purpose == WorkspaceTransferPurposeV1::kClipboardOpenCopy;
-    if ((m.clipboard_revision && (!clipboard || m.clipboard_mode != 2 || m.direction != TransferDirectionV1::kToController))
+    if ((m.clipboard_revision && !native && (!clipboard || m.clipboard_mode != 2 || m.direction != TransferDirectionV1::kToController))
         || (m.action == WorkspaceActionV1::kClipboardChanged && !m.clipboard_revision))
         return reject(error, "workspace_invalid_clipboard_revision");
     if ((clipboard && !m.clipboard_mode && m.direction != TransferDirectionV1::kToHost)
-        || (m.clipboard_sequence && (!clipboard || m.action != WorkspaceActionV1::kPrepare))
+        || (m.clipboard_sequence && (!clipboard || (m.action != WorkspaceActionV1::kPrepare && m.action != WorkspaceActionV1::kClipboardShortcut)))
         || (m.paste_submitted && (!clipboard || m.action != WorkspaceActionV1::kFinished))
         || (clipboard && m.action == WorkspaceActionV1::kPrepare && !m.path.empty()))
         return reject(error, "workspace_invalid_clipboard_fields");
-    if (m.clipboard_mode > 5 || (m.clipboard_mode && !clipboard)
+    if (m.clipboard_mode > 6 || (m.clipboard_mode && !clipboard)
         || (!m.clipboard_source.empty() && (!clipboard || (m.clipboard_mode != 2 && m.clipboard_mode != 5) || m.action != WorkspaceActionV1::kPrepare))
         || m.clipboard_source.size() > 48U * 1024U
         || (!m.snapshot_path.empty() && (!clipboard || m.action != WorkspaceActionV1::kFinished))

@@ -220,6 +220,10 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
         nested->set_clipboard_sequence(data.clipboard_sequence); nested->set_paste_submitted(data.paste_submitted);
         nested->set_clipboard_mode(data.clipboard_mode); nested->set_clipboard_source(data.clipboard_source);
         nested->set_clipboard_revision(data.clipboard_revision);
+        nested->set_clipboard_token(data.clipboard_token); nested->set_clipboard_formats(data.clipboard_formats);
+        nested->set_clipboard_move(data.clipboard_move); nested->set_clipboard_effect(data.clipboard_effect);
+        nested->set_clipboard_complete(data.clipboard_complete); nested->set_clipboard_metadata(data.clipboard_metadata);
+        nested->set_clipboard_page(data.clipboard_page); nested->set_clipboard_pages(data.clipboard_pages);
         nested->set_snapshot_path(data.snapshot_path);
         nested->set_created_at_ms(data.created_at_ms);
         nested->set_active(data.active); nested->set_operation_revision(data.operation_revision);
@@ -330,7 +334,7 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.audio_playback_requested = encoded.audio_playback_requested();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
-        if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kClipboardChanged)
+        if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kClipboardMoveReceipt)
             || nested.purpose() > static_cast<std::uint32_t>(WorkspaceTransferPurposeV1::kClipboardOpenCopy)
             || nested.direction() > static_cast<std::uint32_t>(TransferDirectionV1::kToController)
             || nested.conflict() > static_cast<std::uint32_t>(TransferConflictV1::kSkip)) return false;
@@ -348,6 +352,10 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
         data.clipboard_sequence = nested.clipboard_sequence(); data.paste_submitted = nested.paste_submitted();
         data.clipboard_mode = nested.clipboard_mode(); data.clipboard_source = nested.clipboard_source();
         data.clipboard_revision = nested.clipboard_revision();
+        data.clipboard_token = nested.clipboard_token(); data.clipboard_formats = nested.clipboard_formats();
+        data.clipboard_move = nested.clipboard_move(); data.clipboard_effect = nested.clipboard_effect();
+        data.clipboard_complete = nested.clipboard_complete(); data.clipboard_metadata = nested.clipboard_metadata();
+        data.clipboard_page = nested.clipboard_page(); data.clipboard_pages = nested.clipboard_pages();
         data.snapshot_path = nested.snapshot_path();
         data.created_at_ms = nested.created_at_ms();
         data.skipped_entries = nested.skipped_entries();

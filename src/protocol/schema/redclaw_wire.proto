@@ -332,6 +332,27 @@ message WorkspaceControlV1 {
   string snapshot_path = 26;
   // Capability 4: Host clipboard change and the requested source revision.
   uint32 clipboard_revision = 27;
+  // Capability 5: lazy clipboard offers, metadata pages and native paste receipts.
+  string clipboard_token = 28;
+  uint32 clipboard_formats = 29;
+  bool clipboard_move = 30;
+  uint32 clipboard_effect = 31;
+  bool clipboard_complete = 32;
+  bytes clipboard_metadata = 33;
+  uint32 clipboard_page = 34;
+  uint32 clipboard_pages = 35;
+}
+
+message ClipboardDescriptionV1 {
+  uint32 schema_version = 1;
+  uint32 roots = 2;
+  message Entry {
+    string relative_path = 1;
+    string staged_path = 2;
+    uint64 size = 3;
+    bool directory = 4;
+  }
+  repeated Entry entries = 3;
 }
 
 message ClipboardSourceV1 {

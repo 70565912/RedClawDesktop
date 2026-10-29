@@ -28,7 +28,6 @@ public:
 private:
     void next_source();
     void notify(const QString& id);
-    void schedule_clipboard_return();
     struct Operation { Control request; QJsonObject state; QJsonArray entries; std::uint64_t first = 0, next = 0; };
     Send send_;
     QMap<QString, Operation> operations_;
@@ -39,9 +38,5 @@ private:
     bool selection_sent_ = false, runtime_busy_ = false;
     std::uint32_t file_version_ = 0, clipboard_version_ = 0;
     std::function<std::uint32_t()> clipboard_sequence_;
-    std::optional<Control> pending_clipboard_return_;
-    std::uint32_t return_local_sequence_ = 0, last_clipboard_revision_ = 0;
-    std::string clipboard_epoch_;
-    bool clipboard_return_scheduled_ = false;
 };
 }

@@ -55,6 +55,7 @@ public:
     void set_forwarding_changed_callback(ForwardingChangedCallback callback);
     void set_blocked_click_callback(BlockedClickCallback callback);
     void set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback);
+    void set_native_clipboard(bool enabled) { native_clipboard_ = enabled; }
     [[nodiscard]] bool clipboard_paste_context_valid() const;
     void set_qa_observers(QaSendObserver send, QaAckObserver ack);
     void set_remote_frame_size(QSize size);
@@ -154,6 +155,8 @@ private:
     std::function<void(std::uint32_t)> clipboard_paste_callback_;
     bool suppressed_paste_key_ = false;
     ClipboardShortcutState clipboard_shortcut_state_;
+    bool native_clipboard_ = false;
+    std::uint16_t suppressed_paste_virtual_key_ = 'V';
     QaSendObserver qa_send_observer_;
     QaAckObserver qa_ack_observer_;
     QSize remote_frame_size_;

@@ -1193,13 +1193,21 @@ TEST(ControllerRemoteInputCapture, ClipboardCallbackWithholdsPasteAndRepeatUntil
   capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, false);
   EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 1); EXPECT_EQ(pastes, 1U);
   EXPECT_EQ(key(WM_KEYUP, 'V', 0x2f), 1);
+  EXPECT_EQ(key(WM_KEYUP, VK_LCONTROL, 0x1d), 1);
+  EXPECT_EQ(key(WM_KEYDOWN, VK_LSHIFT, 0x2a), 1);
+  EXPECT_EQ(key(WM_KEYDOWN, VK_INSERT, 0x52), 1); EXPECT_EQ(pastes, 2U);
+  EXPECT_EQ(key(WM_KEYDOWN, VK_INSERT, 0x52), 1); EXPECT_EQ(pastes, 2U);
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kWorkspaceTransfer, false);
+  EXPECT_EQ(key(WM_KEYUP, VK_INSERT, 0x52), 1);
   for (const auto& message : sent) {
     EXPECT_NE(message.type, redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll);
-    for (const auto& event : message.input_events) EXPECT_NE(event.virtual_key, 'V');
+    for (const auto& event : message.input_events) {
+      EXPECT_NE(event.virtual_key, 'V'); EXPECT_NE(event.virtual_key, VK_INSERT);
+    }
   }
   capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kLocalUiFocus, true);
   EXPECT_FALSE(capture.clipboard_paste_context_valid());
-  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 0); EXPECT_EQ(pastes, 1U);
+  EXPECT_EQ(key(WM_KEYDOWN, 'V', 0x2f), 0); EXPECT_EQ(pastes, 2U);
   capture.pause(false, "clipboard callback fixture complete");
   // Calls the native callback directly; does not inject keys or publish clipboard data.
 }

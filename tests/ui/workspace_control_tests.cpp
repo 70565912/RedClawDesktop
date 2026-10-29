@@ -14,6 +14,9 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QPushButton>
 
 namespace {
 using namespace redclaw::ui;
@@ -32,19 +35,16 @@ StreamControlMessageV1 clipboard_change(std::uint32_t revision) {
     data.purpose = WorkspaceTransferPurposeV1::kClipboard; data.direction = TransferDirectionV1::kToController;
     data.clipboard_mode = 2; data.clipboard_revision = revision; return changed;
 }
-TEST(ClipboardReturnCoordinator, CoalescesCopiesBehindExistingTransferAndSuppressesDuplicates) {
+TEST(ClipboardReturnCoordinator, CopyNotificationsNeverDownloadBeforeAnExplicitPaste) {
     std::vector<StreamControlMessageV1> sent;
     TransferCoordinator coordinator([&](const auto& message, auto*) { sent.push_back(message); return true; }, nullptr, [] { return 50U; });
-    coordinator.receive(clipboard_availability(4, true));
-    coordinator.receive(clipboard_change(101)); coordinator.receive(clipboard_change(102));
-    QApplication::processEvents(); EXPECT_TRUE(sent.empty());
-    coordinator.receive(clipboard_availability(4)); QApplication::processEvents();
-    ASSERT_EQ(sent.size(), 1U);
-    EXPECT_EQ(sent[0].workspace->clipboard_revision, 102U); EXPECT_EQ(sent[0].workspace->clipboard_sequence, 50U);
-    EXPECT_EQ(sent[0].workspace->direction, TransferDirectionV1::kToController);
-    auto finished = sent[0]; finished.workspace->action = WorkspaceActionV1::kFinished; finished.workspace->clipboard_sequence = 0;
-    coordinator.receive(finished); coordinator.receive(clipboard_change(102)); QApplication::processEvents();
-    EXPECT_EQ(sent.size(), 1U);
+    for (const auto version : {3U, 4U, 5U}) {
+        coordinator.receive(clipboard_availability(version, true));
+        coordinator.receive(clipboard_change(101)); coordinator.receive(clipboard_change(102));
+        QApplication::processEvents(); EXPECT_TRUE(sent.empty());
+        coordinator.receive(clipboard_availability(version)); QApplication::processEvents();
+        EXPECT_TRUE(sent.empty()); EXPECT_FALSE(coordinator.busy());
+    }
 }
 TEST(ClipboardReturnCoordinator, LocalCopyDisconnectAndOldCapabilityDiscardPendingReturn) {
     for (const int reason : {0, 1, 2}) {
@@ -56,6 +56,43 @@ TEST(ClipboardReturnCoordinator, LocalCopyDisconnectAndOldCapabilityDiscardPendi
         coordinator.receive(clipboard_availability(reason == 2 ? 3 : 4));
         QApplication::processEvents(); EXPECT_EQ(sends, 0) << reason;
     }
+}
+TEST(ClipboardDemandUi, ConfirmationDeduplicatesAndDoesNotSuspendControlUntilBulkStarts) {
+    std::vector<StreamControlMessageV1> sent; std::vector<bool> input_blocks;
+    FileTransferPanel panel([&](const auto& value, QString*) { sent.push_back(value); return true; });
+    panel.set_busy_callback([&](bool blocked) { input_blocks.push_back(blocked); });
+    panel.receive(clipboard_availability(5));
+    StreamControlMessageV1 request; request.type = StreamControlMessageTypeV1::kWorkspace;
+    request.request_id = "native-paste"; auto& value = request.workspace.emplace();
+    value.purpose = WorkspaceTransferPurposeV1::kClipboard; value.clipboard_mode = 6;
+    value.clipboard_token = "remote-version"; value.clipboard_formats = 64; value.clipboard_move = true;
+    value.action = WorkspaceActionV1::kClipboardConfirm; value.entries = 32; value.files = 31;
+    value.bytes = 13ULL * 1024 * 1024 * 1024;
+    panel.receive(request); panel.receive(request);
+    EXPECT_FALSE(panel.busy()); EXPECT_TRUE(sent.empty()); EXPECT_TRUE(input_blocks.empty());
+    const auto dialogs = panel.findChildren<QDialog*>("clipboardTransferConfirmation"); ASSERT_EQ(dialogs.size(), 1);
+    auto* buttons = dialogs.front()->findChild<QDialogButtonBox*>(); ASSERT_NE(buttons, nullptr);
+    buttons->button(QDialogButtonBox::Ok)->click();
+    ASSERT_EQ(sent.size(), 1U); EXPECT_EQ(sent.back().workspace->action, WorkspaceActionV1::kClipboardApprove);
+    EXPECT_TRUE(sent.back().workspace->clipboard_complete); EXPECT_FALSE(panel.busy());
+    auto status = clipboard_availability(5, true); status.request_id = request.request_id;
+    panel.receive(status); EXPECT_TRUE(panel.busy());
+    panel.receive(clipboard_availability(5)); EXPECT_FALSE(panel.busy());
+    EXPECT_EQ(input_blocks, (std::vector<bool>{true, false}));
+    value.action = WorkspaceActionV1::kFinished; panel.receive(request);
+}
+TEST(ClipboardDemandUi, CancellingConfirmationOnlySendsAnUnapprovedReceipt) {
+    std::vector<StreamControlMessageV1> sent;
+    FileTransferPanel panel([&](const auto& value, QString*) { sent.push_back(value); return true; });
+    panel.receive(clipboard_availability(5));
+    auto request = clipboard_change(42); request.request_id = "cancel-native";
+    request.workspace->action = WorkspaceActionV1::kClipboardConfirm; request.workspace->clipboard_mode = 6;
+    request.workspace->clipboard_token = "remote-version"; request.workspace->clipboard_formats = 64;
+    panel.receive(request);
+    const auto dialogs = panel.findChildren<QDialog*>("clipboardTransferConfirmation"); ASSERT_EQ(dialogs.size(), 1);
+    dialogs.front()->reject(); ASSERT_EQ(sent.size(), 1U);
+    EXPECT_EQ(sent.front().workspace->action, WorkspaceActionV1::kClipboardApprove);
+    EXPECT_FALSE(sent.front().workspace->clipboard_complete); EXPECT_FALSE(panel.busy());
 }
 bool spin(const std::function<bool()>& done, int timeout = 15000) {
     QElapsedTimer timer; timer.start();

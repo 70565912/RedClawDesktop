@@ -2397,6 +2397,7 @@ bool launch_gui_shell(
   auto* file_transfer_panel = new FileTransferPanel(
       [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); });
   task_workspace->add_task(DesktopTask::kFiles, QString::fromUtf8("文件/剪贴板"), file_transfer_panel, QSize(640, 420));
+  file_transfer_panel->set_activity_callback([task_workspace] { task_workspace->set_task_visible(DesktopTask::kFiles, true); });
 #ifdef _WIN32
   if (gui_auto_start.enable_workspace_control) {
     auto* workspace_control = new WorkspaceControlServer(
@@ -4545,6 +4546,8 @@ bool launch_gui_shell(
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kWorkspace) {
+            if (control.workspace && control.workspace->action == redclaw::protocol::WorkspaceActionV1::kAvailability)
+                remote_input_capture->set_native_clipboard(control.clipboard_version >= 5);
             file_transfer_panel->receive(control); return;
           }
           if (control.type

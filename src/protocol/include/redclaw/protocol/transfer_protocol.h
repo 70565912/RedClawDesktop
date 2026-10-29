@@ -12,7 +12,10 @@ enum class TransferConflictV1 { kKeepBoth, kOverwrite, kSkip };
 enum class WorkspaceActionV1 {
     kPrepare, kPrepared, kSelectSource, kSelectionComplete, kScanProgress,
     kOffer, kReady, kCancel, kFinished, kError, kBrowse, kBrowseEntry, kBrowseEnd,
-    kSourceAccepted, kProgress, kAvailability, kBrowseClipboardCopies, kClipboardChanged
+    kSourceAccepted, kProgress, kAvailability, kBrowseClipboardCopies, kClipboardChanged,
+    kClipboardOffer, kClipboardDescribe, kClipboardDescription, kClipboardDemand,
+    kClipboardConfirm, kClipboardApprove, kClipboardShortcut, kClipboardInvokePaste,
+    kClipboardNativePending, kClipboardNativeResult, kClipboardMoveCommit, kClipboardMoveReceipt
 };
 enum class TransferDirectionV1 { kToHost, kToController };
 enum class WorkspaceTransferPurposeV1 { kFiles, kClipboard, kClipboardCleanup, kClipboardOpenCopy };
@@ -36,10 +39,16 @@ struct WorkspaceControlV1 {
     bool paste_submitted = false; // Host's final clipboard result
     std::uint64_t created_at_ms = 0; // clipboard-copy listing only
     TransferConflictV1 conflict = TransferConflictV1::kKeepBoth;
-    std::uint32_t clipboard_mode = 0; // 0 legacy, 1 export, 2 publish, 3 paste only
+    std::uint32_t clipboard_mode = 0; // 0 legacy paste, 1 export, 2 publish, 3 paste only, 4/5 retained snapshots, 6 native demand
     std::string clipboard_source; // owner-local protobuf descriptor, never sent to peer
     std::string snapshot_path; // owner-local verified result reference
     std::uint32_t clipboard_revision = 0; // capability 4: Host copy notification / exact snapshot request
+    // Capability 5. Paths/OS focus identities stay at their owning endpoint.
+    std::string clipboard_token;
+    std::uint32_t clipboard_formats = 0, clipboard_effect = 0;
+    bool clipboard_move = false, clipboard_complete = false;
+    std::string clipboard_metadata;
+    std::uint32_t clipboard_page = 0, clipboard_pages = 0;
 };
 [[nodiscard]] bool validate_workspace_control_v1(const WorkspaceControlV1&, std::string* error = nullptr);
 enum class TransferMessageTypeV1 { kEntry, kChunk, kCommit, kReceipt, kFinish, kFinished };

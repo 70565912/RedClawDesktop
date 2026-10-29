@@ -1,4 +1,5 @@
 #include "ui/remote_input_capture.h"
+#include "redclaw/workspace/clipboard_demand_port.h"
 #include "ui/gui_latency_probe.h"
 
 #include <algorithm>
@@ -969,7 +970,7 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
     const bool key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     const bool key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
     const std::uint16_t virtual_key = static_cast<std::uint16_t>(keyboard->vkCode);
-    if (virtual_key == 'V' && suppressed_paste_key_ && (key_down || key_up)) {
+    if (virtual_key == suppressed_paste_virtual_key_ && suppressed_paste_key_ && (key_down || key_up)) {
         if (key_up) suppressed_paste_key_ = false;
         return 1; // includes repeats while the transfer temporarily suspends forwarding
     }
@@ -998,9 +999,13 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
     if (key_down && plain_control && (virtual_key == 'C' || virtual_key == 'X')) {
         clipboard_shortcut_state_.remote_copy(GetClipboardSequenceNumber());
     }
-    if (key_down && virtual_key == 'V' && clipboard_paste_callback_ && plain_control
+    const bool shift_insert = virtual_key == VK_INSERT && has_any({VK_SHIFT, VK_LSHIFT, VK_RSHIFT})
+        && !has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN});
+    if (key_down && ((virtual_key == 'V' && plain_control) || shift_insert) && clipboard_paste_callback_
+        && (!native_clipboard_ || !redclaw::workspace::clipboard_is_remote_offer())
         && clipboard_shortcut_state_.should_transfer_local_clipboard(GetClipboardSequenceNumber())) {
         suppressed_paste_key_ = true;
+        suppressed_paste_virtual_key_ = virtual_key;
         const auto sequence = GetClipboardSequenceNumber();
         // Empty state sync releases held keys while preserving the explicit
         // control grant. InputReleaseAll intentionally ends control on Host.

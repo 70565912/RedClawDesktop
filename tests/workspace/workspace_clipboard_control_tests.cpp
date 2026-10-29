@@ -210,41 +210,27 @@ TEST_F(ClipboardControlFixture, LocalSnapshotCopyCanBeListedAndCleanedByOpaqueId
     EXPECT_FALSE(std::filesystem::exists(path));
     EXPECT_EQ(host_publications + local_publications + pastes, 0);
 }
-TEST_F(ClipboardControlFixture, RemoteCopyAutomaticallyReturnsVerifiedFormatsAndFilesWithoutInjectingPaste) {
+TEST_F(ClipboardControlFixture, VersionFourCopyNoticesNeverStartAnAutomaticTransfer) {
+    enable_return(); remote_copy();
+    EXPECT_TRUE(automatic_operation.empty()); EXPECT_FALSE(cg.blocks_mutation()); EXPECT_FALSE(hg.blocks_mutation());
+    EXPECT_EQ(local_publications + host_publications + pastes, 0);
+    StreamControlMessageV1 changed;
+    changed.type = StreamControlMessageTypeV1::kWorkspace; changed.session_epoch = "host";
+    changed.request_id = "clipboard-change"; changed.workspace.emplace();
+    changed.workspace->purpose = WorkspaceTransferPurposeV1::kClipboard;
+    changed.workspace->action = Action::kClipboardChanged; changed.workspace->clipboard_revision = host_clipboard_sequence;
+    changed.workspace->clipboard_mode = 2; changed.workspace->direction = TransferDirectionV1::kToController;
+    coordinator->receive(changed);
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(automatic_operation.empty()); EXPECT_FALSE(cg.blocks_mutation());
+    EXPECT_EQ(local_publications + host_publications + pastes, 0);
+}
+TEST_F(ClipboardControlFixture, ExplicitVersionFourSnapshotStillRejectsAStaleRevision) {
     enable_return();
-    EXPECT_TRUE(automatic_operation.empty()); // Connecting does not export an old clipboard.
-    remote_copy(); ASSERT_FALSE(automatic_operation.empty());
-    const auto result = finish(automatic_operation); ASSERT_TRUE(result);
-    ASSERT_TRUE(result->workspace->error_code.empty()) << result->workspace->error_code;
-    EXPECT_EQ(local_publications, 1); EXPECT_EQ(host_publications, 0); EXPECT_EQ(pastes, 0);
-    const auto& snapshot = result->workspace->snapshot_path;
-    const auto path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(snapshot.data()), snapshot.size()));
-    PreparedClipboardPayload verified; const std::atomic_bool cancelled{false}; std::string error;
-    EXPECT_TRUE(verified.load(path, cancelled, &error)) << error;
-    wire::ClipboardPayloadManifestV1 manifest;
-    std::ifstream metadata(path / "metadata/manifest.pb", std::ios::binary);
-    ASSERT_TRUE(manifest.ParseFromIstream(&metadata)); EXPECT_EQ(manifest.formats_size(), 6);
-    std::ifstream copied(path / "files/0/source/data", std::ios::binary);
-    const std::string bytes{std::istreambuf_iterator<char>(copied), std::istreambuf_iterator<char>()};
-    EXPECT_EQ(bytes, std::string(65539, 'C'));
-    EXPECT_TRUE(std::filesystem::is_directory(path / "files/0/source/empty"));
-    const auto completed_id = automatic_operation;
-    for (int tick = 0; tick < 20; ++tick) step();
-    EXPECT_EQ(automatic_operation, completed_id); EXPECT_EQ(local_publications, 1);
-}
-TEST_F(ClipboardControlFixture, LocalCopyDuringReturnPreventsRemotePublication) {
-    enable_return(); remote_copy(); ASSERT_FALSE(automatic_operation.empty());
-    ++local_clipboard_sequence;
-    const auto result = finish(automatic_operation); ASSERT_TRUE(result);
-    EXPECT_EQ(result->workspace->error_code, "clipboard_local_changed");
-    EXPECT_EQ(local_publications, 0); EXPECT_EQ(pastes, 0);
-}
-TEST_F(ClipboardControlFixture, ANewerRemoteCopyCannotBeCapturedAsTheRequestedRevision) {
-    host->peer_capability(1, "controller", 4); controller->peer_capability(1, "host", 4); step();
     auto copy = command(2, "stale-copy"); copy.workspace->clipboard_source.clear();
     copy.workspace->direction = TransferDirectionV1::kToController;
     copy.workspace->clipboard_sequence = local_clipboard_sequence;
-    copy.workspace->clipboard_revision = host_clipboard_sequence.load() - 1;
+    copy.workspace->clipboard_revision = host_clipboard_sequence + 1;
     controller->from_gui(copy);
     const auto result = finish("stale-copy"); ASSERT_TRUE(result);
     EXPECT_EQ(result->workspace->error_code, "clipboard_changed_before_snapshot"); EXPECT_EQ(local_publications, 0);
@@ -284,8 +270,7 @@ TEST_F(ClipboardControlFixture, PublishingToHostDoesNotEchoAndReconnectDoesNotRe
     host->channel_open(true); controller->channel_open(true);
     for (int tick = 0; tick < 10; ++tick) step();
     EXPECT_TRUE(automatic_operation.empty()); // Upgrade enables new copies, not replay.
-    remote_copy(); ASSERT_FALSE(automatic_operation.empty());
-    ASSERT_TRUE(finish(automatic_operation)); EXPECT_EQ(local_publications, 1);
+    remote_copy(); EXPECT_TRUE(automatic_operation.empty()); EXPECT_EQ(local_publications, 0);
 }
 TEST_F(ClipboardControlFixture, VersionThreePeersKeepBothDirectionsWithoutAutomaticNotifications) {
     ++host_clipboard_sequence;

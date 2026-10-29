@@ -7,6 +7,26 @@
 
 namespace {
 using namespace redclaw::protocol;
+TEST(TransferProtocol, DemandClipboardIdentityMetadataAndNativeReceiptsRoundTrip) {
+    StreamControlMessageV1 control; control.type = StreamControlMessageTypeV1::kWorkspace;
+    control.session_epoch = "host"; control.request_id = "paste"; control.message_id = control.sent_at_ms = 1;
+    auto& value = control.workspace.emplace(); value.purpose = WorkspaceTransferPurposeV1::kClipboard;
+    value.clipboard_mode = 6; value.clipboard_token = "source-version"; value.clipboard_formats = 64;
+    value.clipboard_revision = 42; value.clipboard_move = true; value.direction = TransferDirectionV1::kToController;
+    for (unsigned action = unsigned(WorkspaceActionV1::kClipboardOffer); action <= unsigned(WorkspaceActionV1::kClipboardMoveReceipt); ++action) {
+        value.action = static_cast<WorkspaceActionV1>(action);
+        auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(control));
+        ASSERT_TRUE(parsed.ok) << action << ": " << parsed.error;
+        EXPECT_EQ(parsed.value.workspace->clipboard_token, value.clipboard_token);
+        EXPECT_TRUE(parsed.value.workspace->clipboard_move); EXPECT_EQ(parsed.value.workspace->clipboard_formats, 64U);
+    }
+    value.action = WorkspaceActionV1::kClipboardDescription; value.clipboard_metadata.assign(32768, 'd');
+    value.clipboard_page = 2047; value.clipboard_pages = 2048;
+    EXPECT_TRUE(parse_stream_control_message_v1(serialize_stream_control_message_v1(control)).ok);
+    value.clipboard_metadata += 'd'; EXPECT_FALSE(validate_workspace_control_v1(value)); value.clipboard_metadata.clear();
+    value.clipboard_page = 2048; EXPECT_FALSE(validate_workspace_control_v1(value)); value.clipboard_page = 0;
+    value.clipboard_pages = 0; value.clipboard_token.clear(); EXPECT_FALSE(validate_workspace_control_v1(value));
+}
 TEST(TransferProtocol, ClipboardChangeRevisionRoundTripsAndIsRestrictedToRemotePublish) {
     StreamControlMessageV1 control;
     control.type = StreamControlMessageTypeV1::kWorkspace; control.session_epoch = "host";

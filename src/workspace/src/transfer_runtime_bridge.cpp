@@ -11,6 +11,10 @@ bool copy_purpose(protocol::WorkspaceTransferPurposeV1 purpose) {
     return purpose == protocol::WorkspaceTransferPurposeV1::kClipboardCleanup
         || purpose == protocol::WorkspaceTransferPurposeV1::kClipboardOpenCopy;
 }
+void native_identity(protocol::WorkspaceControlV1& to, const protocol::WorkspaceControlV1& from) {
+    to.clipboard_token = from.clipboard_token; to.clipboard_formats = from.clipboard_formats;
+    to.clipboard_move = from.clipboard_move;
+}
 }
 TransferRuntimeBridge::TransferRuntimeBridge(bool host, std::string epoch, std::filesystem::path spool,
     TransferOperationGate& gate, ControlSend peer, ControlSend gui, BulkSend bulk, std::function<bool()> ensure,
@@ -18,7 +22,17 @@ TransferRuntimeBridge::TransferRuntimeBridge(bool host, std::string epoch, std::
     : host_role_(host), local_epoch_(std::move(epoch)), spool_directory_(std::move(spool)), gate_(gate),
       peer_send_(std::move(peer)), gui_send_(std::move(gui)), bulk_send_(std::move(bulk)), ensure_(std::move(ensure)),
       clipboard_paste_(clipboard_actions), clipboard_capture_(std::move(clipboard_actions.capture)),
-      clipboard_sequence_number_(std::move(clipboard_actions.sequence)) {}
+      clipboard_sequence_number_(std::move(clipboard_actions.sequence)) {
+    if (clipboard_actions.native_demand || clipboard_actions.demand_port) {
+        auto port = clipboard_actions.demand_port ? clipboard_actions.demand_port : make_native_clipboard_demand_port();
+        native_clipboard_ = std::make_unique<ClipboardDemandSession>(host_role_, local_epoch_, spool_directory_, std::move(port),
+            clipboard_actions, peer_send_, gui_send_, [this](const auto& request) {
+                if (!operation_.empty() || !ready_) return false;
+                from_gui(request); return operation_ == request.request_id && !cancelled_;
+            }, [this](const auto& operation) { if (operation_ == operation) cancel("clipboard_native_cancelled", true); },
+            [this](std::string_view operation) { return ready_ && (operation_.empty() || operation_ == operation); });
+    }
+}
 void TransferRuntimeBridge::peer_capability(std::uint32_t version, std::string epoch, std::uint32_t clipboard_version) {
     std::lock_guard lock(inbox_mutex_);
     peer_version_ = kFileTransferCapabilityVersion && version >= 1 ? 1 : 0;
@@ -39,6 +53,9 @@ bool TransferRuntimeBridge::receive_control(const Control& message) {
     if (!peer_version_ || overflow_ || message.session_epoch != advertised_peer_epoch_) return false;
     if (message.workspace->clipboard_mode && peer_clipboard_version_ < 3) return false;
     if (message.workspace->clipboard_revision && peer_clipboard_version_ < 4) return false;
+    if ((!message.workspace->clipboard_token.empty() || message.workspace->clipboard_mode == 6) && peer_clipboard_version_ < 5) return false;
+    if (message.workspace->action == Action::kClipboardConfirm || message.workspace->action == Action::kClipboardShortcut
+        || message.workspace->action == Action::kClipboardNativePending) return false;
     if (message.workspace->action == Action::kClipboardChanged && host_role_) return false;
     if (copy_purpose(message.workspace->purpose) && message.workspace->direction == protocol::TransferDirectionV1::kToController
         && peer_clipboard_version_ < 3) return false;
@@ -61,23 +78,35 @@ TransferRuntimeBridge::Control TransferRuntimeBridge::make(Action action, std::s
     data.action = action; data.direction = direction_; data.conflict = conflict_; data.purpose = purpose_;
     data.clipboard_mode = purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboard ? clipboard_mode_ : 0;
     data.clipboard_revision = purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboard ? clipboard_revision_ : 0;
+    if (clipboard_mode_ == 6) {
+        data.clipboard_token = native_request_.clipboard_token; data.clipboard_formats = native_request_.clipboard_formats;
+        data.clipboard_move = native_request_.clipboard_move;
+    }
     return result;
 }
-void TransferRuntimeBridge::local(Control message) { if (gui_send_) (void)gui_send_(message); }
+void TransferRuntimeBridge::local(Control message) {
+    if (native_clipboard_ && clipboard_mode_ == 6) native_clipboard_->presentation(message);
+    if (gui_send_) (void)gui_send_(message);
+}
 void TransferRuntimeBridge::queue(Control message) {
     if (outgoing_.size() >= 16) { cancel("workspace_control_overflow", false); return; }
     outgoing_.push_back(std::move(message));
 }
 bool TransferRuntimeBridge::source() const {
-    return !copy_action() && clipboard_mode_ < 4 && host_role_ == (direction_ == protocol::TransferDirectionV1::kToController);
+    return !copy_action() && (clipboard_mode_ < 4 || clipboard_mode_ == 6)
+        && host_role_ == (direction_ == protocol::TransferDirectionV1::kToController);
 }
 bool TransferRuntimeBridge::matches(const Control& message) const {
     return !operation_.empty() && message.request_id == operation_ && message.workspace
         && message.workspace->direction == direction_ && message.workspace->purpose == purpose_
-        && message.workspace->clipboard_mode == clipboard_mode_ && message.workspace->clipboard_revision == clipboard_revision_;
+        && message.workspace->clipboard_mode == clipboard_mode_ && message.workspace->clipboard_revision == clipboard_revision_
+        && (clipboard_mode_ != 6 || message.workspace->clipboard_token == native_request_.clipboard_token);
 }
 bool TransferRuntimeBridge::begin(const Control& message) {
     if (!ready_ || gate_.blocks_mutation() || !message.workspace || !operation_.empty()) return false;
+    if (native_clipboard_ && native_clipboard_->reserved_for_other(message.request_id)) return false;
+    if (message.workspace->clipboard_mode == 6 && (clipboard_version_ < 5 || !native_clipboard_)) return false;
+    if (message.workspace->clipboard_mode == 6 && !native_clipboard_->accepts_transfer(message)) return false;
     if (message.workspace->purpose == protocol::WorkspaceTransferPurposeV1::kClipboard && !clipboard_ready_) return false;
     if (copy_purpose(message.workspace->purpose) && clipboard_version_ < 2) return false;
     if (copy_purpose(message.workspace->purpose) && message.workspace->direction == protocol::TransferDirectionV1::kToController
@@ -90,10 +119,18 @@ bool TransferRuntimeBridge::begin(const Control& message) {
     purpose_ = message.workspace->purpose; clipboard_sequence_ = message.workspace->clipboard_sequence;
     clipboard_mode_ = message.workspace->clipboard_mode; clipboard_source_ = message.workspace->clipboard_source;
     clipboard_revision_ = message.workspace->clipboard_revision;
-    if (host_role_ && clipboard_revision_) clipboard_sequence_ = clipboard_revision_;
+    native_request_ = clipboard_mode_ == 6 ? *message.workspace : protocol::WorkspaceControlV1{};
+    if (host_role_ && clipboard_revision_ && clipboard_mode_ != 6) clipboard_sequence_ = clipboard_revision_;
     paste_submitted_ = paste_requested_ = false;
     cancelled_ = prepared_ = offered_ = transfer_ready_ = local_finished_ = completed_notification_queued_ = false;
     accepted_sources_ = next_progress_ms_ = 0; error_.clear(); destination_.clear(); clipboard_batch_id_.clear();
+    if (clipboard_mode_ == 6) {
+        native_clipboard_->transfer_started(message);
+        if (source()) {
+            clipboard_sequence_ = native_clipboard_->source_sequence(native_request_.clipboard_token);
+            if (!clipboard_sequence_) { cancel("clipboard_source_changed", host_role_); return true; }
+        }
+    }
     try {
         if (copy_action() || (clipboard() && !source())) {
             clipboard_batch_id_ = copy_action() ? message.workspace->path : ClipboardCopyStore::new_id();
@@ -120,6 +157,7 @@ void TransferRuntimeBridge::create_source() {
     auto config = TransferWorkerConfig{true, operation_epoch_, operation_, spool_directory_, {}, conflict_, spool_directory_, clipboard(), clipboard_sequence_};
     config.clipboard_source = clipboard_source_;
     config.clipboard_capture = clipboard_capture_;
+    if (clipboard_mode_ == 6) config.clipboard_capture = native_clipboard_->checked_capture(native_request_.clipboard_token, clipboard_capture_);
     worker_ = std::make_unique<TransferWorker>(std::move(config));
 }
 void TransferRuntimeBridge::create_receiver(const protocol::WorkspaceControlV1& offer) {
@@ -127,6 +165,7 @@ void TransferRuntimeBridge::create_receiver(const protocol::WorkspaceControlV1& 
         {offer.entries, offer.files, offer.bytes}, conflict_, spool_directory_, clipboard(), 0,
         ClipboardCopyAction::kNone, clipboard_batch_id_};
     config.retain_clipboard_snapshot = clipboard_mode_ != 0;
+    config.reject_unconfirmed_clipboard_files = host_role_ && native_clipboard_ && clipboard_mode_ == 0 && clipboard();
     worker_ = std::make_unique<TransferWorker>(std::move(config));
 }
 void TransferRuntimeBridge::create_copy_action() {
@@ -141,6 +180,7 @@ void TransferRuntimeBridge::from_gui(const Control& message) {
         || !message.workspace->results_path.empty() || message.workspace->paste_submitted
         || !message.workspace->snapshot_path.empty()) return;
     const auto& data = *message.workspace;
+    if (native_clipboard_ && native_clipboard_->from_gui(message)) return;
     if (data.action == Action::kCancel && matches(message)) { cancel("transfer_cancelled", true); return; }
     if (host_role_) return; // the connected Controller owns file selection
     if (data.action == Action::kBrowse || data.action == Action::kBrowseClipboardCopies) {
@@ -167,6 +207,7 @@ void TransferRuntimeBridge::from_gui(const Control& message) {
             auto rejected = make(Action::kError, message.request_id);
             rejected.workspace->purpose = data.purpose; rejected.workspace->direction = data.direction;
             rejected.workspace->clipboard_mode = data.clipboard_mode; rejected.workspace->clipboard_revision = data.clipboard_revision;
+            native_identity(*rejected.workspace, data);
             rejected.workspace->error_code = (data.purpose == protocol::WorkspaceTransferPurposeV1::kClipboard && !clipboard_ready_)
                 || (copy_purpose(data.purpose) && clipboard_version_ < 2) || (data.clipboard_mode && clipboard_version_ < 3)
                 || (data.clipboard_revision && clipboard_version_ < 4)
@@ -213,7 +254,8 @@ void TransferRuntimeBridge::cancel(std::string error, bool notify_peer) {
     local(std::move(notification));
 }
 void TransferRuntimeBridge::disconnect() {
-    clipboard_observed_ = false; pending_clipboard_revision_ = 0; next_clipboard_check_ms_ = 0;
+    if (native_clipboard_) native_clipboard_->disconnected();
+
     cancel("workspace_connection_lost", false);
     outgoing_.clear(); progress_message_.reset(); pending_bulk_.reset();
     gate_.disconnected();
@@ -222,6 +264,7 @@ void TransferRuntimeBridge::disconnect() {
 }
 void TransferRuntimeBridge::reset_transport(std::string epoch) {
     ready_ = false; disconnect(); local_epoch_ = std::move(epoch); peer_epoch_.clear(); availability_known_ = false;
+    if (native_clipboard_) native_clipboard_->reset_epoch(local_epoch_);
     std::lock_guard lock(inbox_mutex_);
     controls_.clear(); bulk_.clear(); peer_version_ = peer_clipboard_version_ = 0;
     clipboard_ready_ = false; clipboard_version_ = 0; advertised_peer_epoch_.clear(); open_ = overflow_ = false;
@@ -230,8 +273,10 @@ void TransferRuntimeBridge::reset_transport(std::string epoch) {
 void TransferRuntimeBridge::peer_message(const Control& message) {
     if (!message.workspace || message.session_epoch != peer_epoch_) return;
     const auto& data = *message.workspace;
+    if (native_clipboard_ && native_clipboard_->from_peer(message)) return;
     if (!host_role_ && data.action == Action::kClipboardChanged) {
-        if (clipboard_version_ >= 4) local(message);
+        // Capability-4 notices no longer authorize an automatic payload return.
+        // The old peer remains usable for its explicit legacy paste operations.
         return;
     }
     if (host_role_ && (data.action == Action::kBrowse || data.action == Action::kBrowseClipboardCopies)) {
@@ -251,13 +296,14 @@ void TransferRuntimeBridge::peer_message(const Control& message) {
             auto rejected = make(Action::kError, message.request_id);
             rejected.workspace->purpose = data.purpose; rejected.workspace->direction = data.direction;
             rejected.workspace->clipboard_mode = data.clipboard_mode; rejected.workspace->clipboard_revision = data.clipboard_revision;
+            native_identity(*rejected.workspace, data);
             rejected.workspace->error_code = (data.purpose == protocol::WorkspaceTransferPurposeV1::kClipboard && !clipboard_ready_)
                 || (copy_purpose(data.purpose) && clipboard_version_ < 2) || (data.clipboard_mode && clipboard_version_ < 3)
                 || (data.clipboard_revision && clipboard_version_ < 4)
                 ? "clipboard_peer_unsupported" : "workspace_transfer_busy"; queue(std::move(rejected)); return;
         }
         if (cancelled_) return;
-        if (clipboard_mode_ >= 4 || (copy_action() && direction_ == protocol::TransferDirectionV1::kToController)) {
+        if ((clipboard_mode_ >= 4 && clipboard_mode_ != 6) || (copy_action() && direction_ == protocol::TransferDirectionV1::kToController)) {
             queue(make(Action::kPrepared)); finish_local();
         }
         else if (clipboard_mode_ == 3) {
@@ -296,7 +342,7 @@ void TransferRuntimeBridge::peer_message(const Control& message) {
         return;
     }
     if (!host_role_ && data.action == Action::kPrepared && !prepared_ && !worker_) {
-        if (clipboard_mode_ >= 4) {
+        if (clipboard_mode_ >= 4 && clipboard_mode_ != 6) {
             prepared_ = true;
             auto config = TransferWorkerConfig{true, operation_epoch_, operation_, spool_directory_, {}, conflict_, spool_directory_, true};
             config.clipboard_source = clipboard_source_;
@@ -342,6 +388,14 @@ void TransferRuntimeBridge::update_worker(std::uint64_t now) {
     if (progress.state == TransferWorkerState::kAwaitingPaste && !paste_requested_ && !cancelled_) {
         paste_requested_ = true;
         auto payload = worker_->take_prepared_clipboard();
+        if (clipboard_mode_ == 6) {
+            if (!payload || progress.skipped_entries || progress.committed_bytes != progress.transferred_bytes) {
+                cancel("clipboard_data_not_verified", true); return;
+            }
+            native_clipboard_->received(operation_, std::move(payload), destination_, true);
+            if (!worker_->complete_clipboard()) cancel("clipboard_completion_failed", true);
+            return;
+        }
         std::string error;
         // A local copy made while the remote snapshot was in flight always wins.
         const auto local_copy_unchanged = [&] {
@@ -356,11 +410,6 @@ void TransferRuntimeBridge::update_worker(std::uint64_t now) {
             cancel(error.empty() ? "clipboard_payload_unavailable" : std::move(error), true); return;
         }
         paste_submitted_ = clipboard_mode_ == 0;
-        if (host_role_ && clipboard_sequence_number_) {
-            // Our publication must not bounce the Controller's clipboard back.
-            observed_clipboard_sequence_ = clipboard_sequence_number_();
-            clipboard_observed_ = true; pending_clipboard_revision_ = 0;
-        }
         if (!worker_->complete_clipboard()) { cancel("clipboard_completion_failed", true); return; }
     }
     if (progress.finished()) {
@@ -384,7 +433,8 @@ void TransferRuntimeBridge::update_worker(std::uint64_t now) {
         offer.workspace->files = progress.totals.files; offer.workspace->bytes = progress.totals.bytes;
         queue(offer); local(std::move(offer));
     }
-    if (!source() && !copy_action() && clipboard_mode_ < 4 && !transfer_ready_ && progress.state == TransferWorkerState::kTransferring) {
+    if (!source() && !copy_action() && (clipboard_mode_ < 4 || clipboard_mode_ == 6)
+        && !transfer_ready_ && progress.state == TransferWorkerState::kTransferring) {
         transfer_ready_ = true; (void)gate_.start_transfer(operation_epoch_, operation_);
         queue(make(Action::kReady)); local(make(Action::kReady));
     }
@@ -431,6 +481,7 @@ void TransferRuntimeBridge::pump(std::uint64_t now, bool connected) {
     ready_ = available; peer_epoch_ = std::move(epoch);
     clipboard_version_ = ready_ ? clipboard_version : 0;
     clipboard_ready_ = clipboard_version_ >= 1;
+    if (native_clipboard_) native_clipboard_->pump(now, ready_ && clipboard_version_ >= 5, peer_epoch_);
     if (clipboard_revision_ && !operation_.empty() && !cancelled_ && clipboard_version_ < 4)
         cancel("clipboard_peer_unsupported", true);
     if (copy_action() && !operation_.empty() && !cancelled_ && clipboard_version_ < 2) cancel("clipboard_peer_unsupported", true);
@@ -442,7 +493,7 @@ void TransferRuntimeBridge::pump(std::uint64_t now, bool connected) {
     }
     if (ready_) for (const auto& message : incoming) peer_message(message);
     pump_local_clipboard();
-    if (worker_ && !cancelled_ && !copy_action() && clipboard_mode_ < 4) {
+    if (worker_ && !cancelled_ && !copy_action() && (clipboard_mode_ < 4 || clipboard_mode_ == 6)) {
         {
             std::lock_guard lock(inbox_mutex_);
             for (unsigned count = 0; count < 16 && !bulk_.empty(); ++count) {
@@ -483,39 +534,15 @@ void TransferRuntimeBridge::pump(std::uint64_t now, bool connected) {
                 data.results_path.assign(reinterpret_cast<const char*>(path.data()), path.size());
             }
         }
-        local(std::move(finished));
+        if (clipboard_mode_ == 6 && native_clipboard_) native_clipboard_->bulk_finished(finished, source());
+        else local(std::move(finished));
         worker_.reset(); local_clipboard_source_.reset(); local_clipboard_data_.reset(); local_clipboard_receipt_.reset();
         operation_.clear(); pending_bulk_.reset(); outgoing_.clear(); progress_message_.reset();
         clipboard_mode_ = clipboard_revision_ = 0; clipboard_source_.clear(); purpose_ = protocol::WorkspaceTransferPurposeV1::kFiles;
         std::lock_guard lock(inbox_mutex_); bulk_.clear();
     }
     update_availability();
-    notify_clipboard_change(now);
-}
-void TransferRuntimeBridge::notify_clipboard_change(std::uint64_t now) {
-    if (!host_role_ || !ready_ || clipboard_version_ < 4 || !clipboard_sequence_number_) {
-        clipboard_observed_ = false; pending_clipboard_revision_ = 0;
-        return;
-    }
-    // Sample only the OS change counter on the existing owner tick: no clipboard
-    // data reads, extra timer/thread, or unbounded queue for repeated copies.
-    if (now >= next_clipboard_check_ms_) {
-        next_clipboard_check_ms_ = now + 25;
-        const auto sequence = clipboard_sequence_number_();
-        if (clipboard_observed_ && sequence && sequence != observed_clipboard_sequence_)
-            pending_clipboard_revision_ = sequence;
-        observed_clipboard_sequence_ = sequence; clipboard_observed_ = true;
-    }
-    if (!pending_clipboard_revision_ || gate_.blocks_mutation()) return;
-    if (!clipboard_paste_.publish_eligible()) { pending_clipboard_revision_ = 0; return; }
-    Control changed;
-    changed.type = protocol::StreamControlMessageTypeV1::kWorkspace;
-    changed.session_epoch = local_epoch_; changed.request_id = "clipboard-change";
-    auto& data = changed.workspace.emplace();
-    data.action = Action::kClipboardChanged; data.purpose = protocol::WorkspaceTransferPurposeV1::kClipboard;
-    data.direction = protocol::TransferDirectionV1::kToController;
-    data.clipboard_mode = 2; data.clipboard_revision = pending_clipboard_revision_;
-    if (peer_send_ && peer_send_(changed)) pending_clipboard_revision_ = 0;
+
 }
 void TransferRuntimeBridge::pump_local_clipboard() {
     if (!local_clipboard_source_ || cancelled_) return;

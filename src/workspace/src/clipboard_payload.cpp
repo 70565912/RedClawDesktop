@@ -275,6 +275,27 @@ struct PreparedClipboardPayload::Impl {
 };
 PreparedClipboardPayload::PreparedClipboardPayload() : impl_(std::make_unique<Impl>()) {}
 PreparedClipboardPayload::~PreparedClipboardPayload() = default;
+std::uintptr_t PreparedClipboardPayload::clone_native_format(ClipboardPayloadFormat format) const {
+#ifdef _WIN32
+    if (!impl_->ready) return 0;
+    const auto type = native_format(static_cast<std::uint32_t>(format));
+    for (const auto& object : impl_->objects) if (object.format == type && object.memory) {
+        const auto size = GlobalSize(object.memory);
+        auto copy = GlobalAlloc(GMEM_MOVEABLE, size);
+        if (!copy) return 0;
+        const auto* source = GlobalLock(object.memory); auto* destination = GlobalLock(copy);
+        if (!source || !destination) {
+            if (source) GlobalUnlock(object.memory); if (destination) GlobalUnlock(copy);
+            GlobalFree(copy); return 0;
+        }
+        std::memcpy(destination, source, size); GlobalUnlock(object.memory); GlobalUnlock(copy);
+        return reinterpret_cast<std::uintptr_t>(copy);
+    }
+#else
+    (void)format;
+#endif
+    return 0;
+}
 bool PreparedClipboardPayload::load(const std::filesystem::path& directory, const std::atomic_bool& cancelled, std::string* error) {
 #ifdef _WIN32
     if (impl_->ready || impl_->used || !impl_->objects.empty()) return fail(error, "clipboard_payload_already_loaded");

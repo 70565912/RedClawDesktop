@@ -16,6 +16,7 @@ public:
     void request_clipboard_paste(std::uint32_t sequence);
     void cancel_clipboard_paste();
     void set_busy_callback(std::function<void(bool)> callback);
+    void set_activity_callback(std::function<void()> callback);
     [[nodiscard]] bool busy() const;
     TransferCoordinator& coordinator();
 private:

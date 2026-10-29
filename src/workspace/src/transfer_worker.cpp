@@ -69,6 +69,9 @@ std::optional<std::string> TransferWorker::take_output() {
 }
 bool TransferWorker::output_empty() const { std::lock_guard lock(mutex_); return outgoing_.empty(); }
 TransferWorkerProgress TransferWorker::progress() const { std::lock_guard lock(mutex_); return progress_; }
+std::shared_ptr<ClipboardDescription> TransferWorker::clipboard_description() const {
+    std::lock_guard lock(mutex_); return description_;
+}
 bool TransferWorker::emit(const protocol::TransferMessageV1& message) {
     {
         std::lock_guard lock(mutex_);
@@ -135,6 +138,14 @@ void TransferWorker::publish() {
 }
 void TransferWorker::run() {
     try {
+        if (config_.clipboard_description_only) {
+            auto description = std::make_shared<ClipboardDescription>(); std::string error;
+            const bool ok = describe_clipboard_files(config_.clipboard_files, config_.directory, cancelled_, *description, &error);
+            std::lock_guard lock(mutex_);
+            if (ok) { description_ = std::move(description); progress_.totals = description_->totals; }
+            progress_.state = ok ? TransferWorkerState::kComplete : cancelled_.load() ? TransferWorkerState::kCancelled : TransferWorkerState::kFailed;
+            progress_.error = std::move(error); return;
+        }
         if (config_.copy_action != ClipboardCopyAction::kNone) { run_copy_action(); return; }
         if (config_.source) {
             if (!sender_.begin_prepare(config_.directory)) { publish(); return; }
@@ -220,7 +231,10 @@ void TransferWorker::run() {
                 if (parsed.value.session_epoch == config_.epoch && parsed.value.operation_id == config_.operation) {
                     if (config_.clipboard && !config_.source && parsed.value.type == protocol::TransferMessageTypeV1::kEntry) {
                         if (!clipboard_entry(parsed.value)) { fail("clipboard_entry_namespace_invalid"); return; }
-                        if (parsed.value.relative_path == "files" || parsed.value.relative_path.starts_with("files/")) clipboard_files_seen_ = true;
+                        if (parsed.value.relative_path == "files" || parsed.value.relative_path.starts_with("files/")) {
+                            if (config_.reject_unconfirmed_clipboard_files) { fail("clipboard_native_peer_unsupported"); return; }
+                            clipboard_files_seen_ = true;
+                        }
                     }
                     if (config_.source) {
                         if (!source_started_ || !sender_.receive(parsed.value)) { fail("transfer_invalid_receipt"); return; }

@@ -3426,7 +3426,7 @@ int run_runtime_mode(
                     != redclaw::capture::CaptureDesktopAccess::kOrdinary) return false;
                 std::lock_guard lock(callback_mutex);
                 return stream_required_channels_ready && stream_control_channel_open && !remote_input_disconnect_pending;
-            }
+            }, {}, redclaw::workspace::clipboard_sequence_number, true
         });
 
     redclaw::runtime::NavigationThumbnailWorker navigation_thumbnails(options.role == RuntimeRole::kHost);

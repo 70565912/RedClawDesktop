@@ -23,6 +23,7 @@
 #include <QTreeWidget>
 #include <QUuid>
 #include <QVBoxLayout>
+#include "redclaw/workspace/clipboard_demand_port.h"
 
 namespace redclaw::ui {
 namespace {
@@ -154,6 +155,9 @@ struct FileTransferPanel::Impl {
     Direction direction = Direction::kToHost;
     Purpose purpose = Purpose::kFiles;
     std::uint32_t clipboard_mode = 0;
+    std::uint32_t clipboard_version = 0;
+    QPointer<QDialog> confirmation;
+    std::function<void()> show_activity;
     protocol::TransferConflictV1 conflict = protocol::TransferConflictV1::kKeepBoth;
     QStringList sources;
     Impl(FileTransferPanel* widget, Send sender) : owner(widget), coordinator(std::move(sender), widget),
@@ -167,7 +171,8 @@ struct FileTransferPanel::Impl {
         if (selection_page) selection_page->setEnabled(available && !blocked);
         if (browser) browser->setEnabled(available && !blocked);
         if (copies_dialog) copies_dialog->setEnabled(copies_available && !blocked);
-        if (blocked != notified_busy) { notified_busy = blocked; if (busy_changed) busy_changed(blocked); }
+        const bool input_blocked = runtime_busy || (requested && clipboard_mode != 6);
+        if (input_blocked != notified_busy) { notified_busy = input_blocked; if (busy_changed) busy_changed(input_blocked); }
     }
     void remote_select(bool folders, std::function<void(const QStringList&)> selected) {
         if (browser || busy() || !available) return;
@@ -320,12 +325,27 @@ FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(paren
 FileTransferPanel::~FileTransferPanel() = default;
 TransferCoordinator& FileTransferPanel::coordinator() { return impl_->coordinator; }
 void FileTransferPanel::set_busy_callback(std::function<void(bool)> callback) { impl_->busy_changed = std::move(callback); }
-bool FileTransferPanel::busy() const { return impl_->busy(); }
+bool FileTransferPanel::busy() const { return impl_->runtime_busy || (impl_->requested && impl_->clipboard_mode != 6); }
+void FileTransferPanel::set_activity_callback(std::function<void()> callback) { impl_->show_activity = std::move(callback); }
 void FileTransferPanel::request_clipboard_paste(std::uint32_t sequence) {
     if (impl_->busy()) return;
     impl_->result_visible = true;
     if (!impl_->clipboard_available || !sequence) {
         impl_->status->setText(QString::fromUtf8("无法传送剪贴板：对端尚不支持此能力，或本机剪贴板不可用。")); return;
+    }
+    if (impl_->clipboard_version >= 5) {
+        auto request = control(Action::kClipboardShortcut, identity());
+        request.workspace->purpose = Purpose::kClipboard; request.workspace->clipboard_mode = 6;
+        request.workspace->clipboard_token = "local-shortcut"; request.workspace->clipboard_sequence = sequence;
+        QString error;
+        if (!impl_->send(request, &error)) impl_->status->setText(error);
+        return;
+    }
+    if (redclaw::workspace::clipboard_is_remote_offer()) return;
+    if (redclaw::workspace::clipboard_has_files()) {
+        impl_->status->setText(QString::fromUtf8("对端不支持文件按需粘贴和跨机移动。可使用文件传送窗口；剪贴板源文件保留。"));
+        if (impl_->show_activity) impl_->show_activity();
+        return;
     }
     impl_->purpose = Purpose::kClipboard; impl_->direction = Direction::kToHost;
     impl_->operation = identity(); impl_->requested = true; impl_->results_path.clear(); impl_->sources.clear();
@@ -341,6 +361,7 @@ void FileTransferPanel::cancel_clipboard_paste() {
     if (impl_->purpose == Purpose::kClipboard && impl_->clipboard_mode == 0 && impl_->cancel->isEnabled()) impl_->cancel_transfer();
 }
 void FileTransferPanel::runtime_stopped() {
+    if (impl_->confirmation) impl_->confirmation->reject();
     impl_->coordinator.disconnected();
     impl_->clipboard_available = impl_->available = impl_->runtime_busy = impl_->requested = false;
     impl_->copies_available = false;
@@ -357,10 +378,52 @@ void FileTransferPanel::receive(const Control& message) {
     if (details.action == Action::kAvailability) {
         impl_->available = message.file_transfer_version >= 1; impl_->runtime_busy = details.active;
         impl_->clipboard_available = message.clipboard_version >= 1;
+        impl_->clipboard_version = message.clipboard_version;
         impl_->copies_available = message.clipboard_version >= 2;
         if (details.active && impl_->operation.empty()) { impl_->operation = message.request_id; impl_->direction = details.direction; }
         impl_->revision = details.operation_revision;
         if (!impl_->busy() && !impl_->result_visible) impl_->status->setText(impl_->available ? QString::fromUtf8("文件传送可用") : QString::fromUtf8("对端未连接或版本尚不支持文件传送"));
+        impl_->refresh(); return;
+    }
+    if (!details.clipboard_token.empty() && details.clipboard_mode == 6
+        && (details.action == Action::kClipboardConfirm || details.action == Action::kClipboardNativePending)) {
+        if (!impl_->operation.empty() && impl_->operation != message.request_id) return;
+        impl_->operation = message.request_id; impl_->purpose = Purpose::kClipboard; impl_->direction = details.direction;
+        impl_->clipboard_mode = 6; impl_->requested = true; impl_->result_visible = true;
+        impl_->cancel->setEnabled(true); impl_->progress->setRange(0, 0);
+        if (details.error_code == "clipboard_completing_move") impl_->cancel->setEnabled(false);
+        if (impl_->show_activity) impl_->show_activity();
+        if (details.action == Action::kClipboardConfirm && !impl_->confirmation) {
+            auto* dialog = new QDialog(window()); impl_->confirmation = dialog;
+            dialog->setObjectName("clipboardTransferConfirmation"); dialog->setWindowTitle(QString::fromUtf8("开始远程传输"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose); dialog->setWindowModality(Qt::NonModal);
+            auto* layout = new QVBoxLayout(dialog);
+            const auto direction = details.direction == Direction::kToHost ? QString::fromUtf8("本机 → 对端") : QString::fromUtf8("对端 → 本机");
+            auto* text = new QLabel(QString::fromUtf8("%1 · %2\n%3 个文件、%4 个文件夹，共 %5\n%6")
+                .arg(direction).arg(details.clipboard_move ? QString::fromUtf8("移动") : QString::fromUtf8("复制"))
+                .arg(details.files).arg(details.entries - details.files).arg(amount(details.bytes))
+                .arg(details.clipboard_move ? QString::fromUtf8("目标确认粘贴成功后才完成源端剪切；取消或未确认成功时保留源文件。")
+                    : QString::fromUtf8("确认后开始传输，源文件保持不变。")), dialog);
+            text->setWordWrap(true); text->setTextFormat(Qt::PlainText); layout->addWidget(text);
+            auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+            buttons->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("开始传输"));
+            buttons->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消")); layout->addWidget(buttons);
+            connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+            connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+            connect(dialog, &QDialog::finished, this, [this, request = message](int answer) mutable {
+                impl_->confirmation.clear(); request.workspace->action = Action::kClipboardApprove;
+                request.workspace->error_code.clear(); request.workspace->clipboard_complete = answer == QDialog::Accepted;
+                QString error; if (!impl_->send(request, &error)) impl_->status->setText(error);
+            });
+            dialog->show();
+        }
+        impl_->status->setText(details.action == Action::kClipboardConfirm ? QString::fromUtf8("等待确认远程传输…")
+            : details.error_code == "clipboard_scanning" ? QString::fromUtf8("正在统计文件和文件夹；尚未传输文件内容…")
+            : details.error_code == "clipboard_awaiting_native_paste" ? QString::fromUtf8("内容已校验，等待目标应用完成粘贴；可处理目标窗口的同名文件提示。")
+            : details.error_code == "clipboard_waiting_for_target" ? QString::fromUtf8("已确认；等待目标应用取数，可处理目标窗口的同名文件提示。")
+            : details.error_code == "clipboard_completing_move" ? QString::fromUtf8("目标已确认粘贴，正在完成源端剪切…")
+            : details.error_code == "clipboard_transferring" ? QString::fromUtf8("正在传输；完成内容校验后交给目标应用粘贴…")
+            : QString::fromUtf8("正在准备按需剪贴板传输…"));
         impl_->refresh(); return;
     }
     if (message.request_id != impl_->operation || details.purpose != impl_->purpose) return;
@@ -392,7 +455,7 @@ void FileTransferPanel::receive(const Control& message) {
                 ? static_cast<double>(details.completed_bytes - impl_->rate_bytes) * 1000.0 / impl_->rate_timer.elapsed() : 0.0;
             impl_->rate_bytes = details.completed_bytes; impl_->rate_timer.restart();
         } else if (!impl_->rate_timer.isValid()) { impl_->rate_timer.start(); impl_->rate_bytes = details.completed_bytes; }
-        impl_->status->setText(QString::fromUtf8("%1 · %2/s\n已接收 %3 / %4；已校验 %5；文件 %6 / %7\n%8")
+        impl_->status->setText(QString::fromUtf8("%1 · 传输 / 校验 · %2/s\n已接收 %3 / %4；已校验 %5；文件 %6 / %7\n%8")
             .arg(impl_->direction == Direction::kToHost ? QString::fromUtf8("本机 → 对端") : QString::fromUtf8("对端 → 本机"))
             .arg(amount(static_cast<std::uint64_t>(impl_->bytes_per_second)))
             .arg(amount(details.completed_bytes)).arg(amount(details.bytes)).arg(amount(details.committed_bytes))
@@ -402,6 +465,7 @@ void FileTransferPanel::receive(const Control& message) {
     case Action::kCancel: impl_->cancel->setEnabled(false); impl_->status->setText(QString::fromUtf8("正在中止传送并等待双端清理…")); break;
     case Action::kFinished:
     case Action::kError:
+        if (impl_->confirmation) impl_->confirmation->reject();
         impl_->requested = false;
         impl_->result_visible = true;
         impl_->results_path = qtext(details.results_path);
@@ -416,6 +480,17 @@ void FileTransferPanel::receive(const Control& message) {
             details.error_code.empty() && details.paste_submitted
                 ? QString::fromUtf8("剪贴板已送达，已向原对端窗口提交一次粘贴。")
                 : QString::fromUtf8("剪贴板传送已结束，未确认粘贴：") + qtext(details.error_code));
+        if (details.error_code == "clipboard_native_peer_unsupported") impl_->status->setText(
+            QString::fromUtf8("对端不支持文件按需粘贴和跨机移动；源文件保留。可使用文件传送窗口。"));
+        if (impl_->clipboard_mode == 6) impl_->status->setText(details.error_code.empty()
+            ? details.clipboard_move ? QString::fromUtf8("移动完成：目标已确认粘贴，源端剪切已完成。") : QString::fromUtf8("粘贴完成。")
+            : details.error_code == "transfer_cancelled" ? QString::fromUtf8("已取消，源文件保留。")
+            : details.error_code == "clipboard_move_result_unknown" ? QString::fromUtf8("目标已接收，源端移动结果未知；不会自动重试。")
+            : details.error_code == "clipboard_source_changed" ? QString::fromUtf8("源文件已变化，源文件保留；请重新复制后粘贴。")
+            : details.error_code == "clipboard_native_name_too_long" ? QString::fromUtf8("所选内容包含目标应用无法处理的过长路径；未开始传输。")
+            : details.error_code == "clipboard_description_too_large" ? QString::fromUtf8("所选文件数量或路径信息过多，请分批粘贴；源文件保留。")
+            : details.clipboard_move ? QString::fromUtf8("部分完成：未确认全部粘贴成功，源文件保留。 ") + qtext(details.error_code)
+            : QString::fromUtf8("目标应用未确认全部粘贴，部分内容可能已保存。 ") + qtext(details.error_code));
         if (impl_->purpose == Purpose::kClipboardCleanup || impl_->purpose == Purpose::kClipboardOpenCopy)
             impl_->status->setText(!details.error_code.empty() ? QString::fromUtf8("副本操作已结束：") + qtext(details.error_code)
                 : impl_->purpose == Purpose::kClipboardCleanup ? QString::fromUtf8("剪贴板副本清理完成。") : QString::fromUtf8("已在对端打开副本目录。"));
