@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-10-22
+Updated: 2026-10-29
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -123,7 +123,9 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 
 ## X00 Cross-module delivery
 
-Updated: 2026-10-18
+Updated: 2026-10-29
+
+- `X00-T32` Remove shared live debug credentials from GitHub — in-progress. Current-source remediation removes the default connection code, requires explicit/ignored local configuration, replaces reused fixture literals, adds the CI credential guard and excludes credential files from releases. Seven guard tests, six resolver cases and both role dry-runs pass. Historical public commits/tags still require a separately authorized rewrite; no claim of historical erasure or live credential rotation. See the [development log](../logs/DEVLOG.md).
 
 AMF source-CI dependency repair (2026-10-18): the replacement official 1.5.3 asset matches GitHub's digest and all 57 headers match the tagged source commit. The registered overlay retains strict archive/license SHA512 checks and passes a fresh isolated vcpkg install with binary caching disabled and port checks enforced. The follow-up also fixes the existing FFmpeg 9 compile incompatibility and saves validated dependency caches before the build. Run `39131099228` passes dependency configuration and compilation, then exposes four environment-dependent test-suite failures. The follow-up fixes explicit journal ownership at creation, BOM-free PowerShell input and Unicode fixture comparisons; all four suites pass locally. Full 86-suite acceptance is tracked by the follow-up commit's `ci-unit-tests` check. See [provenance and removal criteria](../../vcpkg-overlays/ports/amd-amf/README.md) and the development log.
 

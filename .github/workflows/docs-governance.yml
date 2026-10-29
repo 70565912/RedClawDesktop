@@ -12,6 +12,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Reject committed debug credentials
+        run: |
+          python3 -m unittest discover -s scripts/security -p 'test_*.py'
+          python3 scripts/security/check_debug_credentials.py
+
       - name: Verify required docs exist
         run: |
           set -e

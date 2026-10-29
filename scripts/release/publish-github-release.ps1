@@ -230,7 +230,7 @@ function Assert-StagingContent {
 
     $violations = @($files | Where-Object {
         $_ -match '(?i)(^|/)(redclaw_host_service|redclaw_debug_bridge)\.exe$' -or
-        $_ -match '(?i)\.(lib|pdb|exp|ilk|obj|log|db|sqlite|sqlite3|conf|pem|key)$' -or
+        $_ -match '(?i)\.(lib|pdb|exp|ilk|obj|log|db|sqlite|sqlite3|conf|pem|key|dpapi|pfx|p12|reg)$' -or
         $_ -match '(?i)(^|/)(reports?|runtime-signaling|logs?|cache|credentials?)(/|$)' -or
         $_ -match '(?i)(^|/)(Qt6[^/]*d|libprotobufd|qsvgicond|qgifd|qicod|qjpegd|qsvgd|qnetworklistmanagerd|qwindowsd|qwindowsvistastyled|qcertonlybackendd|qopensslbackendd|qschannelbackendd)\.dll$' -or
         $_ -match '(?i)gd-x64-[^/]+\.dll$'
@@ -342,7 +342,7 @@ function New-PortableArchive {
         $entryNames = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         $forbidden = @($entryNames | Where-Object {
             $_ -match '(?i)(^|/)(redclaw_host_service|redclaw_debug_bridge)\.exe$' -or
-            $_ -match '(?i)\.(lib|pdb|exp|ilk|obj|log|db|sqlite|sqlite3|conf|pem|key)$' -or
+            $_ -match '(?i)\.(lib|pdb|exp|ilk|obj|log|db|sqlite|sqlite3|conf|pem|key|dpapi|pfx|p12|reg)$' -or
             $_ -match '(?i)(^|/)(reports?|runtime-signaling|logs?|cache|credentials?)(/|$)' -or
             $_ -match '(?i)(^|/)(Qt6[^/]*d|libprotobufd|qsvgicond|qgifd|qicod|qjpegd|qsvgd|qnetworklistmanagerd|qwindowsd|qwindowsvistastyled|qcertonlybackendd|qopensslbackendd|qschannelbackendd)\.dll$' -or
             $_ -match '(?i)gd-x64-[^/]+\.dll$'

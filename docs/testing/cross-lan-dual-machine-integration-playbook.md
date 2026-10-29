@@ -29,6 +29,26 @@ Get-FileHash .\release\Debug\redclaw_desktop.exe -Algorithm SHA256
 
 仍受支持的版本必须协商共同能力并互通，不能把相同提交或相同二进制设为产品连接条件。独立本机构建的 EXE 可能因工具链不同而产生不同哈希；使用同一正式发布包做基线时则应核对 ZIP SHA256 一致。任一端工作区有未提交运行时代码时，先完成构建和发布，不要以旧 `release\Debug` 继续测试。
 
+### 私有调试连接码和密码
+
+仓库不提供共享调试连接码。只在一端生成本次联调的随机码，保存在已经被 Git 忽略的本地文件中，并通过双方认可的私密渠道把同一码配置到另一端；不要在两端分别生成不同的码：
+
+```powershell
+New-Item -ItemType Directory -Force .\local | Out-Null
+[guid]::NewGuid().ToString('N').Substring(0, 8).ToUpperInvariant() |
+  Set-Content -LiteralPath .\local\cross-lan-session-code.txt -Encoding ASCII
+```
+
+两端准备好各自的本地文件后，在运行下文命令的 PowerShell 会话读取：
+
+```powershell
+$sessionCode = (Get-Content -LiteralPath .\local\cross-lan-session-code.txt -Raw).Trim()
+```
+
+Supervisor 接受显式 `-SessionCode`；省略时读取该本地文件，缺失或无效就停止。直接使用 `.template.conf` 时，先复制到 `local/`，再填入私有码；模板中的空值不能用于启动。连接密码通过 GUI 或当前用户 DPAPI 凭据文件提供，详见[连接密码](../architecture/connection-password-v1.md)。连接码、密码、凭据密文、原始信令和运行配置均不应进入源码、公共讨论或发布附件。已经公开使用过的调试码应停用，不能通过删除当前文件使旧码重新成为秘密。
+
+提交前运行 `python scripts/security/check_debug_credentials.py`；GitHub Docs Governance 同样执行此检查。隔离自动测试使用合成样例，不应把样例当作真实调试凭据。
+
 ## 2. 网络准备
 
 - 默认 ICE UDP 端口为 55000。两台不同电脑可以都使用 55000。
@@ -53,7 +73,7 @@ Get-FileHash .\release\Debug\redclaw_desktop.exe -Algorithm SHA256
 
 ```powershell
 .\scripts\service\prepare-dht-remote-validation.ps1 `
-  -Role both -Configuration Debug -SessionCode <PRIVATE_SESSION_CODE> -Json
+  -Role both -Configuration Debug -SessionCode $sessionCode -Json
 ```
 
 若 `published_runtime_fresh` 失败，重新执行标准构建；不要通过修改时间戳绕过检查。
@@ -66,7 +86,7 @@ Host 先启动并保持窗口打开：
 .\scripts\service\start-cross-lan-debug-supervisor.ps1 `
   -Role host `
   -Configuration Debug `
-  -SessionCode <PRIVATE_SESSION_CODE> `
+  -SessionCode $sessionCode `
   -IceUdpPort 55000 `
   -AutoStart
 ```
@@ -113,7 +133,7 @@ Host 已等待后，在 Controller 电脑运行：
 .\scripts\service\start-cross-lan-debug-supervisor.ps1 `
   -Role controller `
   -Configuration Debug `
-  -SessionCode <PRIVATE_SESSION_CODE> `
+  -SessionCode $sessionCode `
   -IceUdpPort 55000 `
   -AutoStart
 ```

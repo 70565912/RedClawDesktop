@@ -224,9 +224,9 @@ The gate does not start the runtime or prove network topology by itself. It fail
 
 ## Cross-Site Handoff (异地联调)
 
-**Canonical checklist:** Use `docs/testing/cross-lan-dual-machine-integration-playbook.md` as the step-by-step playbook for the next cross-LAN round. It mandates GUI-only integration with fixed session code `<PRIVATE_SESSION_CODE>`, standby startup through `start-cross-lan-debug-supervisor.ps1`, local current-user control through `invoke-cross-lan-debug-control.ps1`, dual-side evidence export, and P0 Live View evidence. This section remains the detailed reference for CLI helper scripts and P0 gate commands.
+**Canonical checklist:** Use `docs/testing/cross-lan-dual-machine-integration-playbook.md` as the step-by-step playbook for the next cross-LAN round. It mandates GUI-only integration with a privately configured session code, standby startup through `start-cross-lan-debug-supervisor.ps1`, local current-user control through `invoke-cross-lan-debug-control.ps1`, dual-side evidence export, and P0 Live View evidence. This section remains the detailed reference for CLI helper scripts and P0 gate commands.
 
-Use this section when one machine acts as the waiting Host on a remote LAN and the other machine acts as the Controller. The goal is: sync code, build once per machine, start Host GUI first with fixed code `<PRIVATE_SESSION_CODE>`, then connect from Controller GUI.
+Use this section when one machine acts as the waiting Host on a remote LAN and the other machine acts as the Controller. The goal is: sync code, build once per machine, start Host GUI first with the privately configured code, then connect from Controller GUI.
 
 ### Preferred controlled GUI launch (fixed code)
 
@@ -242,7 +242,7 @@ Controller (local, start in standby before Host runtime):
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/service/start-cross-lan-debug-supervisor.ps1 -Role controller -RunId <RUN_ID>
 ```
 
-The fixed code is defined in `scripts/service/cross-lan-integration-config.ps1` (default `<PRIVATE_SESSION_CODE>`). Start Host/Controller runtime only after both supervisors report `phase=idle`, following the timed gates in the canonical playbook. `run-cross-lan-gui-integration.ps1` remains the manual auto-start wrapper.
+The code is supplied explicitly or read from the ignored `local/cross-lan-session-code.txt`; no repository-wide default is provided. Start Host/Controller runtime only after both supervisors report `phase=idle`, following the timed gates in the canonical playbook. `run-cross-lan-gui-integration.ps1` remains the manual auto-start wrapper.
 
 ### 1. Sync code on both machines
 
@@ -311,7 +311,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/service/run-dht-
   -IncludeExistingReportRegression
 ```
 
-Replace `<HOST_CODE>` with `<PRIVATE_SESSION_CODE>` (fixed integration code) unless you are running a one-off diagnostic with a different code. For the formal controlled run, start and query the Host through the supervisor/control scripts in the canonical playbook and keep the GUI process running.
+Replace `<HOST_CODE>` with the private code agreed for this run; keep its value outside source control and public coordination messages. For the formal controlled run, start and query the Host through the supervisor/control scripts in the canonical playbook and keep the GUI process running.
 
 ### 5. Connect from the Controller machine
 

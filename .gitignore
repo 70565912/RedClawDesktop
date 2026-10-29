@@ -66,6 +66,7 @@ redclawdesktop.pem
 test_probe.ps1
 
 # Local credentials and identity material
+*.dpapi
 *.key
 *.pfx
 *.p12

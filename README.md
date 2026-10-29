@@ -69,6 +69,8 @@ RedClawDesktop 让开发者通过机器码连接自己的 Windows 开发机，�
 
 便携 ZIP 不写入安装目录之外的系统服务配置。首次运行可能出现 Windows SmartScreen 提示，因为 Developer Preview 尚未进行代码签名。
 
+开发联调的连接码与密码只保存在本机；仓库不提供共享调试码。按[双机联调手册](docs/testing/cross-lan-dual-machine-integration-playbook.md#私有调试连接码和密码)配置忽略的本地文件，提交前运行 `python scripts/security/check_debug_credentials.py`。
+
 ## ICE UDP 端口与路由器设置
 
 - 产品默认 ICE UDP 端口为 **55000**，可在 GUI 的网络设置中修改并保存。

@@ -24,7 +24,7 @@ These are connection-state-machine defects, not evidence that Host and Controlle
 
 ## Identity Model
 
-- `session_code`: stable discovery locator and encryption input. Both roles intentionally use the same code, for example `<PRIVATE_SESSION_CODE>`.
+- `session_code`: stable discovery locator and encryption input. Both roles share the same privately configured code; concrete development codes must stay out of source control.
 - `connection_request_tag`: random tag created by one Controller Connect runtime. It distinguishes a live Controller request from an abandoned one.
 - `generation`: monotonically increasing ICE generation owned only by Host.
 - `offer_description_tag`: digest of the Host offer for the generation.

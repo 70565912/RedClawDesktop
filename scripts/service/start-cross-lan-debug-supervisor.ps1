@@ -113,12 +113,7 @@ function ConvertTo-CommandLineArgument {
 $repoRoot = Get-RepoRoot
 Set-Location $repoRoot
 
-if ([string]::IsNullOrWhiteSpace($SessionCode)) {
-    $SessionCode = $script:CrossLanIntegrationSessionCode
-}
-if ($SessionCode -notmatch '^[A-Za-z0-9]{8}$') {
-    throw 'SessionCode must contain exactly 8 letters or digits.'
-}
+$SessionCode = Resolve-CrossLanIntegrationSessionCode -SessionCode $SessionCode
 if ([string]::IsNullOrWhiteSpace($RunId)) {
     $RunId = Get-Date -Format 'yyyyMMdd_HHmmss'
 }

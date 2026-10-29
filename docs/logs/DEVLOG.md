@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-29 — Keep private debug credentials out of GitHub (X00-T32)
+
+- Remove the shared live debug session code from startup defaults, profile templates, documentation and reused test literals. Supervisor startup now accepts an explicit private code or reads the ignored `local/cross-lan-session-code.txt`; absent/invalid values fail before preparation or runtime launch. Isolated local dual-GUI tests retain their own per-run random code generation.
+- Add a value-redacting repository guard to Docs Governance, ignore DPAPI files, and reject DPAPI/certificate/registry credential material in both release staging and ZIP validation. No live password was read or changed; no serving process or network configuration was changed.
+- Validation: seven Python guard tests, six production PowerShell resolver cases and both role dry-runs pass. Test-only C++ literals change to synthetic fixture data; no production C++ or protocol change and no main-app build is required. Historical commits/tags and previously downloaded copies retain the old value; this source repair does not erase them. History rewriting/force updating published refs remains a separate explicitly authorized operation.
+
 ## 2026-10-22 — Publish v0.1.10
 
 - The operator requests commit, push and program release, explicitly including the retained playback-layout repair. Advance CMake/vcpkg metadata, both download entrypoints and release notes to v0.1.10. Keep M10-T05 protection limits explicit and retain all existing input/auth/media compatibility boundaries.
