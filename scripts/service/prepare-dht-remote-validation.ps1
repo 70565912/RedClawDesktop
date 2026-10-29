@@ -92,7 +92,8 @@ function New-CheckResult {
 function Get-RuntimeFreshnessCheck {
     param(
         [string]$RuntimeExe,
-        [string]$RepoRoot
+        [string]$RepoRoot,
+        [string]$Configuration
     )
 
     if (-not (Test-Path $RuntimeExe)) {
@@ -100,6 +101,23 @@ function Get-RuntimeFreshnessCheck {
     }
 
     $runtimeItem = Get-Item -Path $RuntimeExe
+    $verifiedAtUtc = $runtimeItem.LastWriteTimeUtc
+    $receiptPath = Join-Path $RepoRoot "build\runtime-build-$Configuration.json"
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+        try {
+            $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+            $buildStartedAtUtc = ([DateTime]$receipt.build_started_at_utc).ToUniversalTime()
+            if ($receipt.schema -eq 'redclaw.runtime.build.v1' -and
+                $receipt.configuration -eq $Configuration -and
+                $buildStartedAtUtc -gt $verifiedAtUtc -and $buildStartedAtUtc -le [DateTime]::UtcNow -and
+                $receipt.runtime_sha256 -eq (Get-FileHash -LiteralPath $RuntimeExe -Algorithm SHA256).Hash) {
+                $verifiedAtUtc = $buildStartedAtUtc
+            }
+        } catch {
+            # Missing/invalid evidence falls back to the executable timestamp.
+            # A failed or interrupted build must never make stale inputs ready.
+        }
+    }
     $sourceFiles = @(
         "CMakeLists.txt",
         "CMakePresets.json",
@@ -124,7 +142,7 @@ function Get-RuntimeFreshnessCheck {
             $item = Get-Item -Path $sourcePath
             $existingSources += [pscustomobject]@{
                 path = $relativePath
-                last_write_time = $item.LastWriteTime
+                last_write_time = $item.LastWriteTimeUtc
             }
         }
     }
@@ -135,12 +153,13 @@ function Get-RuntimeFreshnessCheck {
 
     $newerSources = @(
         $existingSources |
-            Where-Object { $_.last_write_time -gt $runtimeItem.LastWriteTime } |
+            Where-Object { $_.last_write_time -gt $verifiedAtUtc } |
             Sort-Object last_write_time -Descending
     )
     $newestSource = $existingSources | Sort-Object last_write_time -Descending | Select-Object -First 1
-    $detail = "runtime={0:o}; newest_source={1} {2:o}" -f `
-        $runtimeItem.LastWriteTime,
+    $detail = "runtime={0:o}; verified={1:o}; newest_source={2} {3:o}" -f `
+        $runtimeItem.LastWriteTimeUtc,
+        $verifiedAtUtc,
         $newestSource.path,
         $newestSource.last_write_time
 
@@ -239,7 +258,7 @@ $checks += New-CheckResult -Name "workflow_script" -Passed (Test-Path $workflowS
 $checks += New-CheckResult -Name "workflow_summary_script" -Passed (Test-Path $workflowSummaryScript) -Detail $workflowSummaryScript
 $checks += New-CheckResult -Name "bootstrap_preflight_script" -Passed (Test-Path $bootstrapScript) -Detail $bootstrapScript
 $checks += New-CheckResult -Name "published_runtime" -Passed (Test-Path $runtimeExe) -Detail $runtimeExe
-$checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot
+$checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot -Configuration $Configuration
 $checks += New-CheckResult -Name "session_code_shape" -Passed (Test-SessionCodeShape -Code $SessionCode) -Detail (Get-RedactedSessionCode -Code $SessionCode)
 
 $failedChecks = @($checks | Where-Object { -not $_.passed })
@@ -260,7 +279,7 @@ if ($BuildIfStale -and $runtimeFailures.Count -gt 0 -and $runtimeFailures.Count 
     }
     $checks = @($checks | Where-Object { $_.name -notin @('published_runtime', 'published_runtime_fresh') })
     $checks += New-CheckResult -Name "published_runtime" -Passed (Test-Path $runtimeExe) -Detail $runtimeExe
-    $checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot
+    $checks += Get-RuntimeFreshnessCheck -RuntimeExe $runtimeExe -RepoRoot $repoRoot -Configuration $Configuration
 }
 
 $roles = if ($Role -eq "both") { @("host", "controller") } else { @($Role) }

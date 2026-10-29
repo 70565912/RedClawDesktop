@@ -73,7 +73,11 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   QJsonObject diagnostic_snapshot() const override {
     D3D11_TEXTURE2D_DESC description{};
     if (video_input_texture_) video_input_texture_->GetDesc(&description);
+    DXGI_SWAP_CHAIN_DESC output{};
+    const bool has_output = swap_chain_ && SUCCEEDED(swap_chain_->GetDesc(&output));
     return {{"backend", "d3d11"}, {"last_presented_surface", latest_frame_is_surface_},
+      {"swap_chain_ready", has_output},
+      {"output_window_matches_canvas", has_output && output.OutputWindow == reinterpret_cast<HWND>(internalWinId())},
       {"widget_x", x()}, {"widget_y", y()}, {"widget_width", width()}, {"widget_height", height()},
       {"widget_minimum_height", minimumHeight()}, {"widget_maximum_height", maximumHeight()},
       {"widget_vertical_policy", int(sizePolicy().verticalPolicy())},
@@ -215,6 +219,20 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  protected:
+  bool event(QEvent* event) override {
+    if (event->type() == QEvent::WinIdChange && swap_chain_) {
+      // Qt can recreate the native window without replacing this widget.
+      // A swap chain keeps its original HWND even when Present returns S_OK.
+      // Keep the decoder device, but retire every resource tied to that output.
+      release_output_resources();
+      swap_chain3_.Reset();
+      swap_chain_.Reset();
+      swap_chain_phys_size_ = {};
+      context_->Flush();
+    }
+    return QWidget::event(event);
+  }
+
   void resizeEvent(QResizeEvent*) override {
     // Only rebuild the swap chain when the physical pixel size actually changed.
     // Qt may deliver resize events with the same logical size (e.g. from layout
@@ -238,6 +256,13 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
   void showEvent(QShowEvent* event) override {
     QWidget::showEvent(event);
+    // Qt can clear a native child's implicit hidden state in showChildren()
+    // without invalidating its parent's cached empty layout item. Recalculate
+    // that layout before sizing the swap chain or publishing the viewport.
+    updateGeometry();
+    if (parentWidget() && parentWidget()->layout()) {
+      parentWidget()->layout()->activate();
+    }
     const QSize phys = current_phys_size();
     if (!geometry_transaction_active_ && phys != last_phys_size_) {
       last_phys_size_ = phys;

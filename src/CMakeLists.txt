@@ -117,6 +117,7 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/file_transfer_results_dialog.cpp
     ui/clipboard_copies_dialog.cpp
     ui/runtime_maintenance_context.cpp
+    ui/gui_startup_options.cpp
     ui/host_update_restart_guard.cpp
     ui/agent_settings_dialog.cpp
     ui/connection_entry_page.cpp

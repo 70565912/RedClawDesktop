@@ -75,7 +75,11 @@ int run_runtime_stdio_fixture(const char* mode) {
         std::cout.write(wire.data(), split); std::cout.flush(); std::this_thread::sleep_for(1ms);
         std::cout.write(wire.data()+split, wire.size()-split); std::cout.flush(); std::this_thread::sleep_for(2ms);
     }
-    diagnostic.join(); std::this_thread::sleep_for(1500ms); return 0;
+    diagnostic.join();
+    // Keep the pipe open until the parent has consumed both streams. A fixed
+    // idle delay needlessly consumes the test deadline on a loaded machine.
+    std::string completion;
+    return std::getline(std::cin, completion) && completion == "drained" ? 0 : 5;
 }
 
 #ifdef _WIN32
@@ -125,7 +129,7 @@ TEST(RuntimeControlWriter, StartsPipeWriteBeforeGuiReturnsToItsEventLoop) {
 TEST(RuntimeStdioReader, RealSeparatePipesKeepFragmentedControlOrderedUnderDiagnosticFlood) {
     using namespace std::chrono_literals;
     QProcess process; process.setProcessChannelMode(QProcess::SeparateChannels);
-    int messages = 0, diagnostics = 0; bool overflow = false;
+    int messages = 0, diagnostics = 0; bool overflow = false, acknowledged = false;
     std::uint64_t maximum = 0;
     redclaw::ui::RuntimeStdioReader reader(process, [&](const auto& message, auto sent) {
         EXPECT_EQ(message.input_sequence, ++messages);
@@ -135,10 +139,20 @@ TEST(RuntimeStdioReader, RealSeparatePipesKeepFragmentedControlOrderedUnderDiagn
     process.start(QCoreApplication::applicationFilePath(), {"--stdio-fixture", "flood"});
     QElapsedTimer elapsed; elapsed.start();
     while (elapsed.elapsed() < 5000 && (messages < 100 || diagnostics < 200 || process.state() != QProcess::NotRunning)) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5); std::this_thread::sleep_for(1ms);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (!acknowledged && messages == 100 && diagnostics == 200) {
+            EXPECT_EQ(process.write("drained\n"), 8);
+            acknowledged = true;
+        }
+        std::this_thread::sleep_for(1ms);
     }
     EXPECT_EQ(messages, 100); EXPECT_EQ(diagnostics, 200); EXPECT_FALSE(overflow); EXPECT_LT(maximum, 250000);
+    EXPECT_TRUE(acknowledged);
     EXPECT_EQ(process.state(), QProcess::NotRunning);
+    if (process.state() == QProcess::NotRunning) {
+        EXPECT_EQ(process.exitStatus(), QProcess::NormalExit);
+        EXPECT_EQ(process.exitCode(), 0);
+    }
 }
 
 TEST(RuntimeStdioReader, ActualPipeOversizeFailsControlWithoutDeliveringPartialMessage) {

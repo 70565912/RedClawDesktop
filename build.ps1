@@ -121,6 +121,7 @@ if ($FreshConfigure)                             { $buildArgs['FreshConfigure'] 
 if (-not [string]::IsNullOrWhiteSpace($Target)) { $buildArgs['Target']         = $Target }
 if (-not [string]::IsNullOrWhiteSpace($CMakePath)) { $buildArgs['CMakePath']    = $CMakePath }
 
+$runtimeBuildStartedAtUtc = [DateTime]::UtcNow
 & $buildImpl @buildArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -144,3 +145,16 @@ Write-Host ""
 Write-Host "[build] Publishing artifacts..." -ForegroundColor Cyan
 & $publishImpl -Configuration $Configuration
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Incremental builds may succeed without relinking. Record that the inputs were
+# checked, without changing the executable's original timestamp. Bind the receipt
+# to the published bytes so replacing the runtime invalidates this evidence.
+$publishedRuntime = Join-Path $PSScriptRoot "release\$Configuration\redclaw_desktop.exe"
+$receiptDirectory = Join-Path $PSScriptRoot 'build'
+New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
+[pscustomobject]@{
+    schema = 'redclaw.runtime.build.v1'
+    configuration = $Configuration
+    build_started_at_utc = $runtimeBuildStartedAtUtc.ToString('o')
+    runtime_sha256 = (Get-FileHash -LiteralPath $publishedRuntime -Algorithm SHA256).Hash
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $receiptDirectory "runtime-build-$Configuration.json") -Encoding UTF8

@@ -45,6 +45,7 @@ coverage/
 vcpkg_installed/
 
 # Local diagnostics and scratch artifacts
+.codex-remote-attachments/
 build_output.txt
 mailbox/
 reports/

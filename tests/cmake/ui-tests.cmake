@@ -21,7 +21,7 @@ if(WIN32)
 endif()
 if(WIN32 AND TARGET redclaw_ui_playback)
   add_executable(redclaw_ui_d3d11_integration_tests ui/d3d11_playback_integration_tests.cpp)
-  target_link_libraries(redclaw_ui_d3d11_integration_tests PRIVATE redclaw_ui_playback redclaw_helper Qt6::Widgets GTest::gtest d3d11)
+  target_link_libraries(redclaw_ui_d3d11_integration_tests PRIVATE redclaw_ui_playback redclaw_ui_connection_flow redclaw_helper Qt6::Widgets GTest::gtest d3d11)
   redclaw_apply_warnings(redclaw_ui_d3d11_integration_tests)
   add_test(NAME redclaw_ui_d3d11_integration_tests COMMAND redclaw_ui_d3d11_integration_tests)
   if(TARGET Qt6::qmake)
@@ -110,6 +110,7 @@ if(TARGET redclaw_ui_connection_flow)
     ui/desktop_task_workspace_tests.cpp
     ui/file_transfer_panel_tests.cpp
     ui/runtime_maintenance_context_tests.cpp
+    ui/gui_startup_options_tests.cpp
     ui/playback_frame_progress_tests.cpp
     ui/playback_geometry_transaction_tests.cpp
     ui/host_update_restart_guard_tests.cpp
