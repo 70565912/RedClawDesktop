@@ -1,6 +1,135 @@
 # Project State
 
-Updated: 2026-10-22
+Updated: 2026-10-29
+
+## Source migration after cleaned history
+
+The operator authorizes moving local main onto cleaned upstream `e24d06f`,
+preserving effective local changes and using normal push only. Playback/startup,
+input and paste-time clipboard changes are retained alongside upstream Host
+restart protection and credential safeguards. Serial Debug NoPublish builds and
+13 focused suites (299 cases) pass; both PowerShell build-freshness fixtures and
+credential/documentation checks pass. The existing clipboard candidate and
+formal executable remain unchanged. The merged build is not deployed and does
+not replace that earlier candidate. See the [development log](../logs/DEVLOG.md)
+and `code-sync-20261029` evidence for the source-migration boundary.
+
+## Paste-time clipboard revision
+
+The approved capability-5 implementation replaces automatic clipboard return
+with metadata-only copy/cut offers and a separate Windows OLE STA for delayed
+paste. File confirmation, verified streams, original-source move feedback and
+common-capability legacy handling are implemented; see the
+[product contract](../architecture/remote-workspace-v013.md#product-contract).
+Local build, regression and independent-candidate evidence is tracked on the
+[runtime board](MODULE_KANBAN.md#x00-cross-module-delivery).
+
+Live qualification is not complete. During candidate preparation the previous
+Controller exits and a new local Host starts outside this task; the serving
+binary also changes outside this task's NoPublish builds. The operator selects
+preserving the current Host and completing code plus the independent candidate
+only. Local delivery is complete; live rollout is deferred. No feature
+deployment, peer-source patch, old-binary rolling upgrade
+or real-application menu-paste acceptance is claimed. Do not replace either
+serving endpoint without its independent verified rollback path. No continuity
+or stress test is requested.
+
+## Recovered Controller GUI stall
+
+Read-only analysis confirms a roughly 151-second GUI heartbeat gap around
+14:05:24–14:07:56 +08:00, with frame dispatch delayed 149 seconds while the
+runtime continues receiving media. The exact blocking call remains unknown:
+recorded log-widget/paint work does not account for that interval, and no
+incident-time stack is available. Local GUI/runtime BelowNormal priority and
+maintenance priority inheritance are verified leads, not a proven direct cause;
+post-recovery CPU is about 35%. Preserve the recovered session and unrelated
+workloads. No source/build/restart/priority change or continuity run. Evidence:
+`gui-hang-20261029`; see the development log. This is separate from the input
+pause repair below and has no new task ID.
+
+## Current Controller input-pause repair
+
+The Host's 64-message ingress inbox overflowed at 11:19; its separate event
+queue peak stayed 17 and rejected-batch count stayed unchanged. Coalesce only
+consecutive absolute mouse-motion or empty-sync messages within the same epoch
+and geometry; preserve key/button/Stop ordering and the critical-overflow gate.
+During workspace transfers, send one held-state release and suspend periodic
+syncs, avoiding the reproduced 256-entry ACK exhaustion at about 128 seconds.
+Report the actual ACK-limit error. A later DDA access loss at 11:34 recovered
+through WGC; it incorrectly replaced an already-paused reason with `no_video`.
+Preserve that original cause while retaining the active-control capture-loss gate.
+Debug build, 31 runtime cases, input-session/capture recovery suites and 149 GUI
+cases pass (one private-context case rerun under the normal Windows user).
+Both independently built Debug candidates are deployed with verified full rollback bundles; new DHT publication, old-Controller/new-Host interoperability and final-pair real-media reconnection pass. The operator cancels the planned continuity validation; its temporary receiver is closed and no automated test clicks or keys are sent. Continuous-control acceptance is not claimed.
+The exact scheduling delay behind the historical ingress burst is unmeasured;
+new inbox depth/coalescing/overflow/pending-time counters support follow-up.
+See the [input ledger](MODULE_KANBAN.md#m05-input)
+and [development log](../logs/DEVLOG.md). Local evidence:
+`input-control-pause-20261029/diagnosis.json` retains the earlier read-only
+diagnosis; subsequent repair/build/deployment evidence is recorded separately.
+
+## Current cross-machine connection incident
+
+`RCD-RESTORE-20261024` is in progress. Two aligned Host/Controller generations
+have identical candidate sets in both directions, with IPv4 host and srflx
+candidates but no relay. Both endpoints send ICE checks and receive STUN-server
+responses, while peer and unknown-source receive counters remain zero. This
+locates the failure after candidate exchange; the WAN drop location, proxy
+involvement and NAT mapping behavior remain unproved.
+
+Latest local result (2026-10-24 14:39:37–14:40:07 +08:00): the existing Host
+is automatically connected and streaming, with the data channel open and the
+same ICE generation throughout seven observations over 30.119 seconds. Real
+capture advances by 1,217 frames, encoding and transmission each by 843;
+synthetic frames and capture/encode/transmit failures remain zero. The strict
+real-capture argument, GUI, runtime and executable are unchanged. The incident
+remains open for fresh Controller decode/presentation and visible-picture
+confirmation; no cause or completed repair is inferred from this recovery.
+
+A read-only router check finds an enabled RedClaw ICE UDP-55000 mapping to
+another interface on this same Host, where that port has no listener. The
+current Host listens on its selected WLAN interface. A guarded, recoverable
+mapping correction is prepared, but its read-only precheck stops because the
+Host is already connected, before any router write. The discrepancy is not
+established as the earlier failure's cause. Preserve the working session.
+
+A single same-machine diagnostic datagram reaches the serving Host socket and
+increments its receive diagnostics. A bounded Host runtime reconnect preserves
+the GUI, executable, settings and strict real-capture requirement, with an
+independent recovery worker armed beforehand. The new runtime publishes DHT and
+applies a new remote description. Its first complete ICE round still fails after 102
+checks with 32 STUN-server datagrams and zero peer/unknown-source reception. The
+same Controller executor confirms adoption of the new offer, applied remote
+description and acknowledged answer, but no open connection/channel. Its existing
+Security/WFP audit read is denied. A bounded read-only script is prepared for
+existing UDP events; endpoint-local approval and normal access are required.
+Its active diagnostic/recovery stage also lacks local human authorization. Do not
+substitute local reception, successful publication or a restart for cross-machine
+media acceptance. See the [incident ledger](MODULE_KANBAN.md#x00-cross-module-delivery)
+and [development log](../logs/DEVLOG.md). Local evidence reference:
+`connection-restore-20261024`.
+
+The later operator-forwarded Controller window at 12:23:38–12:25:38 +08:00
+corresponds to DHT 41, Controller ICE 1034 and Host ICE 122. The Host starts checks
+within that window and ultimately reports 102 sends, 26 STUN-server datagrams,
+zero peer/unknown-source reception and two timeouts. The Controller reports
+102 sends, 16 STUN-server datagrams, zero peer reception and two timeouts.
+A fresh Host sample on one separate ephemeral WLAN socket gets six successful
+responses from three existing STUN services, with one stable, port-preserving
+mapping. The service's advertised alternate pair uses the same address; two
+alternate-port trials also fail their post-contact change-response controls.
+Filtering remains inconclusive, and none of these probes validates the serving
+port's WAN inbound path. The operator confirms no TURN service and that the Host
+uses Debug controlled startup with the default fixed code. Startup source and
+live arguments both confirm `PRIVATE_LOCAL_CODE`; no connection-code mismatch is identified.
+The next local diagnostic is a prepared, bounded capture of IPv4 UDP 55000 on
+the selected Host address: at most 60 seconds, first 64 bytes per packet, local
+results only. It preserves the serving runtime and refuses existing Packet
+Monitor sessions/filters. Syntax and plan-only checks pass; no capture has run.
+The operator cannot currently operate desktop applications, so elevation is
+deferred; the newly working connection is retained without a capture or further
+reconnect. Fresh local continuity evidence is
+`host-auto-connected-continuity.json` under the same local evidence reference.
 
 ## Current optimization work
 
