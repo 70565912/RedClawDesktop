@@ -2,7 +2,13 @@
 
 Updated: 2026-10-30
 
-## v0.1.11 Release qualification
+## v0.1.11 published Release
+
+[v0.1.11 Developer Preview](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.11)
+is published from tag commit `0e218b2`. Remote tag/asset identities and the
+downloaded checksum match the local package; the published-package Windows
+check passes. Source CI is still running at publication and is not claimed as
+passed. The running Debug endpoints are retained.
 
 The operator requests source commit/push and Release publication. Version
 metadata, download entrypoints and release notes target v0.1.11, including the
