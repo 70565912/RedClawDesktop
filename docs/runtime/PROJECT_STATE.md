@@ -2,14 +2,21 @@
 
 Updated: 2026-10-30
 
-## v0.1.11 release preparation
+## v0.1.11 Release qualification
 
 The operator requests source commit/push and Release publication. Version
-metadata, both download entrypoints and release notes are prepared for v0.1.11,
-including the peer's reviewed clipboard-probe/UI-test repair. Serial Release
-builds, the full automatic test collection and complete portable-package checks
-are in progress. Preserve the current Debug Controller/Host session. See the
-[development log](../logs/DEVLOG.md) and `release-v0.1.11-20261030` evidence.
+metadata, download entrypoints and release notes target v0.1.11, including the
+peer's reviewed clipboard-probe/UI-test repair. Serial Release main/test builds,
+all 127 automatic CTest suites (zero failures/skips; 731 GTest cases) and the
+342-file portable-package content/checksum/extracted-startup probe pass.
+Official v0.1.10 pairings meet real-capture/codec/presentation checks in both
+directions; online DHT Host rolling upgrade/reconnect passes, while reverse
+pairing uses diagnostic file signaling. Their aggregate fixture results remain
+failed only because the playback screenshots are rejected as obscured. No
+Release screenshot proof or additional physical native-cut/copy qualification
+is claimed. Preserve the current Debug Controller/Host session. See the
+[release notes](../releases/v0.1.11.md), [development log](../logs/DEVLOG.md) and
+`release-v0.1.11-20261030` evidence.
 
 ## Current independent Debug Controller connection
 
