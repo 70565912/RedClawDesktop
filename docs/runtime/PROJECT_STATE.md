@@ -1,6 +1,41 @@
 # Project State
 
-Updated: 2026-10-29
+Updated: 2026-10-30
+
+## v0.1.11 release preparation
+
+The operator requests source commit/push and Release publication. Version
+metadata, both download entrypoints and release notes are prepared for v0.1.11,
+including the peer's reviewed clipboard-probe/UI-test repair. Serial Release
+builds, the full automatic test collection and complete portable-package checks
+are in progress. Preserve the current Debug Controller/Host session. See the
+[development log](../logs/DEVLOG.md) and `release-v0.1.11-20261030` evidence.
+
+## Current independent Debug Controller connection
+
+On 2026-10-30 the peer Host is independently upgraded after the operator
+authorizes a brief interruption and directs terminal execution. New Host
+publication, automatic Controller reconnect, real media progression and
+clipboard capability 5 are confirmed. Both complete 321-file formal/rollback
+manifests pass and the maintenance task is absent. The operator confirms native
+paste displays the transfer confirmation and the completed target file opens
+normally. All 975,685,037 bytes are received and verified, with one file complete;
+the transfer gate is clear and remote input remains active/authorized. This
+qualifies the reported remote-to-local copy; reverse copy and cut/move semantics
+are not requalified by this case.
+See the [development log](../logs/DEVLOG.md) and the
+`clipboard-peer-capability-20261030` evidence.
+
+At the operator's request, current `f90ae29` Debug is built and launched from a
+separate complete runtime directory, using the application's saved peer
+credential and normal physical-network selection. The Controller is retained
+connected through DHT/ICE in streaming phase. At 09:48:11 +08:00 on 2026-10-30,
+it records 1,407 received / 1,368 decoded / 1,323 presented frames, zero GUI
+decode/presentation failures and zero synthetic frames. Native window capture
+confirms the remote red-parrot Windows desktop is visible. No input/clipboard
+action or continuity test is performed. The peer Host, formal Debug executable
+and previous clipboard candidate are unchanged. Evidence:
+`debug-controller-connect-20261030`; see the [development log](../logs/DEVLOG.md).
 
 ## Source migration after cleaned history
 
@@ -24,15 +59,12 @@ common-capability legacy handling are implemented; see the
 Local build, regression and independent-candidate evidence is tracked on the
 [runtime board](MODULE_KANBAN.md#x00-cross-module-delivery).
 
-Live qualification is not complete. During candidate preparation the previous
-Controller exits and a new local Host starts outside this task; the serving
-binary also changes outside this task's NoPublish builds. The operator selects
-preserving the current Host and completing code plus the independent candidate
-only. Local delivery is complete; live rollout is deferred. No feature
-deployment, peer-source patch, old-binary rolling upgrade
-or real-application menu-paste acceptance is claimed. Do not replace either
-serving endpoint without its independent verified rollback path. No continuity
-or stress test is requested.
+The initial candidate-only delivery is followed by the authorized peer Host
+upgrade and the successful physical remote-to-local native copy described
+above. Source/fixture checks cover both directions, while that physical copy
+does not qualify reverse native copy or real application cut/move deletion.
+Preserve independent recovery for future serving-endpoint changes. No
+continuity or stress test is requested.
 
 ## Recovered Controller GUI stall
 
