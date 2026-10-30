@@ -122,7 +122,7 @@ TEST(FileTransferPanel, ClipboardUsesOneDeferredPrepareAndCancelsWithoutSelectin
     std::vector<StreamControlMessageV1> sent;
     redclaw::ui::FileTransferPanel panel([&](const auto& message, QString*) {
         EXPECT_FALSE(serialize_local_runtime_control_frame_v2(message).empty()); sent.push_back(message); return true;
-    });
+    }, nullptr, [] { return redclaw::ui::FileTransferPanel::ClipboardAvailability{}; });
     panel.request_clipboard_paste(19); EXPECT_TRUE(sent.empty()); EXPECT_FALSE(panel.busy());
     StreamControlMessageV1 status; status.type = StreamControlMessageTypeV1::kWorkspace;
     status.file_transfer_version = status.clipboard_version = 1;
@@ -142,6 +142,39 @@ TEST(FileTransferPanel, ClipboardUsesOneDeferredPrepareAndCancelsWithoutSelectin
     panel.receive(reply); EXPECT_FALSE(panel.busy());
     EXPECT_TRUE(panel.findChild<QLabel*>("fileTransferStatus")->text().contains("clipboard_focus_changed"));
     panel.receive(status); EXPECT_EQ(sent.size(), 2U);
+}
+TEST(FileTransferPanel, OldCapabilitiesKeepFileAndRemoteOfferPasteOutOfTheLegacyPath) {
+    using Availability = redclaw::ui::FileTransferPanel::ClipboardAvailability;
+    for (const auto clipboard : {Availability{false, true}, Availability{true, false}}) {
+        for (std::uint32_t version = 1; version <= 4; ++version) {
+            std::vector<StreamControlMessageV1> sent;
+            redclaw::ui::FileTransferPanel panel([&](const auto& message, QString*) {
+                sent.push_back(message); return true;
+            }, nullptr, [clipboard] { return clipboard; });
+            StreamControlMessageV1 status; status.type = StreamControlMessageTypeV1::kWorkspace;
+            status.file_transfer_version = 1; status.clipboard_version = version;
+            status.workspace.emplace(); status.workspace->action = WorkspaceActionV1::kAvailability;
+            panel.receive(status); panel.request_clipboard_paste(19);
+            EXPECT_TRUE(sent.empty()); EXPECT_FALSE(panel.busy());
+            if (clipboard.files) EXPECT_TRUE(panel.findChild<QLabel*>("fileTransferStatus")->text().contains(QString::fromUtf8("源文件保留")));
+        }
+    }
+}
+TEST(FileTransferPanel, NativeCapabilitySendsShortcutWithoutInspectingTheInteractiveClipboard) {
+    std::vector<StreamControlMessageV1> sent;
+    unsigned probes = 0;
+    redclaw::ui::FileTransferPanel panel([&](const auto& message, QString*) {
+        EXPECT_FALSE(serialize_local_runtime_control_frame_v2(message).empty()); sent.push_back(message); return true;
+    }, nullptr, [&] { ++probes; return redclaw::ui::FileTransferPanel::ClipboardAvailability{false, true}; });
+    StreamControlMessageV1 status; status.type = StreamControlMessageTypeV1::kWorkspace;
+    status.file_transfer_version = 1; status.clipboard_version = 5;
+    status.workspace.emplace(); status.workspace->action = WorkspaceActionV1::kAvailability;
+    panel.receive(status); panel.request_clipboard_paste(19);
+    ASSERT_EQ(sent.size(), 1U); EXPECT_EQ(probes, 0U); EXPECT_FALSE(panel.busy());
+    EXPECT_EQ(sent.front().workspace->action, WorkspaceActionV1::kClipboardShortcut);
+    EXPECT_EQ(sent.front().workspace->clipboard_mode, 6U);
+    EXPECT_EQ(sent.front().workspace->clipboard_token, "local-shortcut");
+    EXPECT_EQ(sent.front().workspace->clipboard_sequence, 19U);
 }
 TEST(FileTransferPanel, ClipboardCopiesRequireVersionTwoAndSendOnlySelectedOpaqueId) {
     std::vector<StreamControlMessageV1> sent;

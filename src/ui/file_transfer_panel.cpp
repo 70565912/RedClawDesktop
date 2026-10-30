@@ -128,6 +128,7 @@ struct FileTransferPanel::Impl {
     FileTransferPanel* owner;
     TransferCoordinator coordinator;
     Send send;
+    ClipboardProbe clipboard_probe;
     std::function<void(bool)> busy_changed;
     QPushButton* files = nullptr;
     QPushButton* copies = nullptr;
@@ -160,8 +161,11 @@ struct FileTransferPanel::Impl {
     std::function<void()> show_activity;
     protocol::TransferConflictV1 conflict = protocol::TransferConflictV1::kKeepBoth;
     QStringList sources;
-    Impl(FileTransferPanel* widget, Send sender) : owner(widget), coordinator(std::move(sender), widget),
-        send([this](const Control& message, QString* error) { return coordinator.submit(message, error); }) {}
+    Impl(FileTransferPanel* widget, Send sender, ClipboardProbe probe) : owner(widget), coordinator(std::move(sender), widget),
+        send([this](const Control& message, QString* error) { return coordinator.submit(message, error); }),
+        clipboard_probe(probe ? std::move(probe) : ClipboardProbe([] {
+            return ClipboardAvailability{workspace::clipboard_is_remote_offer(), workspace::clipboard_has_files()};
+        })) {}
     bool busy() const { return requested || runtime_busy; }
     void refresh() {
         const bool blocked = busy(); files->setEnabled(available && !blocked);
@@ -286,7 +290,8 @@ struct FileTransferPanel::Impl {
         } else status->setText(result.value("error").toString());
     }
 };
-FileTransferPanel::FileTransferPanel(Send send, QWidget* parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, std::move(send))) {
+FileTransferPanel::FileTransferPanel(Send send, QWidget* parent, ClipboardProbe clipboard_probe)
+    : QWidget(parent), impl_(std::make_unique<Impl>(this, std::move(send), std::move(clipboard_probe))) {
     setObjectName("fileTransferPanel");
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0);
     auto* row = new QHBoxLayout();
@@ -341,8 +346,9 @@ void FileTransferPanel::request_clipboard_paste(std::uint32_t sequence) {
         if (!impl_->send(request, &error)) impl_->status->setText(error);
         return;
     }
-    if (redclaw::workspace::clipboard_is_remote_offer()) return;
-    if (redclaw::workspace::clipboard_has_files()) {
+    const auto clipboard = impl_->clipboard_probe();
+    if (clipboard.remote_offer) return;
+    if (clipboard.files) {
         impl_->status->setText(QString::fromUtf8("对端不支持文件按需粘贴和跨机移动。可使用文件传送窗口；剪贴板源文件保留。"));
         if (impl_->show_activity) impl_->show_activity();
         return;

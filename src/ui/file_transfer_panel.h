@@ -9,7 +9,12 @@ class TransferCoordinator;
 class FileTransferPanel final : public QWidget {
 public:
     using Send = std::function<bool(const protocol::StreamControlMessageV1&, QString*)>;
-    FileTransferPanel(Send send, QWidget* parent = nullptr);
+    struct ClipboardAvailability {
+        bool remote_offer = false;
+        bool files = false;
+    };
+    using ClipboardProbe = std::function<ClipboardAvailability()>;
+    FileTransferPanel(Send send, QWidget* parent = nullptr, ClipboardProbe clipboard_probe = {});
     ~FileTransferPanel() override;
     void receive(const protocol::StreamControlMessageV1& message);
     void runtime_stopped();
