@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-10-30 — Start independent Debug Host and complete source CI verification
+
+- The operator requests a local Debug Host and completion/failure handling for the previously pending source CI, while preserving other Host/Controller instances. Read-only preflight finds no running local RedClaw processes. The standard serial `build.ps1` Debug main build passes with NoPublish; a separate 345-file runtime passes its complete manifest, built-EXE identity and command-startup checks. The formal Debug, earlier Controller and clipboard-candidate executable hashes remain unchanged.
+- Host startup initially stops before launching because the private connection-code file is absent. `Start-RedClaw-Debug-Host.cmd` delegates to the standard startup scripts and contains no code. The operator explicitly approves generating a new private code after the old value cannot be recovered from the recent Host record. Save it only in ignored current-user-protected local configuration, retain the existing DPAPI Host credential and start the independent runtime through the standard physical-network supervisor. Fresh status is `host` / `dht_waiting`, runtime running, DHT reachable/listener ready, one successful publication and no last error. No peer connection or continuous-control acceptance is claimed; no other endpoint is stopped or replaced.
+- [Source CI 41036046112](https://github.com/70565912/RedClawDesktop/actions/runs/41036046112) completes successfully for `6c29b1f` at 11:02:45 UTC: dependency configuration and Debug unit-target build pass, followed by all 86 automatic suites with zero failures in 154.87 seconds. The earlier published-package Windows check also passes. There is no failed build/test to repair or rerun; no source or workflow change is made. Evidence: `debug-host-ci-20261030`.
+
 ## 2026-10-30 — Qualify v0.1.11 clipboard and input release
 
 - The operator requests commit, push and Release publication. Prepare v0.1.11 with paste-time clipboard capability 5, bounded input/transfer-pause repairs and the retained playback/startup fixes. Bring in the peer's reviewed clipboard-probe injection and two focused UI regressions without replacing the serving Controller or Host. Update both download entrypoints, version metadata, release notes and documentation navigation.

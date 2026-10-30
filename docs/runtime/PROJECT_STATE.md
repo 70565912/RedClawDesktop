@@ -2,13 +2,33 @@
 
 Updated: 2026-10-30
 
+## Current independent Debug Host
+
+The operator requests a local Debug Host while preserving other endpoints.
+Read-only preflight finds no running local RedClaw process. Current Debug main
+builds through `build.ps1` with NoPublish; a separate complete 345-file runtime
+passes manifest/build identity and command-startup checks. The root Host CMD
+only delegates to the standard script; its private code file is missing. After
+the operator approves a new code, restore the ignored current-user private code
+configuration and reuse the existing encrypted Host credential.
+
+The standard supervisor starts on the physical network exit and remains in
+`dht_waiting`, with DHT reachable, listener ready, one successful publication and
+no runtime error. This proves availability for a peer connection, not a peer
+connection or desktop-presentation acceptance. Formal Debug, previous Controller
+and clipboard-candidate executable hashes are unchanged. No existing endpoint
+is stopped, replaced or tested with injected input. Evidence:
+`debug-host-ci-20261030`; see the [development log](../logs/DEVLOG.md).
+
 ## v0.1.11 published Release
 
 [v0.1.11 Developer Preview](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.11)
 is published from tag commit `0e218b2`. Remote tag/asset identities and the
 downloaded checksum match the local package; the published-package Windows
-check passes. Source CI is still running at publication and is not claimed as
-passed. The running Debug endpoints are retained.
+check passes. Source CI is pending at publication and subsequently completes
+successfully: all 86 automatic suites pass on `6c29b1f` at 11:02:45 UTC on
+2026-10-30. No source repair or CI rerun is needed. Release publication preserves
+the then-running Debug endpoints.
 
 The operator requests source commit/push and Release publication. Version
 metadata, download entrypoints and release notes target v0.1.11, including the
@@ -24,7 +44,7 @@ is claimed. Preserve the current Debug Controller/Host session. See the
 [release notes](../releases/v0.1.11.md), [development log](../logs/DEVLOG.md) and
 `release-v0.1.11-20261030` evidence.
 
-## Current independent Debug Controller connection
+## Earlier independent Debug Controller connection
 
 On 2026-10-30 the peer Host is independently upgraded after the operator
 authorizes a brief interruption and directs terminal execution. New Host
