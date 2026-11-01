@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-10-30
+Updated: 2026-11-01
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -110,7 +110,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-10-30
+Updated: 2026-11-01
+
+Clipboard tool popup follow-up (2026-11-01, M10-T03) — repaired locally; deployment pending. The floating file/clipboard tool opens unconditionally for native preparation messages, including metadata probes and non-file retrieval, and reopens on later updates. Keep copy/cut, metadata and text/rich-text/image retrieval quiet; retain file confirmation and open progress once after approval/file-transfer startup. Hide is preserved for that batch, with the next batch able to open. Three before-failing regressions pass after repair; serial Debug NoPublish main/test builds and three focused suites pass all 203 cases with zero failures/skips. No protocol, content-transfer, input-authorization or native move-feedback change. The complete independent 345-file Debug candidate passes identity, manifest and command-startup checks; retain the streaming local Host and existing runtime/candidate directories. Apply the UI repair to the Controller displaying the tool. Evidence: `clipboard-window-trigger-20261101`; see the development log.
 
 Remote-file paste unavailable (2026-10-30, M10-T01) — resolved for the reported remote-to-local copy. The original pairing negotiated clipboard capability 4 while native demand offers require 5; legacy automatic-return notices are deliberately ignored and the absence of an explicit local compatibility indication remains a usability gap. Following the operator's authorization and change to the peer terminal, verify the Agent-prepared 321-file candidate, 300 regression cases and independent recovery plan, then submit exactly one independent maintenance operation. The worker reports completed; new formal and retained old rollback bundles each pass full 321-file manifest verification, and the one-shot task is absent. Fresh peer publication, Controller reconnection, real media progression and common clipboard capability 5 are confirmed. The operator confirms native paste shows confirmation, starts the transfer and verifies the target file opens normally. The transaction succeeds with all 975,685,037 bytes received/verified and one completed file; the transfer gate is clear and input remains active/authorized. Reverse-direction copy and cut/move semantics are not requalified by this case. Evidence: `clipboard-peer-capability-20261030`; see the development log.
 

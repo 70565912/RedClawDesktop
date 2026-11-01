@@ -1,6 +1,26 @@
 # Project State
 
-Updated: 2026-10-30
+Updated: 2026-11-01
+
+## Clipboard tool-window visibility repair
+
+The operator identifies the prematurely opened window as the Controller's
+file/clipboard tool, rather than the file-transfer confirmation dialog. Its
+native-pending handler unconditionally opens the tool for metadata preparation
+and non-file retrieval, and repeats this for later status updates. The local
+repair keeps those updates quiet, retains the separate file confirmation, and
+opens progress once after approval or confirmed file-transfer startup. Hiding
+the tool does not cancel or reopen the same batch; a later batch can open it.
+
+All three added regressions fail against the old implementation and pass after
+the repair. Serial Debug main/test builds and three related automatic suites
+pass all 203 cases with zero failures/skips. This is a UI-only change with no
+wire, clipboard-content or input-authorization change. The current local Host is
+connected/streaming and is preserved; update the Controller showing the tool to
+activate the repair. The complete independent 345-file Debug candidate passes
+build identity, full-directory manifest verification and command startup; no
+serving endpoint is replaced. Evidence: `clipboard-window-trigger-20261101`;
+see the [development log](../logs/DEVLOG.md).
 
 ## Current independent Debug Host
 

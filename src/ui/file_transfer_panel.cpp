@@ -159,6 +159,7 @@ struct FileTransferPanel::Impl {
     std::uint32_t clipboard_version = 0;
     QPointer<QDialog> confirmation;
     std::function<void()> show_activity;
+    bool native_progress_shown = false;
     protocol::TransferConflictV1 conflict = protocol::TransferConflictV1::kKeepBoth;
     QStringList sources;
     Impl(FileTransferPanel* widget, Send sender, ClipboardProbe probe) : owner(widget), coordinator(std::move(sender), widget),
@@ -167,6 +168,11 @@ struct FileTransferPanel::Impl {
             return ClipboardAvailability{workspace::clipboard_is_remote_offer(), workspace::clipboard_has_files()};
         })) {}
     bool busy() const { return requested || runtime_busy; }
+    void show_native_progress() {
+        if (native_progress_shown) return;
+        native_progress_shown = true;
+        if (show_activity) show_activity();
+    }
     void refresh() {
         const bool blocked = busy(); files->setEnabled(available && !blocked);
         copies->setEnabled(copies_available && !blocked);
@@ -371,6 +377,7 @@ void FileTransferPanel::runtime_stopped() {
     impl_->coordinator.disconnected();
     impl_->clipboard_available = impl_->available = impl_->runtime_busy = impl_->requested = false;
     impl_->copies_available = false;
+    impl_->native_progress_shown = false;
     impl_->status->setText(QString::fromUtf8("连接已结束；未完成的传送不会自动重放。")); impl_->refresh();
     if (impl_->browser) impl_->browser->reject();
     if (impl_->copies_dialog) impl_->copies_dialog->reject();
@@ -394,12 +401,16 @@ void FileTransferPanel::receive(const Control& message) {
     if (!details.clipboard_token.empty() && details.clipboard_mode == 6
         && (details.action == Action::kClipboardConfirm || details.action == Action::kClipboardNativePending)) {
         if (!impl_->operation.empty() && impl_->operation != message.request_id) return;
+        if (impl_->operation != message.request_id) impl_->native_progress_shown = false;
         impl_->operation = message.request_id; impl_->purpose = Purpose::kClipboard; impl_->direction = details.direction;
         impl_->clipboard_mode = 6; impl_->requested = true; impl_->result_visible = true;
         impl_->cancel->setEnabled(true); impl_->progress->setRange(0, 0);
         if (details.error_code == "clipboard_completing_move") impl_->cancel->setEnabled(false);
-        if (impl_->show_activity) impl_->show_activity();
-        if (details.action == Action::kClipboardConfirm && !impl_->confirmation) {
+        const bool files = (details.clipboard_formats & workspace::kClipboardFilesFormat) != 0;
+        // Metadata probes and non-file clipboard retrieval stay quiet. Open the
+        // file tool once after approval, without undoing a later user hide.
+        if (files && details.error_code == "clipboard_transferring") impl_->show_native_progress();
+        if (files && details.action == Action::kClipboardConfirm && !impl_->confirmation && !impl_->native_progress_shown) {
             auto* dialog = new QDialog(window()); impl_->confirmation = dialog;
             dialog->setObjectName("clipboardTransferConfirmation"); dialog->setWindowTitle(QString::fromUtf8("开始远程传输"));
             dialog->setAttribute(Qt::WA_DeleteOnClose); dialog->setWindowModality(Qt::NonModal);
@@ -419,7 +430,9 @@ void FileTransferPanel::receive(const Control& message) {
             connect(dialog, &QDialog::finished, this, [this, request = message](int answer) mutable {
                 impl_->confirmation.clear(); request.workspace->action = Action::kClipboardApprove;
                 request.workspace->error_code.clear(); request.workspace->clipboard_complete = answer == QDialog::Accepted;
-                QString error; if (!impl_->send(request, &error)) impl_->status->setText(error);
+                QString error;
+                if (!impl_->send(request, &error)) impl_->status->setText(error);
+                else if (answer == QDialog::Accepted) impl_->show_native_progress();
             });
             dialog->show();
         }

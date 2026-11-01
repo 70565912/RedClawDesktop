@@ -7,6 +7,7 @@
 #include "ui/terminal/workspace_pipe_server.h"
 #include "redclaw/workspace/terminal_runtime_bridge.h"
 #include "redclaw/workspace/terminal_shell_integration.h"
+#include "redclaw/workspace/clipboard_demand_port.h"
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QJsonDocument>
@@ -93,6 +94,96 @@ TEST(ClipboardDemandUi, CancellingConfirmationOnlySendsAnUnapprovedReceipt) {
     dialogs.front()->reject(); ASSERT_EQ(sent.size(), 1U);
     EXPECT_EQ(sent.front().workspace->action, WorkspaceActionV1::kClipboardApprove);
     EXPECT_FALSE(sent.front().workspace->clipboard_complete); EXPECT_FALSE(panel.busy());
+}
+TEST(ClipboardDemandUi, CopyCutAndMetadataPreparationNeverOpenTheFileTool) {
+    for (const auto formats : {1U, 63U, kClipboardFilesFormat}) for (const bool move : {false, true}) {
+        unsigned opened = 0;
+        std::vector<StreamControlMessageV1> sent;
+        std::vector<bool> input_blocks;
+        FileTransferPanel panel([&](const auto& value, QString*) { sent.push_back(value); return true; },
+            nullptr, [] { return FileTransferPanel::ClipboardAvailability{}; });
+        panel.set_activity_callback([&] { ++opened; });
+        panel.set_busy_callback([&](bool blocked) { input_blocks.push_back(blocked); });
+        panel.receive(clipboard_availability(5));
+        auto request = clipboard_change(42); request.request_id = "metadata-only";
+        auto& value = *request.workspace;
+        value.clipboard_mode = 6; value.clipboard_token = "metadata-version";
+        value.clipboard_formats = formats; value.clipboard_move = move;
+        value.action = WorkspaceActionV1::kClipboardOffer; panel.receive(request);
+        value.action = WorkspaceActionV1::kClipboardNativePending;
+        value.error_code = formats == kClipboardFilesFormat ? "clipboard_scanning" : "clipboard_preparing";
+        panel.receive(request); panel.receive(request);
+        EXPECT_EQ(opened, 0U); EXPECT_TRUE(sent.empty());
+        EXPECT_TRUE(input_blocks.empty()); EXPECT_FALSE(panel.busy());
+        EXPECT_TRUE(panel.findChildren<QDialog*>("clipboardTransferConfirmation").empty());
+    }
+}
+TEST(ClipboardDemandUi, TextRichTextAndImagePastesNeverOpenTheFileTool) {
+    for (const auto formats : {1U, 2U, 4U, 8U, 16U, 32U, 63U})
+        for (const auto direction : {TransferDirectionV1::kToHost, TransferDirectionV1::kToController}) {
+            unsigned opened = 0;
+            std::vector<bool> input_blocks;
+            FileTransferPanel panel([](const auto&, QString*) { return true; },
+                nullptr, [] { return FileTransferPanel::ClipboardAvailability{}; });
+            panel.set_activity_callback([&] { ++opened; });
+            panel.set_busy_callback([&](bool blocked) { input_blocks.push_back(blocked); });
+            panel.receive(clipboard_availability(5));
+            auto request = clipboard_change(42); request.request_id = "plain-paste";
+            auto& value = *request.workspace;
+            value.clipboard_mode = 6; value.clipboard_token = "plain-version";
+            value.clipboard_formats = formats; value.direction = direction;
+            value.action = WorkspaceActionV1::kClipboardNativePending;
+            for (const auto* stage : {"clipboard_preparing", "clipboard_transferring", "clipboard_awaiting_native_paste"}) {
+                value.error_code = stage; panel.receive(request);
+            }
+            auto available = clipboard_availability(5, true); available.request_id = request.request_id;
+            panel.receive(available); EXPECT_TRUE(panel.busy());
+            panel.receive(clipboard_availability(5)); EXPECT_FALSE(panel.busy());
+            value.action = WorkspaceActionV1::kFinished; value.error_code.clear(); panel.receive(request);
+            EXPECT_EQ(opened, 0U);
+            EXPECT_EQ(input_blocks, (std::vector<bool>{true, false}));
+            EXPECT_TRUE(panel.findChildren<QDialog*>("clipboardTransferConfirmation").empty());
+        }
+}
+TEST(ClipboardDemandUi, FilePasteConfirmsBeforeOpeningProgressAndDoesNotReopenTheSameBatch) {
+    for (const auto direction : {TransferDirectionV1::kToHost, TransferDirectionV1::kToController})
+        for (const bool move : {false, true}) {
+            unsigned opened = 0;
+            std::vector<StreamControlMessageV1> sent;
+            FileTransferPanel panel([&](const auto& value, QString*) { sent.push_back(value); return true; },
+                nullptr, [] { return FileTransferPanel::ClipboardAvailability{}; });
+            panel.set_activity_callback([&] { ++opened; });
+            panel.receive(clipboard_availability(5));
+            auto request = clipboard_change(42); request.request_id = "file-paste";
+            auto& value = *request.workspace;
+            value.clipboard_mode = 6; value.clipboard_token = "file-version";
+            value.clipboard_formats = kClipboardFilesFormat; value.clipboard_move = move;
+            value.direction = direction; value.action = WorkspaceActionV1::kClipboardNativePending;
+            value.error_code = "clipboard_scanning"; panel.receive(request);
+            EXPECT_EQ(opened, 0U);
+            value.action = WorkspaceActionV1::kClipboardConfirm; value.error_code.clear();
+            panel.receive(request); panel.receive(request);
+            EXPECT_EQ(opened, 0U); EXPECT_TRUE(sent.empty()); EXPECT_FALSE(panel.busy());
+            auto dialogs = panel.findChildren<QDialog*>("clipboardTransferConfirmation"); ASSERT_EQ(dialogs.size(), 1);
+            auto* buttons = dialogs.front()->findChild<QDialogButtonBox*>(); ASSERT_NE(buttons, nullptr);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            EXPECT_EQ(opened, 1U); ASSERT_EQ(sent.size(), 1U);
+            EXPECT_TRUE(sent.front().workspace->clipboard_complete);
+            // After the user hides the tool, status changes in this batch must
+            // not take focus or reopen it, including a duplicate confirmation.
+            panel.hide(); panel.receive(request);
+            value.action = WorkspaceActionV1::kClipboardNativePending;
+            for (const auto* stage : {"clipboard_waiting_for_target", "clipboard_transferring", "clipboard_transferring", "clipboard_awaiting_native_paste"}) {
+                value.error_code = stage; panel.receive(request);
+            }
+            EXPECT_EQ(opened, 1U); EXPECT_EQ(sent.size(), 1U);
+            dialogs = panel.findChildren<QDialog*>("clipboardTransferConfirmation"); EXPECT_EQ(dialogs.size(), 1);
+            value.action = WorkspaceActionV1::kFinished; value.error_code.clear(); panel.receive(request);
+            EXPECT_EQ(opened, 1U);
+            request.request_id = "next-file-paste"; value.clipboard_token = "next-file-version";
+            value.action = WorkspaceActionV1::kClipboardNativePending; value.error_code = "clipboard_transferring";
+            panel.receive(request); EXPECT_EQ(opened, 2U);
+        }
 }
 bool spin(const std::function<bool()>& done, int timeout = 15000) {
     QElapsedTimer timer; timer.start();
