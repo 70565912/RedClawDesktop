@@ -2,6 +2,26 @@
 
 Updated: 2026-11-01
 
+## Host rollout of the clipboard-window repair
+
+At the operator's explicit request, commit/push the repair as `6917b62`, run the
+standard serial Debug NoPublish build on that commit, and update/restart only
+the local Host through the independent maintenance worker. The installed
+program matches the previously qualified 203-case build. Fresh DHT publication,
+connection/channel recovery and real Host media transmission are confirmed:
+414 captures, 375 encodes, 374 transmissions, zero synthetic frames and zero
+capture/encode/transmit failures at the accepted snapshot. Both installed and
+retained rollback directories pass complete 345-file manifests; launch
+arguments remain unchanged and the one-shot task is absent.
+
+The first maintenance attempt times out validating its pending copy before
+handoff, leaving the old Host running. Validate that complete copy separately
+in the same shell (21.92 seconds), then reuse it for a new operation with the
+same safety gates. The second operation completes and is independently
+verified. No Controller is replaced; the clipboard tool behavior on a peer
+Controller still requires that Controller's own UI update. Evidence:
+`clipboard-host-rollout-20261101`; see the [development log](../logs/DEVLOG.md).
+
 ## Clipboard tool-window visibility repair
 
 The operator identifies the prematurely opened window as the Controller's
@@ -15,11 +35,11 @@ the tool does not cancel or reopen the same batch; a later batch can open it.
 All three added regressions fail against the old implementation and pass after
 the repair. Serial Debug main/test builds and three related automatic suites
 pass all 203 cases with zero failures/skips. This is a UI-only change with no
-wire, clipboard-content or input-authorization change. The current local Host is
-connected/streaming and is preserved; update the Controller showing the tool to
+wire, clipboard-content or input-authorization change. The local Host is later
+updated/restarted under explicit authorization as recorded above; update the Controller showing the tool to
 activate the repair. The complete independent 345-file Debug candidate passes
-build identity, full-directory manifest verification and command startup; no
-serving endpoint is replaced. Evidence: `clipboard-window-trigger-20261101`;
+build identity, full-directory manifest verification and command startup. The
+initial local-only qualification does not replace a serving endpoint. Evidence: `clipboard-window-trigger-20261101`;
 see the [development log](../logs/DEVLOG.md).
 
 ## Current independent Debug Host
