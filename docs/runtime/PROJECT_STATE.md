@@ -1,6 +1,22 @@
 # Project State
 
-Updated: 2026-11-01
+Updated: 2026-11-02
+
+## Remote desktop fullscreen
+
+The Controller toolbar now offers fullscreen/exit fullscreen and local
+Ctrl+Alt+Enter. Keep the existing draggable tools and recover the previous normal
+geometry/maximized state on exit. Retained-window reconnects preserve the mode;
+closing the playback window or restarting starts windowed. Editor shortcuts,
+remote Esc/F11, input authorization and existing suspension gates are retained.
+No peer protocol or persistent fullscreen preference is added.
+
+Standard Debug main build and 176 related UI/D3D11 cases pass without failures
+or skips, including the fullscreen, held-input and retained-viewport regressions.
+Physical multi-monitor/DPI/keyboard focus remain outside those automatic proofs.
+The approved delivery includes normal main publication, independent Controller
+update/reconnect and peer-local source sync/build without replacing its Host.
+Execution evidence: `fullscreen-20261102`; see the task ledger and development log.
 
 ## Host rollout of the clipboard-window repair
 

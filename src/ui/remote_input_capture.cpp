@@ -222,6 +222,7 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     active_ = true;
     pausing_ = false;
     suppressed_paste_key_ = false;
+    suppressed_fullscreen_enter_ = false;
     clipboard_shortcut_state_.reset();
     local_suspension_release_sent_ = false;
     clear_local_input_state();
@@ -476,6 +477,9 @@ bool ControllerRemoteInputCapture::keyboard_target_is_active() const {
 }
 void ControllerRemoteInputCapture::set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback) {
     clipboard_paste_callback_ = std::move(callback);
+}
+void ControllerRemoteInputCapture::set_fullscreen_toggle_callback(std::function<void()> callback) {
+    fullscreen_toggle_callback_ = std::move(callback);
 }
 bool ControllerRemoteInputCapture::clipboard_paste_context_valid() const {
     return active_ && keyboard_target_is_active()
@@ -848,6 +852,12 @@ void ControllerRemoteInputCapture::send_release_all() {
     (void)send_message(std::move(message));
 }
 
+void ControllerRemoteInputCapture::request_fullscreen_toggle() {
+    clear_local_input_state();
+    send_state_sync(); // releases remote modifiers without ending control
+    QTimer::singleShot(0, this, [this] { if (fullscreen_toggle_callback_) fullscreen_toggle_callback_(); });
+}
+
 void ControllerRemoteInputCapture::clear_local_input_state() {
     critical_events_.clear();
     latest_mouse_move_.reset();
@@ -970,6 +980,10 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
     const bool key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     const bool key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
     const std::uint16_t virtual_key = static_cast<std::uint16_t>(keyboard->vkCode);
+    if (virtual_key == VK_RETURN && suppressed_fullscreen_enter_ && (key_down || key_up)) {
+        if (key_up) suppressed_fullscreen_enter_ = false;
+        return 1;
+    }
     if (virtual_key == suppressed_paste_virtual_key_ && suppressed_paste_key_ && (key_down || key_up)) {
         if (key_up) suppressed_paste_key_ = false;
         return 1; // includes repeats while the transfer temporarily suspends forwarding
@@ -996,6 +1010,14 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
         && has_any({VK_SHIFT, VK_LSHIFT, VK_RSHIFT});
     const bool plain_control = has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
         && !has_any({VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN});
+    if (key_down && virtual_key == VK_RETURN && fullscreen_toggle_callback_
+        && has_any({VK_CONTROL, VK_LCONTROL, VK_RCONTROL})
+        && has_any({VK_MENU, VK_LMENU, VK_RMENU})
+        && !has_any({VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN})) {
+        suppressed_fullscreen_enter_ = true;
+        request_fullscreen_toggle();
+        return 1;
+    }
     if (key_down && plain_control && (virtual_key == 'C' || virtual_key == 'X')) {
         clipboard_shortcut_state_.remote_copy(GetClipboardSequenceNumber());
     }

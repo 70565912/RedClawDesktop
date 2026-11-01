@@ -210,6 +210,7 @@ struct DesktopTaskWorkspace::Impl {
     TaskBarLayout* bar_layout;
     std::vector<Task> tasks;
     QPushButton *control, *audio, *retry;
+    QToolButton* fullscreen;
     QLabel *control_state, *connection_state;
     QPoint bar_position;
     bool has_bar_position = false, enabled = true, syncing = false;
@@ -237,9 +238,12 @@ struct DesktopTaskWorkspace::Impl {
         audio->hide();
         audio->setToolTip(QString::fromUtf8("等待对端音频能力"));
         retry = new QPushButton(QString::fromUtf8("重试画面"), bar.get()); retry->setObjectName("retryCaptureButton"); retry->hide();
+        fullscreen = new QToolButton(bar.get()); fullscreen->setObjectName("playbackFullscreenButton");
+        fullscreen->setCheckable(true); fullscreen->setText(QString::fromUtf8("全屏"));
+        fullscreen->setToolTip(QString::fromUtf8("全屏（Ctrl+Alt+Enter）"));
         control_state = new TaskStatusLabel(bar.get()); control_state->setObjectName("remoteControlStatus");
         connection_state = new TaskStatusLabel(bar.get()); connection_state->setObjectName("playbackWindowStatus");
-        for (auto* widget : std::vector<QWidget*>{control, audio, retry, control_state, connection_state}) bar_layout->addWidget(widget);
+        for (auto* widget : std::vector<QWidget*>{control, audio, retry, fullscreen, control_state, connection_state}) bar_layout->addWidget(widget);
         bar->interacted = [this] { interact(); };
         bar->geometry_committed = [this] {
             bar_position = bar->pos() - bounds().topLeft(); has_bar_position = true;
@@ -351,6 +355,7 @@ QWidget* DesktopTaskWorkspace::button_bar() const { return impl_->bar.get(); }
 QPushButton* DesktopTaskWorkspace::control_button() const { return impl_->control; }
 QPushButton* DesktopTaskWorkspace::audio_button() const { return impl_->audio; }
 QPushButton* DesktopTaskWorkspace::retry_button() const { return impl_->retry; }
+QToolButton* DesktopTaskWorkspace::fullscreen_button() const { return impl_->fullscreen; }
 QLabel* DesktopTaskWorkspace::control_status() const { return impl_->control_state; }
 QLabel* DesktopTaskWorkspace::connection_status() const { return impl_->connection_state; }
 void DesktopTaskWorkspace::set_enabled(bool enabled) { impl_->enabled = enabled; impl_->sync(); }

@@ -69,6 +69,10 @@ The [local workspace control API](docs/architecture/workspace-control-v1.md) let
 
 The portable archive does not install a Windows service. Windows SmartScreen may warn because this Developer Preview is not code-signed.
 
+## Remote desktop fullscreen
+
+Use Fullscreen / Exit fullscreen on the draggable desktop toolbar, or press `Ctrl+Alt+Enter` within the playback window. The toolbar stays visible. Exit restores the previous normal geometry or maximized state. Reconnecting the same window retains fullscreen; closing it or restarting opens in windowed mode. Esc and F11 remain available to the remote application, and terminal/Agent editors keep their own shortcuts.
+
 ## ICE UDP port and router setup
 
 - The default ICE UDP port is **55000** and can be changed in the GUI network settings.

@@ -55,6 +55,7 @@ public:
     void set_forwarding_changed_callback(ForwardingChangedCallback callback);
     void set_blocked_click_callback(BlockedClickCallback callback);
     void set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback);
+    void set_fullscreen_toggle_callback(std::function<void()> callback);
     void set_native_clipboard(bool enabled) { native_clipboard_ = enabled; }
     [[nodiscard]] bool clipboard_paste_context_valid() const;
     void set_qa_observers(QaSendObserver send, QaAckObserver ack);
@@ -130,6 +131,7 @@ private:
     void send_state_sync(bool release_during_transfer = false);
     void send_release_all();
     void clear_local_input_state();
+    void request_fullscreen_toggle();
     void complete_capture_region_change();
     [[nodiscard]] bool send_message(redclaw::protocol::StreamControlMessageV1 message,
                                     QString* error_detail = nullptr);
@@ -153,6 +155,8 @@ private:
     ForwardingChangedCallback forwarding_changed_callback_;
     BlockedClickCallback blocked_click_callback_;
     std::function<void(std::uint32_t)> clipboard_paste_callback_;
+    std::function<void()> fullscreen_toggle_callback_;
+    bool suppressed_fullscreen_enter_ = false;
     bool suppressed_paste_key_ = false;
     ClipboardShortcutState clipboard_shortcut_state_;
     bool native_clipboard_ = false;

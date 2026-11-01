@@ -108,6 +108,7 @@ if(TARGET redclaw_ui_connection_flow)
     ui/connection_flow_tests.cpp
     ui/desktop_navigation_panel_tests.cpp
     ui/desktop_task_workspace_tests.cpp
+    ui/playback_fullscreen_tests.cpp
     ui/file_transfer_panel_tests.cpp
     ui/runtime_maintenance_context_tests.cpp
     ui/gui_startup_options_tests.cpp

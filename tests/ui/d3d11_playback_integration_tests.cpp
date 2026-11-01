@@ -5,6 +5,7 @@
 #include "ui/playback/direct_frame_receiver.h"
 #include "ui/desktop_task_workspace.h"
 #include "ui/playback_window_geometry_controller.h"
+#include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_control_hint_overlay.h"
 #include "ui/remote_input_capture.h"
 #include "redclaw/helper/direct_frame_shared_memory.h"
@@ -71,6 +72,15 @@ TEST(D3D11Playback, NativeCanvasFillsItsPlaybackWindowLayout) {
     EXPECT_NE(renderer.canvas->present_image(image, &error), redclaw::ui::PresentOutcome::kFailed)
         << error.toStdString();
     workspace.set_task_visible(redclaw::ui::DesktopTask::kNavigation, true);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(renderer.widget->geometry(), window.rect());
+    redclaw::ui::PlaybackWindowFullscreenController fullscreen(&window, workspace.button_bar());
+    fullscreen.set_fullscreen(true);
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(fullscreen.fullscreen());
+    EXPECT_EQ(renderer.widget->geometry(), window.rect());
+    EXPECT_NE(renderer.canvas->present_image(image, &error), redclaw::ui::PresentOutcome::kFailed);
+    fullscreen.set_fullscreen(false);
     QCoreApplication::processEvents();
     EXPECT_EQ(renderer.widget->geometry(), window.rect());
     window.showMaximized();

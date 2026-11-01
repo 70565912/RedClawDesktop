@@ -127,6 +127,7 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/playback_control_hint_overlay.cpp
     ui/playback_geometry_transaction.cpp
     ui/playback_window_lifecycle.cpp
+    ui/playback_window_fullscreen_controller.cpp
     ui/playback_window_geometry_controller.cpp
     ui/remote_input_capture.cpp
     ui/stun_server_policy.cpp

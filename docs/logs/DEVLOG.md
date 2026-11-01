@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-11-02 — Add local remote-desktop fullscreen controls
+
+- Add a checkable fullscreen/exit-fullscreen action to the existing draggable floating toolbar and a local Ctrl+Alt+Enter toggle. Keep the current playback screen, normal geometry/maximized state, owned tool windows and canvas; close/reopen and process restart return to windowed mode, while reconnecting the retained window preserves fullscreen.
+- Keep window/display state in a small QObject-owned controller, outside the GUI orchestration function. Reuse geometry transactions, D3D11 rendering and viewport reporting. Qt shortcut handling excludes terminal/Agent editors; the Windows input hook consumes Enter repeats/releases, releases remote held modifiers and queues the local toggle without ending control or overriding other suspension gates. Esc/F11 and the emergency chord remain unchanged. No wire/CLI/settings migration.
+- Standard Debug main build and 176 cases across UI/D3D11 CTest suites pass with zero failures/skips; the 16-case targeted geometry/workspace/fullscreen/input run also passes. Native D3D11 rendering remains usable across fullscreen transitions. Physical multi-monitor removal/DPI transitions and physical-keyboard focus are not independently qualified by these fixtures. Source publication and separately authorized Controller rollout/peer Host build follow this checkpoint; no user file transfer or stress test.
+
 ## 2026-11-01 — Push the clipboard-window repair and roll out the local Host
 
 - The operator explicitly authorizes commit/push, compilation and local Host restart. Commit `6917b62` is normally pushed to main; standard serial Debug NoPublish compilation passes on that commit and matches the complete qualified candidate. Reuse the unchanged source/203-case regression evidence rather than rerunning unrelated tests. The peer Controller is outside this restart scope.

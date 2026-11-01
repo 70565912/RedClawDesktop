@@ -164,6 +164,7 @@
 #include "ui/debug_control_protocol.h"
 #include "ui/playback_control_hint_overlay.h"
 #include "ui/playback_window_lifecycle.h"
+#include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/remote_input_capture.h"
 #include "ui/stun_server_policy.h"
@@ -2370,6 +2371,16 @@ bool launch_gui_shell(
   playback_canvas_widget->setObjectName("playbackWindowCanvas");
   playback_window_layout->addWidget(playback_canvas_widget, 1);
   auto* task_workspace = new DesktopTaskWorkspace(playback_window, ui_settings);
+  auto* fullscreen_controller = new PlaybackWindowFullscreenController(playback_window, task_workspace->button_bar());
+  QObject::connect(task_workspace->fullscreen_button(), &QToolButton::clicked, fullscreen_controller,
+      [fullscreen_controller] { fullscreen_controller->toggle_fullscreen(); });
+  fullscreen_controller->set_changed_callback([button = QPointer<QToolButton>(task_workspace->fullscreen_button())](bool enabled) {
+    if (!button) return;
+    const QSignalBlocker blocker(button.data());
+    button->setChecked(enabled);
+    button->setText(enabled ? QString::fromUtf8("退出全屏") : QString::fromUtf8("全屏"));
+    button->setToolTip(enabled ? QString::fromUtf8("退出全屏（Ctrl+Alt+Enter）") : QString::fromUtf8("全屏（Ctrl+Alt+Enter）"));
+  });
   auto* playback_window_status = task_workspace->connection_status();
   playback_window_status->setText("The live desktop opens here after the connection is ready.");
   auto* remote_control_button = task_workspace->control_button();
@@ -2472,6 +2483,9 @@ bool launch_gui_shell(
   };
   auto* remote_input_capture = new ControllerRemoteInputCapture(
       playback_canvas_widget, playback_window);
+  remote_input_capture->set_fullscreen_toggle_callback([weak = QPointer<PlaybackWindowFullscreenController>(fullscreen_controller)] {
+    if (weak) weak->toggle_fullscreen();
+  });
   task_workspace->set_local_interaction_callback([weak = QPointer<ControllerRemoteInputCapture>(remote_input_capture)] {
     if (weak) weak->set_local_suspension(LocalInputSuspensionReason::kLocalUiFocus, true);
   });

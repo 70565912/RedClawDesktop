@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-11-01
+Updated: 2026-11-02
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -110,7 +110,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-01
+Updated: 2026-11-02
+
+Remote desktop fullscreen (2026-11-02, M10-T02) — implemented and automatically qualified. The existing draggable toolbar gains fullscreen/exit fullscreen and Ctrl+Alt+Enter, with normal/maximized geometry restoration and retained-window reconnect behavior. Release held remote modifiers without ending authorization; keep editor shortcuts and suspension gates intact. Standard Debug build, 176 UI/D3D11 cases and the targeted 16-case run pass with no failures/skips. Source publication, current Controller update and peer-local Host source sync/build are authorized; Host runtime replacement is excluded. Evidence: `fullscreen-20261102`; see the development log.
 
 Clipboard repair Host rollout (2026-11-01, M10-T03) — source pushed/local Host updated under explicit operator authorization. `6917b62` is normally pushed; standard Debug NoPublish compilation passes and matches the 203-case qualified artifact. An initial pre-handoff pending-copy validation timeout leaves the old Host serving; the independently reverified complete copy qualifies a second operation with unchanged safety gates. That operation completes with full installed/rollback 345-file manifest verification, retained launch arguments, fresh Host publication, restored connection/channel and real capture/encode/transmit 414 / 375 / 374, zero synthetic/failure counts, and its one-shot task absent. Peer Controller replacement and popup activation remain separate; no peer operation or continuity/stress test. Evidence: `clipboard-host-rollout-20261101`; see the development log.
 

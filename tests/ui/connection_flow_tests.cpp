@@ -62,6 +62,9 @@ public:
   }
   static void flush(ControllerRemoteInputCapture& capture) { capture.flush_batch(); }
   static void synchronize(ControllerRemoteInputCapture& capture) { capture.send_state_sync(); }
+  static void fullscreen(ControllerRemoteInputCapture& capture) {
+    capture.suppressed_fullscreen_enter_ = true; capture.request_fullscreen_toggle();
+  }
   static void key(ControllerRemoteInputCapture& capture, bool down,
                   std::uint16_t scan, std::uint16_t vk, bool extended) {
     capture.enqueue_keyboard_event(down, scan, vk, extended);
@@ -70,6 +73,31 @@ public:
 }  // namespace redclaw::ui
 
 namespace {
+
+TEST(ControllerRemoteInputCapture, FullscreenReleasesModifiersAndQueuesLocalActionWithoutEndingControl) {
+  using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
+  using Type = redclaw::protocol::StreamControlMessageTypeV1;
+  redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
+  std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+  capture.set_send_message_callback([&](const auto& message, QString*) { sent.push_back(message); return true; });
+  Peer::start(capture);
+  Peer::key(capture, true, 0x1d, 0x11, false); Peer::key(capture, true, 0x38, 0x12, false);
+  unsigned toggles = 0; capture.set_fullscreen_toggle_callback([&] { ++toggles; });
+  Peer::fullscreen(capture);
+  EXPECT_EQ(toggles, 0U); EXPECT_TRUE(capture.control_enabled());
+  ASSERT_EQ(sent.size(), 1U); EXPECT_EQ(sent.front().type, Type::kInputStateSync);
+  EXPECT_TRUE(sent.front().pressed_scan_codes.empty());
+  QApplication::processEvents(); EXPECT_EQ(toggles, 1U);
+#ifdef _WIN32
+  capture.set_local_suspension(redclaw::ui::LocalInputSuspensionReason::kGeometryTransaction, true);
+  KBDLLHOOKSTRUCT key{}; key.vkCode = VK_RETURN; key.scanCode = 0x1c;
+  EXPECT_EQ(capture.handle_low_level_keyboard(WM_KEYDOWN, reinterpret_cast<std::uintptr_t>(&key)), 1);
+  EXPECT_EQ(capture.handle_low_level_keyboard(WM_KEYUP, reinterpret_cast<std::uintptr_t>(&key)), 1);
+  EXPECT_EQ(toggles, 1U);
+#endif
+  for (const auto& message : sent) EXPECT_NE(message.type, Type::kInputReleaseAll);
+  capture.pause(false, "fullscreen fixture complete");
+}
 
 TEST(ControllerRemoteInputCapture, NavigationWaitsForConfirmationAndPresentationInEitherOrder) {
   using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
