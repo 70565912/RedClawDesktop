@@ -14,8 +14,20 @@ No peer protocol or persistent fullscreen preference is added.
 Standard Debug main build and 176 related UI/D3D11 cases pass without failures
 or skips, including the fullscreen, held-input and retained-viewport regressions.
 Physical multi-monitor/DPI/keyboard focus remain outside those automatic proofs.
-The approved delivery includes normal main publication, independent Controller
-update/reconnect and peer-local source sync/build without replacing its Host.
+Source `f0ca55c` is normally pushed to main. A complete 321-file candidate passes
+build-byte identity, manifest and command-startup checks. Independent Controller
+replacement preserves the effective active-session parameters and Normal priority;
+automatic reconnect resumes real media with reception +37, GUI decode +38 and
+presentation +37 over 12 seconds, zero synthetic/decode/presentation failures,
+and common clipboard capability 5. Installed and complete 321-file rollback
+manifests pass, the one-shot task is removed and no rollback is triggered.
+The running D3D11 playback exposes the fullscreen button. Live click/visual
+acceptance remains unverified: the Windows UI helper reports unavailable input
+geometry and its fresh capture times out. Peer-local read-only reconciliation reports source coverage, Debug build,
+176 passing related cases, full 345-file candidate rehash and command-startup
+validation; the serving Host remains unchanged and streaming. Its prior build
+task activity is unknown, so no build is replayed. These are peer-reported
+results, not local independent measurements. No Host replacement is performed.
 Execution evidence: `fullscreen-20261102`; see the task ledger and development log.
 
 ## Host rollout of the clipboard-window repair
