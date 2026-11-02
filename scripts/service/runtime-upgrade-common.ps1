@@ -343,14 +343,15 @@ function Test-UpgradePublicationSnapshot {
 }
 
 function Test-UpgradedHostPublication {
-    param([Diagnostics.Process]$Process, [string]$StatusPath)
+    param([Diagnostics.Process]$Process, [string]$StatusPath,
+        [ValidateRange(1,180)][int]$TimeoutSeconds = 180)
     $started = ([DateTimeOffset]$Process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
-    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         $Process.Refresh()
         if ($Process.HasExited) { return $false }
         $snapshot = $null
-        try { $snapshot = Get-Content -LiteralPath $StatusPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $snapshot = $null }
+        try { $snapshot = Get-Content -LiteralPath $StatusPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json } catch { $snapshot = $null }
         if (Test-UpgradePublicationSnapshot -Snapshot $snapshot -GuiProcessId $Process.Id -StartedUnixMs $started -NowUnixMs ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())) { return $true }
         Start-Sleep -Milliseconds 250
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
