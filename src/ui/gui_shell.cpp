@@ -2196,7 +2196,7 @@ bool launch_gui_shell(
   });
   sealed_exchange_toggle->setVisible(false);
 
-  auto* session_log_box = new QGroupBox("Runtime Log", shell);
+  auto* session_log_box = new QGroupBox(QString::fromUtf8("运行日志"), shell);
   session_log_box->setObjectName("primaryCard");
   session_log_box->setProperty("persistent", true);
   session_log_box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
@@ -2209,10 +2209,10 @@ bool launch_gui_shell(
   session_log_hint->setWordWrap(true);
   session_log_hint->setObjectName("pageIntro");
   session_log_hint->hide();
-  auto* copy_session_log_button = new QPushButton("Copy Log", session_log_box);
+  auto* copy_session_log_button = new QPushButton(QString::fromUtf8("复制日志"), session_log_box);
   copy_session_log_button->setObjectName("secondaryAction");
   copy_session_log_button->setToolTip("Copy the full runtime log to the clipboard");
-  auto* clear_session_log_button = new QPushButton("Clear", session_log_box);
+  auto* clear_session_log_button = new QPushButton(QString::fromUtf8("清空显示"), session_log_box);
   clear_session_log_button->setObjectName("secondaryAction");
   clear_session_log_button->setToolTip("Clear the on-screen log view");
   auto* session_log_copy_feedback = new QLabel(session_log_box);
@@ -2308,41 +2308,6 @@ bool launch_gui_shell(
 
   auto* runtime_page = new QWidget(&window);
   runtime_page->setVisible(false);
-
-  auto* runtime_overview = new QGroupBox("Session Status", session_page);
-  runtime_overview->setObjectName("primaryCard");
-  auto* runtime_cards = new QHBoxLayout(runtime_overview);
-  runtime_cards->setSpacing(12);
-  runtime_cards->setContentsMargins(6, 10, 6, 6);
-
-  auto create_status_card = [&](const QString& title, const QString& initial_value) {
-    auto* card = new QFrame(runtime_overview);
-    card->setObjectName("statusCard");
-    card->setMinimumWidth(170);
-    auto* card_layout = new QVBoxLayout(card);
-    card_layout->setContentsMargins(16, 14, 16, 14);
-    card_layout->setSpacing(8);
-
-    auto* title_label = new QLabel(title, card);
-    title_label->setObjectName("statusCardTitle");
-    auto* value_label = new QLabel(initial_value, card);
-    value_label->setObjectName("statusCardValue");
-    value_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-
-    card_layout->addWidget(title_label);
-    card_layout->addWidget(value_label);
-    card_layout->addStretch();
-    runtime_cards->addWidget(card, 1);
-    return value_label;
-  };
-
-  auto* connection_state_value = create_status_card("Pairing", "Ready");
-  auto* remote_desc_value = create_status_card("Handshake", "Waiting");
-  auto* connected_value = create_status_card("Live Link", "Pending");
-  auto* process_mode_value = create_status_card("App State", "Idle");
-
-  session_layout->addWidget(runtime_overview);
-  runtime_overview->setVisible(false);
 
   auto* playback_canvas = new QLabel(runtime_page);
   playback_canvas->setAlignment(Qt::AlignCenter);
@@ -2739,27 +2704,21 @@ bool launch_gui_shell(
 
   auto set_connection_state_display = [&](const QString& state) {
     const QString lowered = state.trimmed().toLower();
-    QString text = "Ready";
-    QString tone = "info";
+    auto pairing = ConnectionPairingState::kReady;
     if (lowered == "connected" || lowered == "completed") {
-      text = "Connected";
-      tone = "good";
+      pairing = ConnectionPairingState::kConnected;
     } else if (lowered == "checking" || lowered == "new" || lowered == "connecting") {
-      text = "Connecting";
-      tone = "warn";
+      pairing = ConnectionPairingState::kConnecting;
     } else if (lowered == "failed" || lowered == "disconnected") {
-      text = "Needs attention";
-      tone = "bad";
+      pairing = ConnectionPairingState::kAttention;
     } else if (lowered == "closed") {
-      text = "Closed";
+      pairing = ConnectionPairingState::kClosed;
     }
-    connection_state_value->setText(text);
-    apply_status_pill(connection_state_value, tone);
+    session_workspace->connection_overlay()->set_pairing_state(pairing);
   };
 
   auto set_handshake_state = [&](bool ready) {
-    remote_desc_value->setText(ready ? "Ready" : "Waiting");
-    apply_status_pill(remote_desc_value, ready ? "good" : "warn");
+    session_workspace->connection_overlay()->set_handshake_ready(ready);
   };
 
   HostUpdateRestartGuard update_restart_guard(window, [session_log](const QString& message) {
@@ -2767,26 +2726,20 @@ bool launch_gui_shell(
   });
   auto set_live_link_state = [&](bool connected) {
     if (!connected) update_restart_guard.stop();
-    connected_value->setText(connected ? "Live" : "Pending");
-    apply_status_pill(connected_value, connected ? "good" : "warn");
+    session_workspace->connection_overlay()->set_link_live(connected);
   };
 
   auto set_process_state = [&](const QString& state) {
     const QString lowered = state.trimmed().toLower();
-    QString text = "Idle";
-    QString tone = "info";
+    auto process = ConnectionProcessState::kIdle;
     if (lowered == "running") {
-      text = "Active";
-      tone = "good";
+      process = ConnectionProcessState::kActive;
     } else if (lowered == "stopping") {
-      text = "Stopping";
-      tone = "warn";
+      process = ConnectionProcessState::kStopping;
     } else if (lowered == "failed" || lowered == "crashed") {
-      text = "Needs attention";
-      tone = "bad";
+      process = ConnectionProcessState::kFailed;
     }
-    process_mode_value->setText(text);
-    apply_status_pill(process_mode_value, tone);
+    session_workspace->connection_overlay()->set_process_state(process);
   };
 
   set_connection_state_display("idle");
@@ -2806,8 +2759,9 @@ bool launch_gui_shell(
   };
 
   session_workspace->set_before_home([fullscreen_controller, &connection_flow_model,
-      refresh_connection_flow_page, set_link_workflow_running] {
+      refresh_connection_flow_page, set_link_workflow_running, task_workspace] {
     fullscreen_controller->set_fullscreen(false);
+    task_workspace->set_task_visible(DesktopTask::kNavigation, false);
     connection_flow_model.reset();
     set_link_workflow_running(false);
     refresh_connection_flow_page();
@@ -4831,7 +4785,7 @@ bool launch_gui_shell(
             append_runtime_event(redclaw::render::RuntimeStatusSeverity::kInfo,
                                  "state",
                                  QString("state=%1 remote_desc=%2 connected=%3")
-                                     .arg(connection_state_value->text(), remote_desc_value->text(), connected_value->text())
+                                     .arg(ice_state, remote_description_applied ? "Ready" : "Waiting", connected ? "Live" : "Pending")
                                      .toStdString());
           }
         }
@@ -6511,7 +6465,6 @@ bool launch_gui_shell(
   window.show();
   animate_panel_entrance(session_hero, 40);
   animate_panel_entrance(link_workflow_box, 140);
-  animate_panel_entrance(runtime_overview, 220);
   apply_gui_auto_start();
   if (!gui_auto_start.auto_start && gui_auto_start.session_code.isEmpty()) {
     QTimer::singleShot(520, &window, [&]() {
@@ -6569,17 +6522,35 @@ bool launch_gui_shell(
       connecting_page->set_connection_code("EF56GH78");
       refresh_connection_flow_page();
       save_snapshot("connecting-900x680.png");
+      session_workspace->connection_overlay()->panel()->grab().save(snapshot_dir.filePath("connection-progress.png"), "PNG");
       apply_connection_flow_event(
           ConnectionFlowEvent::kFatalFailure,
           "No waiting device was found for that code. Confirm the other device is waiting, then retry.");
       save_snapshot("connecting-failed-900x680.png");
+      session_workspace->connection_overlay()->panel()->grab().save(snapshot_dir.filePath("connection-failed.png"), "PNG");
 
       connection_flow_model.start(ConnectionFlowRole::kController);
       connection_flow_model.observe_transport(true, true);
       apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
       set_playback_status_text(QString::fromUtf8("UI 布局样例（未连接远端）"));
+      session_workspace->update_runtime("unknown", QString::fromUtf8("布局样例（未连接远端）"));
+      if (session_workspace->connection_overlay()->state() != ConnectionOverlayState::kHidden
+          || task_workspace->task_visible(DesktopTask::kNavigation)) {
+        QCoreApplication::exit(3); return;
+      }
+      save_snapshot("workspace-connected-hidden.png");
+      task_workspace->connection_button()->click();
+      set_connection_state_display("connected"); set_handshake_state(true);
+      set_live_link_state(true); set_process_state("running");
       save_snapshot("workspace-expanded.png");
-      session_workspace->connection_overlay()->panel()->grab().save(snapshot_dir.filePath("connection-expanded.png"), "PNG");
+      auto* overlay_panel = session_workspace->connection_overlay()->panel();
+      auto* overlay_scroll = overlay_panel->findChild<QScrollArea*>("connectionOverlayScroll");
+      auto* overlay_disconnect = overlay_panel->findChild<QPushButton*>("connectionOverlayDisconnect");
+      overlay_panel->grab().save(snapshot_dir.filePath("connection-expanded.png"), "PNG");
+      if (!overlay_scroll || !overlay_disconnect || !overlay_panel->rect().contains(
+          overlay_disconnect->mapTo(overlay_panel, overlay_disconnect->rect().center()))) {
+        QCoreApplication::exit(4); return;
+      }
       session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kCollapsed);
       save_snapshot("workspace-collapsed.png");
       session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kHidden);
@@ -6587,11 +6558,13 @@ bool launch_gui_shell(
       session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kExpanded);
       // A failed/finished runtime may already be absent when Disconnect is clicked.
       // Verify that the real form router, not just the outer page, returns home.
+      task_workspace->set_task_visible(DesktopTask::kNavigation, true);
       session_workspace->set_confirm_disconnect([] { return true; });
       connection_entry_page->set_actions_enabled(false);
       session_workspace->request_disconnect();
       if (session_workspace->desktop_visible() || tabs->currentWidget() != session_scroll
           || connection_flow_model.snapshot().status != ConnectionFlowStatus::kIdle
+          || task_workspace->task_visible(DesktopTask::kNavigation)
           || !connection_entry_page->peer_code_input()->isEnabled() || !link_network_exit->isEnabled()) {
         QCoreApplication::exit(2); return;
       }

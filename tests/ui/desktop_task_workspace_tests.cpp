@@ -87,6 +87,33 @@ TEST(DesktopTaskWorkspace, FirstUseHiddenAndClosePreservesAgentTaskAndDraft) {
     EXPECT_FALSE(floating->isVisible());
 }
 
+TEST(DesktopTaskWorkspace, NavigationStartsHiddenWithSavedVisibilityAndRemainsManuallyAccessible) {
+    QTemporaryDir directory; ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("workspace.ini"), QSettings::IniFormat);
+    const QString prefix = "controller/floating_workspace/v1/navigation/";
+    settings.setValue(prefix + "visible", true);
+    const QRect geometry(30, 60, 360, 320); settings.setValue(prefix + "geometry", geometry);
+    settings.setValue("controller/floating_workspace/v1/files/visible", true);
+    for (int launch = 0; launch < 2; ++launch) {
+        QWidget owner; owner.resize(1000, 720);
+        DesktopTaskWorkspace workspace(&owner, &settings);
+        workspace.add_task(DesktopTask::kNavigation, "Navigation", new QWidget, {360, 320});
+        workspace.add_task(DesktopTask::kFiles, "Files", new QWidget, {640, 420});
+        owner.show(); QApplication::processEvents();
+        EXPECT_FALSE(workspace.task_visible(DesktopTask::kNavigation));
+        EXPECT_FALSE(workspace.task_window(DesktopTask::kNavigation)->isVisible());
+        EXPECT_FALSE(workspace.task_button(DesktopTask::kNavigation)->isChecked());
+        EXPECT_TRUE(workspace.task_visible(DesktopTask::kFiles));
+        EXPECT_TRUE(settings.value(prefix + "visible").toBool());
+        workspace.task_button(DesktopTask::kNavigation)->click(); QApplication::processEvents();
+        EXPECT_TRUE(workspace.task_visible(DesktopTask::kNavigation));
+        EXPECT_TRUE(workspace.task_window(DesktopTask::kNavigation)->isVisible());
+        EXPECT_EQ(workspace.task_window(DesktopTask::kNavigation)->geometry().translated(-bounds(owner).topLeft()), geometry);
+        owner.hide(); owner.show(); QApplication::processEvents();
+        EXPECT_TRUE(workspace.task_window(DesktopTask::kNavigation)->isVisible());
+    }
+}
+
 TEST(DesktopTaskWorkspace, DragResizeAndPersistenceUseOwnerRelativeBounds) {
     QTemporaryDir directory; ASSERT_TRUE(directory.isValid());
     QSettings settings(directory.filePath("workspace.ini"), QSettings::IniFormat);

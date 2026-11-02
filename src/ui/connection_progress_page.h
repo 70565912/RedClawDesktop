@@ -13,9 +13,12 @@ class QFrame;
 
 namespace redclaw::ui {
 
+enum class ConnectionProgressPresentation { kPage, kOverlay };
+
 class ConnectionProgressPage final : public QWidget {
  public:
-  explicit ConnectionProgressPage(ConnectionFlowRole role, QWidget* parent = nullptr);
+  explicit ConnectionProgressPage(ConnectionFlowRole role, QWidget* parent = nullptr,
+      ConnectionProgressPresentation presentation = ConnectionProgressPresentation::kPage);
 
   void set_connection_code(const QString& code);
   void set_remote_control_authorized(bool authorized);
@@ -41,6 +44,7 @@ class ConnectionProgressPage final : public QWidget {
   void apply_stage_state(int index, ConnectionStageState state);
 
   ConnectionFlowRole role_;
+  ConnectionProgressPresentation presentation_;
   QLabel* title_ = nullptr;
   QLabel* subtitle_ = nullptr;
   QLabel* phase_ = nullptr;

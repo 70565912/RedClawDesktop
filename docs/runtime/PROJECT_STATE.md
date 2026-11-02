@@ -2,6 +2,48 @@
 
 Updated: 2026-11-02
 
+## Boxed connection stages, completion auto-hide and navigation off by default
+
+The approved Connection panel now combines four framed stage cards with green
+progress lines, the original pairing/handshake/live-link/process indicators,
+path/frame status and the shared runtime log. First-frame completion, including
+recovery, hides it once; the toolbar status button restores it, and ordinary
+successful snapshots do not undo manual opening. Incidents still expand without
+focus activation. A scrolling body and fixed action footer preserve access in
+small windows without changing canvas geometry or protocol/capability negotiation.
+
+Navigation starts hidden despite an older saved-open preference and closes on
+return home for the next connection. Manual toolbar access, geometry and display
+selection remain available; other tool-window preferences are unchanged.
+
+Standard Debug main build and all 197 related UI/native-D3D11 cases pass, zero
+failures/skips. The fresh independent 321-file candidate passes its full manifest,
+build identity, command startup and restricted-path isolated GUI launch/exit (0).
+The complete GUI fixture asserts automatic hide, navigation defaults/home reset,
+visible default actions, return-home form readiness and explicit active-view Quit.
+Initial layout captures exposed a hidden footer; the final candidate fixes it.
+Source changes remain uncommitted and serving programs remain untouched. No Host
+upgrade, user-file operation, network/security change or continuity/stress test.
+Live two-machine/physical multi-monitor visual behavior is not newly evaluated.
+Evidence: `connection-panel-20261102`.
+
+## Connection status consolidated into the toolbar
+
+The lower-left connection-status window is removed. The existing draggable toolbar
+Connection button now shows the live connection phase and status color; its tooltip
+and accessible name identify the connection panel. Clicking the status still shows
+or hides the detailed Connection panel. Log collapse/hide, incident auto-expansion,
+input suspension and renderer geometry remain unchanged. No settings or wire change.
+
+Standard Debug main build and the related UI/native-D3D11 suites pass all 194 cases,
+zero failures/skips. The updated reproduction fails before the repair (the separate
+status widget exists and the toolbar lacks its phase), then passes afterward.
+Connection/reconnect/failure captions, hidden-panel restoration and unchanged canvas
+geometry are covered. The implementation and documentation remain uncommitted;
+no running program, Host, network/security setting or user file is changed. Physical
+visual/multi-monitor behavior is not newly qualified. Evidence:
+`toolbar-connection-status-20261102`.
+
 ## Approved navigation source publication and peer Host rollout
 
 The operator approves the current two-display review and authorizes normal source

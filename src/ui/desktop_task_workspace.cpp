@@ -219,7 +219,9 @@ void DesktopTaskWorkspace::add_task(DesktopTask id, const QString& title, QWidge
     for (auto* item : tail) impl_->bar_layout->addItem(item);
     if (impl_->settings) {
         const auto prefix = QString(kSettings) + task_key(id) + '/';
-        task.visible = impl_->settings->value(prefix + "visible", false).toBool();
+        // Navigation is opt-in on each launch; retain its geometry and the
+        // other tools' saved visibility without rewriting existing settings.
+        task.visible = id != DesktopTask::kNavigation && impl_->settings->value(prefix + "visible", false).toBool();
         task.preferred = impl_->settings->value(prefix + "geometry").toRect();
     }
     task.button->setChecked(task.visible);

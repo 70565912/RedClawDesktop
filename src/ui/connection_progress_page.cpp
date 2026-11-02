@@ -73,12 +73,14 @@ QString state_style(ConnectionStageState state) {
 
 }  // namespace
 
-ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget* parent)
-    : QWidget(parent), role_(role) {
+ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget* parent,
+    ConnectionProgressPresentation presentation)
+    : QWidget(parent), role_(role), presentation_(presentation) {
+  const bool compact = presentation_ == ConnectionProgressPresentation::kOverlay;
   setObjectName(role == ConnectionFlowRole::kHost ? "waitingConnectionPage" : "connectingPage");
 
   auto* root = new QVBoxLayout(this);
-  root->setContentsMargins(24, 12, 24, 10);
+  root->setContentsMargins(compact ? QMargins{} : QMargins{24, 12, 24, 10});
   root->setSpacing(7);
 
   title_ = new QLabel(this);
@@ -121,34 +123,39 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
   root->addWidget(phase_);
   root->addWidget(attempt_);
 
-  auto* flow_box = new QGroupBox("Connection progress", this);
+  auto* flow_box = new QGroupBox(compact ? QString::fromUtf8("连接进度") : QString("Connection progress"), this);
   flow_box->setObjectName("connectionFlowBox");
+  if (compact) flow_box->setStyleSheet(
+      "QGroupBox#connectionFlowBox { border: none; margin-top: 18px; padding: 0; background: transparent; }"
+      "QGroupBox#connectionFlowBox::title { left: 0; padding: 0; }");
   auto* flow = new QHBoxLayout(flow_box);
-  flow->setContentsMargins(14, 14, 14, 10);
-  flow->setSpacing(8);
+  flow->setContentsMargins(compact ? QMargins{0, 12, 0, 0} : QMargins{14, 14, 14, 10});
+  flow->setSpacing(compact ? 0 : 8);
 
   const auto& stage_names = role_ == ConnectionFlowRole::kHost ? kHostStages : kControllerStages;
+  const std::array<const char*, kConnectionStageCount> compact_names = {
+      "查找设备", "安全配对", "建立网络", "启动桌面"};
   for (int index = 0; index < kConnectionStageCount; ++index) {
     auto* frame = new QFrame(flow_box);
     frame->setObjectName("connectionStage");
-    frame->setMinimumWidth(124);
-    frame->setMinimumHeight(116);
+    frame->setMinimumWidth(compact ? 0 : 124);
+    frame->setMinimumHeight(compact ? 94 : 116);
     auto* card = new QVBoxLayout(frame);
-    card->setContentsMargins(12, 11, 12, 11);
-    card->setSpacing(7);
+    card->setContentsMargins(compact ? QMargins{4, 6, 4, 6} : QMargins{12, 11, 12, 11});
+    card->setSpacing(compact ? 4 : 7);
 
-    auto* number = new QLabel(QString("Stage %1").arg(index + 1), frame);
+    auto* number = new QLabel((compact ? QString::fromUtf8("阶段 %1") : QString("Stage %1")).arg(index + 1), frame);
     number->setObjectName("connectionStageNumber");
-    number->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    auto* name = new QLabel(QString::fromLatin1(stage_names[index]), frame);
+    number->setAlignment(compact ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
+    auto* name = new QLabel(compact ? QString::fromUtf8(compact_names[index]) : QString::fromLatin1(stage_names[index]), frame);
     name->setObjectName("connectionStageTitle");
     name->setWordWrap(true);
-    name->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    name->setMinimumHeight(36);
+    name->setAlignment(compact ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignTop);
+    name->setMinimumHeight(compact ? 20 : 36);
     auto* state = new QLabel("Pending", frame);
     state->setObjectName("connectionStageState");
     state->setAlignment(Qt::AlignCenter);
-    state->setMinimumHeight(32);
+    state->setMinimumHeight(compact ? 22 : 32);
 
     card->addWidget(number);
     card->addWidget(name, 1);
@@ -161,9 +168,10 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
       arrow->setObjectName("connectionStageArrow");
       arrow->setAccessibleName(QString("Stage %1 to stage %2").arg(index + 1).arg(index + 2));
       arrow->setAlignment(Qt::AlignCenter);
-      arrow->setFixedWidth(22);
+      arrow->setFixedWidth(compact ? 18 : 22);
       arrow->setAutoFillBackground(false);
-      arrow->setPixmap(style()->standardIcon(QStyle::SP_ArrowRight).pixmap(18, 18));
+      if (compact) arrow->setFixedHeight(2);
+      else arrow->setPixmap(style()->standardIcon(QStyle::SP_ArrowRight).pixmap(18, 18));
       arrows_[index] = arrow;
       flow->addWidget(arrow);
     }
@@ -175,7 +183,7 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
   failure_->setWordWrap(true);
   failure_->hide();
   root->addWidget(failure_);
-  root->addStretch();
+  if (!compact) root->addStretch();
 
   auto* actions = new QHBoxLayout();
   actions->addStretch();
@@ -199,6 +207,10 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
     }
   });
 
+  if (compact) {
+    for (auto* widget : std::array<QWidget*, 7>{title_, subtitle_, phase_, attempt_, code_, retry_, exit_}) widget->hide();
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+  }
   set_snapshot(ConnectionFlowSnapshot{});
 }
 
@@ -239,6 +251,15 @@ void ConnectionProgressPage::set_remote_agent_authorized(
 void ConnectionProgressPage::set_snapshot(const ConnectionFlowSnapshot& snapshot) {
   for (int index = 0; index < kConnectionStageCount; ++index) {
     apply_stage_state(index, snapshot.stages[index]);
+  }
+  if (presentation_ == ConnectionProgressPresentation::kOverlay) {
+    for (int index = 0; index < kConnectionStageCount - 1; ++index) {
+      const bool complete = snapshot.stages[index] == ConnectionStageState::kComplete;
+      const auto style = QString("background-color: %1;").arg(complete ? "#10b981" : "#2a405e");
+      if (arrows_[index]->styleSheet() != style) arrows_[index]->setStyleSheet(style);
+      arrows_[index]->setProperty("complete", complete);
+    }
+    return;
   }
 
   const int displayed_stage = snapshot.status == ConnectionFlowStatus::kComplete
@@ -309,10 +330,22 @@ QPushButton* ConnectionProgressPage::exit_button() const {
 
 void ConnectionProgressPage::apply_stage_state(int index, ConnectionStageState state) {
   stage_states_[index] = state;
-  stages_[index].state->setText(state_text(state));
+  const bool compact = presentation_ == ConnectionProgressPresentation::kOverlay;
+  QString text = state_text(state);
+  if (compact) {
+    switch (state) {
+    case ConnectionStageState::kPending: text = QString::fromUtf8("等待中"); break;
+    case ConnectionStageState::kCurrent: text = QString::fromUtf8("进行中"); break;
+    case ConnectionStageState::kComplete: text = QString::fromUtf8("✓ 已完成"); break;
+    case ConnectionStageState::kFailed: text = QString::fromUtf8("连接失败"); break;
+    }
+  }
+  if (stages_[index].state->text() != text) stages_[index].state->setText(text);
   // setStyleSheet repolishes the whole stage subtree even for an identical
   // string. Periodic transport snapshots must not invalidate its layout.
-  const auto frame_style = stage_style(state), label_style = state_style(state);
+  const auto frame_style = stage_style(state) + (compact ? " QLabel { background: transparent; }" : "");
+  auto label_style = state_style(state);
+  if (compact) label_style.replace("padding: 6px 8px;", "padding: 2px 0px;");
   if (stages_[index].frame->styleSheet() != frame_style) stages_[index].frame->setStyleSheet(frame_style);
   if (stages_[index].state->styleSheet() != label_style) stages_[index].state->setStyleSheet(label_style);
 }
