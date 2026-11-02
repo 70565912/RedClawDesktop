@@ -163,7 +163,8 @@
 #include "ui/desktop_task_workspace.h"
 #include "ui/debug_control_protocol.h"
 #include "ui/playback_control_hint_overlay.h"
-#include "ui/playback_window_lifecycle.h"
+#include "ui/unified_session_workspace.h"
+#include "ui/connection_overlay.h"
 #include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/remote_input_capture.h"
@@ -1712,6 +1713,8 @@ bool launch_gui_shell(
 
   RuntimeProcessController controller(maintenance_gui_arguments, maintenance_previous_context);
 
+  ConnectionFlowModel connection_flow_model;
+  QPointer<UnifiedSessionWorkspace> session_workspace;
   QMainWindow window;
   window.setWindowTitle("RedClaw Desktop");
   window.resize(kDefaultWindowWidth, kDefaultWindowHeight);
@@ -1787,6 +1790,8 @@ bool launch_gui_shell(
         ? static_cast<std::uint64_t>(controller.process().processId())
         : 0;
     persist_debug_status(false);
+    if (session_workspace) session_workspace->update_runtime(
+        QString::fromStdString(debug_status.transport_path), {});
   });
   debug_status_timer->start();
 
@@ -2282,11 +2287,12 @@ bool launch_gui_shell(
   });
   QTimer::singleShot(0, tabs, sync_connection_view_height);
 
-  ConnectionFlowModel connection_flow_model;
+  session_workspace = new UnifiedSessionWorkspace(&window, shell, session_log_box, ui_settings);
   auto refresh_connection_flow_page = [&]() {
     const ConnectionFlowSnapshot& snapshot = connection_flow_model.snapshot();
     connecting_page->set_snapshot(snapshot);
     waiting_page->set_snapshot(snapshot);
+    session_workspace->update_connection(snapshot);
     if (snapshot.view == ConnectionFlowView::kConnecting) {
       tabs->setCurrentWidget(connecting_page);
     } else if (snapshot.view == ConnectionFlowView::kWaiting) {
@@ -2347,31 +2353,15 @@ bool launch_gui_shell(
   playback_status->setWordWrap(true);
   playback_status->hide();
 
-  // A QWidget parent plus Qt::Window is a Windows owned window: it stays above
-  // its owner and is hidden when that owner is minimized. The playback window
-  // has to be an independent top-level window so the two can switch z-order.
-  auto* playback_window = new QWidget(nullptr, Qt::Window);
-  struct PlaybackWindowOwner final : QObject {
-    QWidget* playback = nullptr;
-    PlaybackWindowOwner(QWidget* owner, QWidget* playback_window)
-        : QObject(owner), playback(playback_window) {}
-    ~PlaybackWindowOwner() override { delete playback; }
-  };
-  new PlaybackWindowOwner(&window, playback_window);
-  playback_window->setObjectName("playbackWindow");
-  playback_window->setWindowTitle("RedClaw");
-  playback_window->setMinimumSize(360, 240);
-  new PlaybackWindowLifecycle(playback_window, &window);
-  auto* playback_window_layout = new QVBoxLayout(playback_window);
-  playback_window_layout->setContentsMargins(0, 0, 0, 0);
-  playback_window_layout->setSpacing(0);
+  auto* playback_window = session_workspace->desktop_page();
+  auto* playback_window_layout = static_cast<QVBoxLayout*>(playback_window->layout());
   const auto renderer_result = create_best_playback_renderer(playback_window);
   auto* playback_canvas_widget = renderer_result.widget;
   auto* playback_window_canvas = renderer_result.canvas;
   playback_canvas_widget->setObjectName("playbackWindowCanvas");
   playback_window_layout->addWidget(playback_canvas_widget, 1);
   auto* task_workspace = new DesktopTaskWorkspace(playback_window, ui_settings);
-  auto* fullscreen_controller = new PlaybackWindowFullscreenController(playback_window, task_workspace->button_bar());
+  auto* fullscreen_controller = new PlaybackWindowFullscreenController(&window, task_workspace->button_bar(), playback_window);
   QObject::connect(task_workspace->fullscreen_button(), &QToolButton::clicked, fullscreen_controller,
       [fullscreen_controller] { fullscreen_controller->toggle_fullscreen(); });
   fullscreen_controller->set_changed_callback([button = QPointer<QToolButton>(task_workspace->fullscreen_button())](bool enabled) {
@@ -2381,6 +2371,8 @@ bool launch_gui_shell(
     button->setText(enabled ? QString::fromUtf8("退出全屏") : QString::fromUtf8("全屏"));
     button->setToolTip(enabled ? QString::fromUtf8("退出全屏（Ctrl+Alt+Enter）") : QString::fromUtf8("全屏（Ctrl+Alt+Enter）"));
   });
+  session_workspace->connection_overlay()->bind_button(task_workspace->connection_button());
+  session_workspace->bind_disconnect_button(task_workspace->disconnect_button());
   auto* playback_window_status = task_workspace->connection_status();
   playback_window_status->setText("The live desktop opens here after the connection is ready.");
   auto* remote_control_button = task_workspace->control_button();
@@ -2483,6 +2475,10 @@ bool launch_gui_shell(
   };
   auto* remote_input_capture = new ControllerRemoteInputCapture(
       playback_canvas_widget, playback_window);
+  remote_input_capture->set_close_pauses_capture(false);
+  session_workspace->connection_overlay()->set_local_interaction_callback([weak = QPointer<ControllerRemoteInputCapture>(remote_input_capture)] {
+    if (weak) weak->set_local_suspension(LocalInputSuspensionReason::kLocalUiFocus, true);
+  });
   remote_input_capture->set_fullscreen_toggle_callback([weak = QPointer<PlaybackWindowFullscreenController>(fullscreen_controller)] {
     if (weak) weak->toggle_fullscreen();
   });
@@ -2666,7 +2662,7 @@ bool launch_gui_shell(
     }
   });
   auto* playback_geometry_controller = new PlaybackWindowGeometryController(
-      playback_window, playback_canvas_widget);
+      &window, playback_canvas_widget);
   playback_geometry_controller->set_active_changed_callback(
       [playback_window_canvas, remote_input_capture](bool active) {
         playback_window_canvas->set_geometry_transaction_active(active);
@@ -2809,6 +2805,14 @@ bool launch_gui_shell(
     link_enable_port_mapping->setEnabled(!running);
   };
 
+  session_workspace->set_before_home([fullscreen_controller, &connection_flow_model,
+      refresh_connection_flow_page, set_link_workflow_running] {
+    fullscreen_controller->set_fullscreen(false);
+    connection_flow_model.reset();
+    set_link_workflow_running(false);
+    refresh_connection_flow_page();
+  });
+
   auto* runtime_detail_tabs = new QTabWidget(runtime_page);
   runtime_detail_tabs->setDocumentMode(true);
 
@@ -2816,12 +2820,6 @@ bool launch_gui_shell(
   timeline_list->setMinimumHeight(140);
   runtime_detail_tabs->addTab(timeline_list, "Timeline");
 
-  auto* runtime_log = new RuntimeLogView(runtime_page);
-  runtime_log->set_buffer(session_log->buffer());
-  runtime_log->setObjectName("runtimeSessionLogMirror");
-  runtime_log->setPlaceholderText("Runtime output mirror");
-  runtime_log->setMinimumHeight(140);
-  runtime_detail_tabs->addTab(runtime_log, "Runtime Log");
 
   auto* remote_log_page = new QWidget(runtime_page);
   auto* remote_log_layout = new QVBoxLayout(remote_log_page);
@@ -3761,6 +3759,7 @@ bool launch_gui_shell(
   auto set_playback_status_text = [&](const QString& text) {
     playback_status->setText(text);
     playback_window_status->setText(text);
+    session_workspace->update_runtime(QString::fromStdString(debug_status.transport_path), text);
   };
 
   auto set_playback_placeholder = [&](const QString& text) {
@@ -3768,37 +3767,10 @@ bool launch_gui_shell(
     playback_canvas->setText(text);
   };
 
-  auto position_playback_window = [&]() {
-    QScreen* target_screen = window.screen();
-    if (target_screen == nullptr) {
-      target_screen = app.primaryScreen();
-    }
-
-    const QRect available = target_screen != nullptr
-        ? target_screen->availableGeometry()
-        : window.geometry();
-    const int desired_width = available.width() * 3 / 4;
-    const int target_width = (std::min)(
-        available.width(),
-        (std::max)(680, desired_width));
-    const int target_height = (std::min)(
-        available.height(),
-        (std::max)(480, available.height() * 2 / 3));
-    playback_window->resize(target_width, target_height);
-    playback_window->move(
-        available.x() + (available.width() - target_width) / 2,
-        available.y() + (available.height() - target_height) / 2);
-  };
-
   auto present_playback_window = [&]() {
-    if (role_combo->currentText() != "controller" || playback_window_presented) {
-      return;
-    }
+    if (role_combo->currentText() != "controller" || playback_window_presented) return;
     playback_window_presented = true;
-    position_playback_window();
-    playback_window->show();
-    playback_window->raise();
-    playback_window->activateWindow();
+    session_workspace->present_desktop();
     playback_geometry_controller->publish_initial_viewport();
   };
 
@@ -3840,9 +3812,7 @@ bool launch_gui_shell(
     agent_panel->set_transport_state(false, false, false,
         "Agent channel disconnected. Conversation is preserved while reconnecting.");
     playback_window_presented = keep_agent_workspace_visible;
-    if (hide_window && !keep_agent_workspace_visible) {
-      playback_window->hide();
-    }
+    (void)hide_window; // The unified workspace owns page visibility.
   };
   auto make_navigation_frame_channel_name = []() {
     return QString("redclaw-navigation-frame-%1-%2-%3")
@@ -5047,6 +5017,7 @@ bool launch_gui_shell(
             && role_combo->currentText() == "host"
             && !manual_runtime_stop_requested
             && !debug_reconnect;
+        session_workspace->runtime_stopped();
         const bool manual_stop = manual_runtime_stop_requested;
         manual_runtime_stop_requested = false;
         const bool expected_stop = manual_stop || debug_reconnect;
@@ -5637,7 +5608,7 @@ bool launch_gui_shell(
   });
   const auto stop_runtime = [&]() {
     update_restart_guard.stop();
-    manual_runtime_stop_requested = true;
+    manual_runtime_stop_requested = controller.is_running();
     connection_flow_model.begin_stopping();
     refresh_connection_flow_page();
 #if defined(_WIN32)
@@ -5660,7 +5631,10 @@ bool launch_gui_shell(
     append_log(session_log, "Stop signal sent to runtime process.");
     persist_debug_status(true);
   };
+  session_workspace->set_request_stop(stop_runtime);
+  session_workspace->set_runtime_running([&controller] { return controller.is_running(); });
   QObject::connect(stop_button, &QPushButton::clicked, [&]() {
+    if (role_combo->currentText() == "controller") { session_workspace->request_disconnect(); return; }
     if (host_exit_confirmation.confirm_exit()) {
       stop_runtime();
     }
@@ -5695,9 +5669,10 @@ bool launch_gui_shell(
       set_link_workflow_running(false);
     }
   };
+  session_workspace->connection_overlay()->set_reconnect_callback(retry_active_flow);
   connecting_page->set_on_retry(retry_active_flow);
   waiting_page->set_on_retry(retry_active_flow);
-  connecting_page->set_on_exit(exit_active_flow);
+  connecting_page->set_on_exit([&] { session_workspace->request_disconnect(); });
   waiting_page->set_on_exit(exit_active_flow);
 
   auto prepare_evidence_export = [&](std::shared_ptr<QJsonObject> exported) -> GuiDiagnosticWriter::Work {
@@ -5894,7 +5869,7 @@ bool launch_gui_shell(
               else log_replay->stop();
               result.insert("log_replay", log_replay->snapshot());
               result.insert("log_visible", session_log->isVisible());
-              result.insert("mirror_visible", runtime_log->isVisible());
+              result.insert("mirror_visible", false);
 #else
               fail("debug_required", "Log replay is available only in a local Debug fixture.");
 #endif
@@ -5909,11 +5884,11 @@ bool launch_gui_shell(
             }
             case DebugControlAction::kStatus: {
               result.insert("runtime_log", QJsonObject{
-                  {"visible", session_log->isVisible()}, {"mirror_visible", runtime_log->isVisible()},
+                  {"visible", session_log->isVisible()}, {"mirror_visible", false},
                   {"cached_lines", static_cast<qint64>(session_log->buffer()->line_count())},
                   {"cached_bytes", static_cast<qint64>(session_log->buffer()->bytes())},
                   {"refreshes", static_cast<qint64>(session_log->refresh_count())},
-                  {"mirror_refreshes", static_cast<qint64>(runtime_log->refresh_count())},
+                  {"mirror_refreshes", qint64(0)},
                   {"replay", log_replay->snapshot()}});
               const auto& flow = connection_flow_model.snapshot();
               result.insert("connection_flow", QJsonObject{
@@ -6057,12 +6032,12 @@ bool launch_gui_shell(
                     "remote_control_unavailable",
                     remote_control_status->text());
               } else {
-                playback_window->show();
-                playback_window->raise();
-                playback_window->activateWindow();
+                session_workspace->present_desktop();
+                window.raise();
+                window.activateWindow();
 #if defined(_WIN32)
                 (void)SetForegroundWindow(
-                    reinterpret_cast<HWND>(playback_window->winId()));
+                    reinterpret_cast<HWND>(window.winId()));
 #endif
                 remote_control_button->click();
                 result.insert("request_pending", remote_input_request_pending);
@@ -6508,7 +6483,7 @@ bool launch_gui_shell(
     }
   };
 
-  window.setCentralWidget(shell);
+  // UnifiedSessionWorkspace owns the central page stack.
 
   auto animate_panel_entrance = [&](QWidget* widget, int delay_ms) {
     auto* effect = new QGraphicsOpacityEffect(widget);
@@ -6599,11 +6574,37 @@ bool launch_gui_shell(
           "No waiting device was found for that code. Confirm the other device is waiting, then retry.");
       save_snapshot("connecting-failed-900x680.png");
 
+      connection_flow_model.start(ConnectionFlowRole::kController);
+      connection_flow_model.observe_transport(true, true);
+      apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
+      set_playback_status_text(QString::fromUtf8("UI 布局样例（未连接远端）"));
+      save_snapshot("workspace-expanded.png");
+      session_workspace->connection_overlay()->panel()->grab().save(snapshot_dir.filePath("connection-expanded.png"), "PNG");
+      session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kCollapsed);
+      save_snapshot("workspace-collapsed.png");
+      session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kHidden);
+      save_snapshot("workspace-hidden.png");
+      session_workspace->connection_overlay()->set_state(ConnectionOverlayState::kExpanded);
+      // A failed/finished runtime may already be absent when Disconnect is clicked.
+      // Verify that the real form router, not just the outer page, returns home.
+      session_workspace->set_confirm_disconnect([] { return true; });
+      connection_entry_page->set_actions_enabled(false);
+      session_workspace->request_disconnect();
+      if (session_workspace->desktop_visible() || tabs->currentWidget() != session_scroll
+          || connection_flow_model.snapshot().status != ConnectionFlowStatus::kIdle
+          || !connection_entry_page->peer_code_input()->isEnabled() || !link_network_exit->isEnabled()) {
+        QCoreApplication::exit(2); return;
+      }
+      save_snapshot("returned-home.png");
       connection_flow_model.start(ConnectionFlowRole::kHost);
       waiting_page->set_connection_code("AB12CD34");
       window.resize(800, 600);
       refresh_connection_flow_page();
       save_snapshot("waiting-800x600.png");
+      connection_flow_model.start(ConnectionFlowRole::kController);
+      refresh_connection_flow_page();
+      // Exercise the real application Quit path with an active Controller view.
+      // No runtime or peer is started by this isolated layout fixture.
       QCoreApplication::quit();
     });
   }

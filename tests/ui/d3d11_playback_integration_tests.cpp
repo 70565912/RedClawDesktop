@@ -4,6 +4,9 @@
 #include "ui/playback/playback_backends.h"
 #include "ui/playback/direct_frame_receiver.h"
 #include "ui/desktop_task_workspace.h"
+#include "ui/unified_session_workspace.h"
+#include "ui/connection_overlay.h"
+#include <QMainWindow>
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_control_hint_overlay.h"
@@ -25,6 +28,51 @@
 #include <chrono>
 #include <thread>
 #include <QUuid>
+
+TEST(D3D11Playback, UnifiedWindowOverlayDoesNotResizeRendererAndReconnectRetainsCanvas) {
+    using namespace redclaw::ui;
+    QMainWindow window;
+    auto* home = new QWidget; auto* home_layout = new QVBoxLayout(home);
+    auto* log = new QLabel("isolated UI fixture log", home); home_layout->addWidget(log);
+    UnifiedSessionWorkspace session(&window, home, log, nullptr);
+    const auto renderer = try_create_d3d11_playback_renderer(session.desktop_page());
+    ASSERT_NE(renderer.widget, nullptr);
+    session.desktop_page()->layout()->addWidget(renderer.widget);
+    DesktopTaskWorkspace tools(session.desktop_page(), nullptr);
+    session.connection_overlay()->bind_button(tools.connection_button());
+    PlaybackWindowGeometryController geometry(&window, renderer.widget);
+    geometry.set_active_changed_callback([&](bool active) { renderer.canvas->set_geometry_transaction_active(active); });
+    geometry.set_viewport_committed_callback([&](QSize, std::uint64_t id) { renderer.canvas->commit_geometry(id); });
+    geometry.start(); window.resize(1000, 700); window.show();
+    ConnectionFlowSnapshot flow; flow.role = ConnectionFlowRole::kController;
+    flow.view = ConnectionFlowView::kConnecting; flow.status = ConnectionFlowStatus::kComplete;
+    session.update_connection(flow); QCoreApplication::processEvents();
+    geometry.publish_initial_viewport(); QCoreApplication::processEvents();
+    const auto size = renderer.widget->size();
+    QImage image(1280, 720, QImage::Format_RGB32); image.fill(QColor(40, 80, 120)); QString error;
+    ASSERT_NE(renderer.canvas->present_image(image, &error), PresentOutcome::kFailed) << error.toStdString();
+    const auto resizes = renderer.canvas->swap_chain_resize_count();
+    const auto viewports = geometry.viewport_commit_total();
+    for (auto state : {ConnectionOverlayState::kCollapsed, ConnectionOverlayState::kHidden, ConnectionOverlayState::kExpanded}) {
+        session.connection_overlay()->set_state(state); QCoreApplication::processEvents();
+        EXPECT_EQ(renderer.widget->size(), size);
+        EXPECT_NE(renderer.canvas->present_image(image, &error), PresentOutcome::kFailed) << error.toStdString();
+        EXPECT_EQ(renderer.canvas->swap_chain_resize_count(), resizes);
+        EXPECT_EQ(geometry.viewport_commit_total(), viewports);
+    }
+    PlaybackWindowFullscreenController fullscreen(&window, tools.button_bar(), session.desktop_page());
+    session.set_before_home([&] { fullscreen.set_fullscreen(false); });
+    fullscreen.set_fullscreen(true); QCoreApplication::processEvents();
+    EXPECT_NE(renderer.canvas->present_image(image, &error), PresentOutcome::kFailed);
+    session.set_confirm_disconnect([] { return false; }); EXPECT_FALSE(window.close()); EXPECT_TRUE(window.isFullScreen());
+    session.set_confirm_disconnect([] { return true; }); session.set_request_stop([] {});
+    session.request_disconnect(); session.runtime_stopped(); QCoreApplication::processEvents();
+    EXPECT_FALSE(session.desktop_visible()); EXPECT_FALSE(window.isFullScreen());
+    session.update_connection(flow); QCoreApplication::processEvents();
+    EXPECT_EQ(renderer.widget->parentWidget(), session.desktop_page());
+    EXPECT_NE(renderer.canvas->present_image(image, &error), PresentOutcome::kFailed);
+    session.set_before_home({});
+}
 
 TEST(D3D11Playback, OnlySuccessfulNewSubmissionCountsAsPresented) {
     using namespace redclaw::ui;

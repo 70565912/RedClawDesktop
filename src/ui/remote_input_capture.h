@@ -56,6 +56,7 @@ public:
     void set_blocked_click_callback(BlockedClickCallback callback);
     void set_clipboard_paste_callback(std::function<void(std::uint32_t)> callback);
     void set_fullscreen_toggle_callback(std::function<void()> callback);
+    void set_close_pauses_capture(bool enabled) { close_pauses_capture_ = enabled; }
     void set_native_clipboard(bool enabled) { native_clipboard_ = enabled; }
     [[nodiscard]] bool clipboard_paste_context_valid() const;
     void set_qa_observers(QaSendObserver send, QaAckObserver ack);
@@ -168,6 +169,7 @@ private:
     std::uint64_t pending_capture_region_revision_ = 0;
     std::uint64_t applied_capture_region_revision_ = 0;
     std::uint64_t presented_capture_region_revision_ = 0;
+    bool close_pauses_capture_ = true;
     bool active_ = false;
     bool pausing_ = false;
     bool canvas_keyboard_target_ = false;

@@ -31,6 +31,8 @@ public:
     [[nodiscard]] QPushButton* audio_button() const;
     [[nodiscard]] QPushButton* retry_button() const;
     [[nodiscard]] QToolButton* fullscreen_button() const;
+    [[nodiscard]] QToolButton* connection_button() const;
+    [[nodiscard]] QPushButton* disconnect_button() const;
     [[nodiscard]] QLabel* control_status() const;
     [[nodiscard]] QLabel* connection_status() const;
     void set_enabled(bool enabled);

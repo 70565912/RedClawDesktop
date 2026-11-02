@@ -550,7 +550,7 @@ bool ControllerRemoteInputCapture::eventFilter(QObject* watched, QEvent* event) 
         }
     }
     if (watched == window_ && watched != canvas_) {
-        if (active_ && event->type() == QEvent::Close) {
+        if (active_ && close_pauses_capture_ && event->type() == QEvent::Close) {
             pause(true, "Playback window was closed.");
         } else if (event->type() == QEvent::WindowDeactivate) {
             set_local_suspension(LocalInputSuspensionReason::kWindowInactive, true);

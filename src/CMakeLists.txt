@@ -111,6 +111,8 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/agent_panel_presentation.cpp
     ui/desktop_navigation_panel.cpp
     ui/desktop_task_workspace.cpp
+    ui/connection_overlay.cpp
+    ui/unified_session_workspace.cpp
     ui/file_transfer_panel.cpp
     ui/transfer_coordinator.cpp
     ui/workspace_control_server.cpp

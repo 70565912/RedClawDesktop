@@ -104,7 +104,7 @@ public:
     }
 
     QSize physical_canvas_size() const {
-        if (playback_canvas_.isNull() || playback_canvas_->isHidden()) {
+        if (playback_canvas_.isNull() || !playback_canvas_->isVisible()) {
             return {};
         }
         return QSize(

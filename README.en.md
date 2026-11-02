@@ -69,9 +69,13 @@ The [local workspace control API](docs/architecture/workspace-control-v1.md) let
 
 The portable archive does not install a Windows service. Windows SmartScreen may warn because this Developer Preview is not code-signed.
 
-## Remote desktop fullscreen
+## Unified remote desktop window
 
-Use Fullscreen / Exit fullscreen on the draggable desktop toolbar, or press `Ctrl+Alt+Enter` within the playback window. The toolbar stays visible. Exit restores the previous normal geometry or maximized state. Reconnecting the same window retains fullscreen; closing it or restarting opens in windowed mode. Esc and F11 remain available to the remote application, and terminal/Agent editors keep their own shortcuts.
+The connection entry, progress and desktop share one main window. The draggable toolbar stays visible. A Connection overlay opens at the lower right with session status, reconnect/disconnect actions and the existing runtime log. Collapse it to a summary or hide it; the toolbar Connection button and lower-left status entry restore it. Disconnect/retry/failure transitions expand it without stealing focus or reopening on repeated status updates. The overlay never resizes the desktop canvas. Codes, passwords and network settings stay on the connection page; existing Agent/terminal/file tools remain floating tools.
+
+During a Controller session, Close and Disconnect ask for confirmation. Cancel preserves the session; confirmation waits for runtime shutdown and returns to the connection page. Closing the idle connection page exits the app.
+
+Use Fullscreen / Exit fullscreen or `Ctrl+Alt+Enter` on the desktop. Exit restores normal geometry or the prior maximized state. Reconnect retains fullscreen; confirmed disconnect and application restart return to windowed mode. Esc/F11 stay available to the remote app; terminal/Agent editors keep their shortcuts.
 
 ## ICE UDP port and router setup
 

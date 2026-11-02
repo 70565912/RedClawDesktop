@@ -2,6 +2,34 @@
 
 Updated: 2026-11-02
 
+## Unified Controller window and connection overlay
+
+The approved third layout is implemented and qualified as an independent Debug
+candidate. Source delivery is committed for normal main publication under explicit
+operator authorization; the operator handles the Controller build/update and any
+subsequent Host update. The serving Controller and Host are not replaced here.
+Connection entry/progress and the fixed renderer share one main window. The
+always-visible draggable toolbar and lower-left status entry restore the Connection
+overlay. It starts expanded, supports collapse/hide and remembers geometry; incident
+transitions reopen it once without activation, while recovery respects the user's
+choice. Closing an active Controller asks to disconnect, waits for actual runtime
+completion and returns home; explicit application/maintenance Quit still exits.
+
+Standard serial Debug builds and 188 UI/native-D3D11 cases pass with zero failures
+or skips. A pre-visible default-size error and an owner-destruction crash discovered
+in the isolated full GUI are repaired and regression-covered. The final 321-file
+candidate passes complete manifest, built-EXE identity, command startup and isolated
+GUI startup/exit (code 0) with an active Controller view and restricted dependency
+paths. The actual form router and editable connection fields recover after an
+already-stopped session; unavailable transport-path evidence remains unknown. Fixture images show layout
+states only, not a real remote desktop. Panel changes introduce zero additional
+viewport/swap-chain resizes in the native fixture; hidden logs do no UI refresh.
+No FPS or end-to-end performance improvement is claimed. Physical multi-monitor,
+manual visual assessment and a fresh two-machine media run are not performed.
+No installed-runtime replacement, Host operation, user file transfer,
+network/security-setting change or continuity/stress test. Evidence:
+`unified-session-20261102`; qualified candidate `Debug-Unified-20261102-v2`.
+
 ## Remote desktop fullscreen
 
 The Controller toolbar now offers fullscreen/exit fullscreen and local

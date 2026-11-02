@@ -42,6 +42,10 @@
 #include "ui/host_exit_confirmation.h"
 #include "ui/playback_control_hint_overlay.h"
 #include "ui/playback_window_lifecycle.h"
+#include "ui/unified_session_workspace.h"
+#include "ui/connection_overlay.h"
+#include <QMainWindow>
+#include <QVBoxLayout>
 #include "ui/remote_input_capture.h"
 #include "ui/stun_server_policy.h"
 #include "runtime/input_control_boundary.h"
@@ -73,6 +77,40 @@ public:
 }  // namespace redclaw::ui
 
 namespace {
+
+TEST(ControllerRemoteInputCapture, UnifiedCloseCancellationKeepsGrantAndConnectionPanelEventsStayLocal) {
+  using namespace redclaw::ui;
+  using Peer = ControllerRemoteInputCaptureTestPeer;
+  using Type = redclaw::protocol::StreamControlMessageTypeV1;
+  QMainWindow window; window.setAttribute(Qt::WA_QuitOnClose, false);
+  auto* home = new QWidget; auto* home_layout = new QVBoxLayout(home);
+  auto* log = new QPlainTextEdit(home); home_layout->addWidget(log);
+  UnifiedSessionWorkspace session(&window, home, log, nullptr);
+  auto* canvas = new QWidget(session.desktop_page()); session.desktop_page()->layout()->addWidget(canvas);
+  ControllerRemoteInputCapture capture(canvas); capture.set_close_pauses_capture(false);
+  std::vector<redclaw::protocol::StreamControlMessageV1> sent;
+  capture.set_send_message_callback([&](const auto& message, QString*) { sent.push_back(message); return true; });
+  session.connection_overlay()->set_local_interaction_callback([&] { capture.set_local_suspension(LocalInputSuspensionReason::kLocalUiFocus, true); });
+  ConnectionFlowSnapshot flow; flow.role = ConnectionFlowRole::kController; flow.view = ConnectionFlowView::kConnecting;
+  flow.status = ConnectionFlowStatus::kComplete; session.update_connection(flow);
+  window.resize(1000, 700); window.show(); QApplication::processEvents();
+  Peer::start(capture); Peer::key(capture, true, 0x1d, 0x11, false);
+  session.set_confirm_disconnect([] { return false; });
+  EXPECT_FALSE(window.close()); EXPECT_TRUE(capture.active());
+  const QPointF local(8, 8); const QPointF global(log->viewport()->mapToGlobal(QPoint(8, 8)));
+  QMouseEvent click(QEvent::MouseButtonPress, local, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+  QApplication::sendEvent(log->viewport(), &click);
+  QKeyEvent key(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier); QApplication::sendEvent(log, &key);
+  Peer::flush(capture);
+  EXPECT_TRUE(capture.active()); EXPECT_EQ(capture.queued_critical_event_count(), 0U);
+  ASSERT_FALSE(sent.empty());
+  for (const auto& message : sent) {
+    EXPECT_EQ(message.type, Type::kInputStateSync);
+    EXPECT_TRUE(message.pressed_scan_codes.empty()); EXPECT_EQ(message.pressed_mouse_buttons, 0U);
+  }
+  EXPECT_TRUE(capture.local_suspension_reason().contains("local_ui_focus"));
+  capture.shutdown();
+}
 
 TEST(ControllerRemoteInputCapture, FullscreenReleasesModifiersAndQueuesLocalActionWithoutEndingControl) {
   using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;

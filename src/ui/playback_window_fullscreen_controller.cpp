@@ -12,8 +12,8 @@
 
 namespace redclaw::ui {
 
-PlaybackWindowFullscreenController::PlaybackWindowFullscreenController(QWidget* window, QWidget* shortcut_bar)
-    : QObject(window), window_(window), shortcut_bar_(shortcut_bar) {
+PlaybackWindowFullscreenController::PlaybackWindowFullscreenController(QWidget* window, QWidget* shortcut_bar, QWidget* surface)
+    : QObject(window), window_(window), shortcut_bar_(shortcut_bar), surface_(surface) {
     qApp->installEventFilter(this);
 }
 
@@ -44,7 +44,7 @@ QRect PlaybackWindowFullscreenController::restored_geometry() const {
 }
 
 void PlaybackWindowFullscreenController::set_fullscreen(bool enabled) {
-    if (!window_ || enabled == fullscreen()) return;
+    if (!window_ || enabled == fullscreen() || (enabled && surface_ && !surface_->isVisible())) return;
     if (enabled) {
         if (!window_->isVisible() || window_->isMinimized()) return;
         was_maximized_ = window_->isMaximized();
@@ -65,13 +65,13 @@ void PlaybackWindowFullscreenController::toggle_fullscreen() {
 bool PlaybackWindowFullscreenController::eventFilter(QObject* watched, QEvent* event) {
     if (!window_ || !event) return false;
     if (watched == window_) {
-        if (event->type() == QEvent::Close && fullscreen()) set_fullscreen(false);
+        if (event->type() == QEvent::Close && !surface_ && fullscreen()) set_fullscreen(false);
         if (event->type() == QEvent::WindowStateChange && changed_) changed_(fullscreen());
     }
     if (event->type() != QEvent::ShortcutOverride && event->type() != QEvent::KeyPress
         && event->type() != QEvent::KeyRelease) return false;
     auto* widget = qobject_cast<QWidget*>(watched);
-    if (!widget || !window_->isVisible() || window_->isMinimized()) return false;
+    if (!widget || (surface_ && !surface_->isVisible()) || !window_->isVisible() || window_->isMinimized()) return false;
     auto* top = widget->window();
     // The terminal/Agent are owned native tools, but keep their shortcuts local
     // to those editors rather than treating every owner descendant as a canvas.

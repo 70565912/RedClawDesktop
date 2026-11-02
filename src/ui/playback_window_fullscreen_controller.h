@@ -11,7 +11,7 @@ namespace redclaw::ui {
 
 class PlaybackWindowFullscreenController final : public QObject {
 public:
-    PlaybackWindowFullscreenController(QWidget* playback_window, QWidget* shortcut_bar);
+    PlaybackWindowFullscreenController(QWidget* playback_window, QWidget* shortcut_bar, QWidget* surface = nullptr);
     ~PlaybackWindowFullscreenController() override;
 
     void set_fullscreen(bool enabled);
@@ -26,6 +26,7 @@ private:
     [[nodiscard]] QRect restored_geometry() const;
     QPointer<QWidget> window_;
     QPointer<QWidget> shortcut_bar_;
+    QPointer<QWidget> surface_;
     QRect normal_geometry_;
     bool was_maximized_ = false;
     int suppressed_enter_ = 0;
