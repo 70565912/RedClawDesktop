@@ -13,7 +13,8 @@
 #include <string>
 #include <vector>
 
-class QComboBox;
+class QButtonGroup;
+class QHBoxLayout;
 class QLabel;
 class QResizeEvent;
 
@@ -63,9 +64,14 @@ class DesktopNavigationPanel final : public QWidget {
   void select_display(int index, bool submit);
   void commit_current_selection();
   void update_display_text();
+  void update_display_buttons();
+  void restore_confirmed_display();
   [[nodiscard]] const redclaw::protocol::DesktopDisplayV1* current_display() const;
 
-  QComboBox* display_combo_ = nullptr;
+  QButtonGroup* display_buttons_ = nullptr;
+  QHBoxLayout* display_layout_ = nullptr;
+  QWidget* display_picker_ = nullptr;
+  int selected_display_index_ = -1;
   QLabel* resolution_label_ = nullptr;
   QLabel* status_label_ = nullptr;
   NavigationSelectionWidget* selection_widget_ = nullptr;
@@ -75,6 +81,7 @@ class DesktopNavigationPanel final : public QWidget {
   std::uint64_t next_region_revision_ = 2;
   std::uint64_t pending_region_revision_ = 0;
   QString confirmed_display_id_;
+  bool confirmed_by_host_ = false;
   bool transport_available_ = false;
   bool workspace_blocked_ = false;
   RegionRequestCallback request_callback_;

@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDir>
+#include <QFile>
 #include <QEventLoop>
 #include <QLabel>
 #include <QMainWindow>
@@ -18,6 +20,12 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace {
 using namespace redclaw::ui;
@@ -101,6 +109,36 @@ TEST_F(UnifiedSessionFixture, FoldHideAndBothPersistentEntriesRestoreThePanel) {
     overlay()->status_entry()->findChild<QToolButton*>("connectionStatusEntry")->click();
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded); EXPECT_TRUE(log->isVisible());
     EXPECT_TRUE(tools->connection_button()->isChecked());
+}
+
+TEST_F(UnifiedSessionFixture, CollapseShrinksNativeWindowAndRestoresExpandedGeometryAfterLayout) {
+    auto* panel = overlay()->panel();
+    panel->setStyleSheet("QWidget { font: 10pt 'Segoe UI'; } QToolButton { padding: 6px 2px; }");
+    settle();
+    const auto expanded = panel->size();
+    const auto canvas_size = canvas->size();
+    auto* fold = panel->findChild<QToolButton*>("connectionOverlayFold");
+    ASSERT_NE(fold, nullptr);
+    const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
+    QFile style(qEnvironmentVariable("REDCLAW_UI_STYLE_FILE"));
+    if (style.open(QIODevice::ReadOnly)) { panel->setStyleSheet(QString::fromUtf8(style.readAll())); settle(); }
+    if (!output.isEmpty()) { QDir().mkpath(output); panel->grab().save(output + "/connection-expanded.png"); }
+    fold->click(); settle();
+    EXPECT_LE(panel->height(), 42);
+    EXPECT_LT(panel->width(), expanded.width());
+    EXPECT_EQ(canvas->size(), canvas_size);
+    EXPECT_FALSE(log->isVisible());
+#ifdef _WIN32
+    RECT client{};
+    ASSERT_TRUE(GetClientRect(reinterpret_cast<HWND>(panel->winId()), &client));
+    EXPECT_LE(client.bottom - client.top, qRound(42 * panel->devicePixelRatioF()) + 2);
+#endif
+    if (!output.isEmpty()) panel->grab().save(output + "/connection-collapsed.png");
+    window.resize(1200, 760); settle();
+    EXPECT_LE(panel->height(), 42);
+    fold->click(); settle();
+    EXPECT_EQ(panel->size(), expanded); EXPECT_TRUE(log->isVisible());
+    EXPECT_NE(canvas_size, canvas->size()); // Only the owner's explicit resize changes the canvas.
 }
 
 TEST_F(UnifiedSessionFixture, IncidentsAutoExpandOnceWithoutStealingFocusAndRecoveryPreservesChoice) {

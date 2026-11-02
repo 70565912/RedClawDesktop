@@ -30,7 +30,7 @@ struct ConnectionOverlay::Impl {
     QLayout* home_layout;
     QPointer<QSettings> settings;
     std::unique_ptr<BoundedFloatingWindow> panel, badge;
-    QWidget* body;
+    QWidget *header, *body;
     QVBoxLayout* body_layout;
     QLabel *summary, *details;
     QToolButton *fold, *entry;
@@ -52,7 +52,7 @@ struct ConnectionOverlay::Impl {
         panel->setWindowTitle(QString::fromUtf8("连接"));
         auto* layout = new QVBoxLayout(panel.get()); layout->setContentsMargins(6, 6, 6, 6);
         layout->setSizeConstraint(QLayout::SetNoConstraint);
-        auto* header = new QWidget(panel.get()); header->setFixedHeight(30);
+        header = new QWidget(panel.get()); header->setFixedHeight(30);
         auto* row = new QHBoxLayout(header); row->setContentsMargins(4, 0, 0, 0);
         auto* title = new QLabel(QString::fromUtf8("连接"), header);
         summary = new QLabel(header); summary->setTextFormat(Qt::PlainText);
@@ -133,10 +133,20 @@ struct ConnectionOverlay::Impl {
         }
         QRect target = preferred.translated(area.topLeft());
         const bool collapsed = state == ConnectionOverlayState::kCollapsed;
-        if (collapsed) target.setHeight(42);
+        body->setVisible(!collapsed);
+        fold->setText(collapsed ? QString::fromUtf8("展开") : QString::fromUtf8("收起"));
+        // Constrain the native tool window as well as Qt's requested geometry.
+        // Hide the expanded contents before negotiating its compact size.
+        if (collapsed) {
+            const int height = std::min(42, area.height());
+            panel->setFixedHeight(height);
+            target.setSize(QSize(std::min(target.width(), header->sizeHint().width() + 12), height));
+        } else {
+            panel->setMinimumHeight(0);
+            panel->setMaximumHeight(QWIDGETSIZE_MAX);
+        }
         panel->set_resizable(!collapsed); panel->set_bounds(area);
         if (!panel->dragging()) panel->setGeometry(bounded_floating_rect(target, area));
-        body->setVisible(!collapsed); fold->setText(collapsed ? QString::fromUtf8("展开") : QString::fromUtf8("收起"));
         panel->setVisible(available && state != ConnectionOverlayState::kHidden);
         badge->set_bounds(area);
         const QSize badge_size = badge->sizeHint().boundedTo(area.size());

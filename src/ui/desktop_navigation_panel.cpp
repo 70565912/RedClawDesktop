@@ -1,7 +1,7 @@
 #include "ui/desktop_navigation_panel.h"
 #include "redclaw/protocol/capture_region_control.h"
 
-#include <QComboBox>
+#include <QButtonGroup>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QToolButton>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -20,6 +22,23 @@ namespace {
 
 constexpr qreal kHandleRadius = 10.0;
 constexpr qreal kVerticalHandleMargin = 12.0;
+
+QString ready_navigation_text(std::size_t count) {
+  return count == 1 ? QString::fromUtf8("1 个显示器 · 拖动预览调整范围")
+      : QString::fromUtf8("%1 个显示器 · 点击上方切换").arg(count);
+}
+
+QIcon display_icon(const redclaw::protocol::DesktopDisplayV1& display) {
+  QPixmap image(32, 24); image.fill(Qt::transparent);
+  QPainter painter(&image); painter.setRenderHint(QPainter::Antialiasing);
+  const bool portrait = display.pixel_height > display.pixel_width;
+  const QRect screen = portrait ? QRect(10, 1, 12, 18) : QRect(2, 3, 28, 16);
+  painter.setPen(QPen(QColor(125, 211, 252), 2)); painter.setBrush(QColor(19, 43, 66));
+  painter.drawRoundedRect(screen, 3, 3);
+  painter.setPen(QPen(QColor(125, 211, 252), 2));
+  painter.drawLine(16, screen.bottom() + 1, 16, 22); painter.drawLine(11, 23, 21, 23);
+  return QIcon(image);
+}
 
 struct DisplayMemory {
   QRectF region{0.0, 0.0, 1.0, 1.0};
@@ -114,7 +133,7 @@ class NavigationSelectionWidget final : public QWidget {
     const auto memory = memories_.value(display_id_);
     if (memory.thumbnail.isNull()) {
       painter.setPen(QColor(148, 163, 184));
-      painter.drawText(rect(), Qt::AlignCenter, "Waiting for desktop thumbnail...");
+      painter.drawText(rect(), Qt::AlignCenter, QString::fromUtf8("正在等待桌面预览…"));
       return;
     }
     const QRectF content = content_rect(memory.thumbnail.size());
@@ -272,18 +291,37 @@ DesktopNavigationPanel::DesktopNavigationPanel(QWidget* parent)
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(8, 8, 8, 8);
   layout->setSpacing(6);
-  display_combo_ = new QComboBox(this);
-  resolution_label_ = new QLabel("No display catalog", this);
+  display_buttons_ = new QButtonGroup(this);
+  display_buttons_->setExclusive(true);
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  scroll->setFixedHeight(48);
+  display_picker_ = new QWidget(scroll);
+  display_picker_->setObjectName("desktopDisplayPicker");
+  display_layout_ = new QHBoxLayout(display_picker_);
+  display_layout_->setContentsMargins(0, 0, 0, 0); display_layout_->setSpacing(6);
+  display_layout_->setAlignment(Qt::AlignTop);
+  scroll->setWidget(display_picker_);
+  resolution_label_ = new QLabel(QString::fromUtf8("等待对端显示器信息"), this);
   resolution_label_->setStyleSheet("color: #94a3b8;");
-  status_label_ = new QLabel("Waiting for connection", this);
+  status_label_ = new QLabel(QString::fromUtf8("等待连接"), this);
+  status_label_->setObjectName("desktopNavigationStatus");
   status_label_->setStyleSheet("color: #94a3b8;");
   selection_widget_ = new NavigationSelectionWidget(this);
-  layout->addWidget(display_combo_);
+  layout->addWidget(scroll);
   layout->addWidget(resolution_label_);
   layout->addWidget(selection_widget_, 1);
   layout->addWidget(status_label_);
-  connect(display_combo_, qOverload<int>(&QComboBox::currentIndexChanged),
-          this, [this](int index) { select_display(index, true); });
+  selection_widget_->setToolTip(QString::fromUtf8("拖动预览中的边框可调整显示范围"));
+  connect(display_buttons_, &QButtonGroup::idClicked,
+          this, [this](int index) {
+            const bool already_applied = confirmed_by_host_ && selected_display_id() == confirmed_display_id_;
+            if (index == selected_display_index_ && (pending_region_revision_ != 0 || already_applied)) return;
+            select_display(index, true);
+          });
+  update_display_buttons();
 }
 
 void DesktopNavigationPanel::set_region_request_callback(
@@ -301,25 +339,48 @@ void DesktopNavigationPanel::set_display_catalog(
   catalog_revision_ = catalog_revision;
   command_version_ = (std::min)(command_version, redclaw::protocol::kCaptureRegionCommandVersion);
   displays_ = displays;
-  display_combo_->blockSignals(true);
-  display_combo_->clear();
+  for (auto* button : display_buttons_->buttons()) {
+    display_buttons_->removeButton(button); delete button;
+  }
   int selected = 0;
   for (std::size_t index = 0; index < displays_.size(); ++index) {
     const auto& display = displays_[index];
     const QString id = QString::fromStdString(display.display_id);
-    display_combo_->addItem(QString::fromStdString(display.display_name), id);
+    auto* button = new QToolButton(display_picker_);
+    button->setObjectName(QString("desktopDisplay%1").arg(index));
+    button->setCheckable(true); button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setIcon(display_icon(display)); button->setIconSize(QSize(24, 18));
+    button->setFixedHeight(32);
+    const QString name = QString::fromUtf8("显示器 %1%2").arg(index + 1).arg(display.primary ? QString::fromUtf8(" · 主屏") : QString{});
+    const QString resolution = QString::fromUtf8("%1 × %2").arg(display.pixel_width).arg(display.pixel_height);
+    button->setText(name);
+    button->setAccessibleName(name + ' ' + resolution);
+    button->setToolTip(name + QString::fromUtf8("\n%1 · %2").arg(resolution,
+        display.pixel_height > display.pixel_width ? QString::fromUtf8("纵向") : QString::fromUtf8("横向")));
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    button->setStyleSheet(R"(
+      QToolButton { background: #0b1728; color: #cbd5e1; border: 1px solid #334155; border-radius: 8px; padding: 6px; }
+      QToolButton:hover { background: #142c43; border-color: #7dd3fc; }
+      QToolButton:checked { background: #14354c; border: 2px solid #38bdf8; padding: 5px; color: #f0f9ff; }
+      QToolButton:focus { border-color: #f8fafc; }
+      QToolButton:disabled { color: #64748b; border-color: #243244; background: #0f172a; }
+    )");
+    display_buttons_->addButton(button, static_cast<int>(index));
+    display_layout_->addWidget(button);
     if (id == prior || (prior.isEmpty() && display.primary)) {
       selected = static_cast<int>(index);
     }
   }
-  display_combo_->setCurrentIndex(selected);
-  display_combo_->blockSignals(false);
   select_display(selected, false);
   if (confirmed_display_id_.isEmpty()
-      || display_combo_->findData(confirmed_display_id_) < 0) {
+      || std::none_of(displays_.begin(), displays_.end(), [this](const auto& display) {
+           return QString::fromStdString(display.display_id) == confirmed_display_id_;
+         })) {
     confirmed_display_id_ = selected_display_id();
+    confirmed_by_host_ = false;
   }
-  status_label_->setText(transport_available_ ? "Ready" : "Waiting for navigation channel");
+  update_display_buttons();
+  status_label_->setText(transport_available_ ? ready_navigation_text(displays_.size()) : QString::fromUtf8("等待导航通道"));
 }
 
 void DesktopNavigationPanel::set_thumbnail(
@@ -352,8 +413,9 @@ void DesktopNavigationPanel::apply_region_applied(
       static_cast<qreal>(message.region_bottom - message.region_top) / 65535.0);
   selection_widget_->set_confirmed_region(confirmed);
   confirmed_display_id_ = QString::fromStdString(message.display_id);
+  confirmed_by_host_ = true;
   pending_region_revision_ = 0;
-  status_label_->setText("Applied");
+  status_label_->setText(QString::fromUtf8("显示范围已更新"));
 }
 
 void DesktopNavigationPanel::apply_region_rejected(
@@ -362,15 +424,8 @@ void DesktopNavigationPanel::apply_region_rejected(
       || redclaw::protocol::capture_region_request_token(message) != pending_region_revision_) return;
   selection_widget_->rollback();
   pending_region_revision_ = 0;
-  const int confirmed_index = display_combo_->findData(confirmed_display_id_);
-  if (confirmed_index >= 0 && confirmed_index != display_combo_->currentIndex()) {
-    display_combo_->blockSignals(true);
-    display_combo_->setCurrentIndex(confirmed_index);
-    display_combo_->blockSignals(false);
-    select_display(confirmed_index, false);
-  }
-  status_label_->setText(
-      QString("Rejected: %1").arg(QString::fromStdString(message.payload)));
+  restore_confirmed_display();
+  status_label_->setText(QString::fromUtf8("切换未完成，已恢复原显示器"));
 }
 
 void DesktopNavigationPanel::set_transport_available(bool available) {
@@ -380,21 +435,22 @@ void DesktopNavigationPanel::set_transport_available(bool available) {
     command_version_ = 0;
     pending_region_revision_ = 0;
     next_region_revision_ = 2;
+    confirmed_by_host_ = false;
     selection_widget_->reset_session();
   }
   transport_available_ = available;
-  display_combo_->setEnabled(available && !workspace_blocked_ && !displays_.empty());
-  status_label_->setText(available ? "Ready" : "Waiting for navigation channel");
+  update_display_buttons();
+  status_label_->setText(available ? ready_navigation_text(displays_.size()) : QString::fromUtf8("等待导航通道"));
 }
 
 void DesktopNavigationPanel::set_workspace_blocked(bool blocked) {
   workspace_blocked_ = blocked;
-  display_combo_->setEnabled(transport_available_ && !blocked && !displays_.empty());
-  selection_widget_->setEnabled(!blocked);
+  update_display_buttons();
 }
 
 QString DesktopNavigationPanel::selected_display_id() const {
-  return display_combo_->currentData().toString();
+  const auto* display = current_display();
+  return display ? QString::fromStdString(display->display_id) : QString{};
 }
 
 QString DesktopNavigationPanel::confirmed_display_id() const {
@@ -417,6 +473,9 @@ QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
   snapshot.insert("capture_region_command_version", int(command_version_));
   snapshot.insert("transport_available", transport_available_);
   snapshot.insert("confirmed_display_id", confirmed_display_id_);
+  snapshot.insert("host_confirmation_known", confirmed_by_host_);
+  snapshot.insert("display_count", int(displays_.size()));
+  snapshot.insert("workspace_blocked", workspace_blocked_);
   snapshot.insert("next_region_revision", qint64(next_region_revision_));
   snapshot.insert("pending_region_revision", qint64(pending_region_revision_));
   snapshot.insert("status", status_label_->text());
@@ -425,6 +484,8 @@ QJsonObject DesktopNavigationPanel::diagnostic_snapshot() const {
 
 void DesktopNavigationPanel::select_display(int index, bool submit) {
   if (index < 0 || index >= static_cast<int>(displays_.size())) return;
+  selected_display_index_ = index;
+  display_buttons_->button(index)->setChecked(true);
   const auto& display = displays_[static_cast<std::size_t>(index)];
   selection_widget_->set_display(
       QString::fromStdString(display.display_id),
@@ -444,7 +505,7 @@ void DesktopNavigationPanel::commit_current_selection() {
   };
   const std::uint64_t revision = next_region_revision_++;
   pending_region_revision_ = revision;
-  status_label_->setText("Switching...");
+  status_label_->setText(QString::fromUtf8("正在切换…"));
   if (request_callback_(
       selected_display_id().toStdString(),
       to_bound(region.left()),
@@ -456,30 +517,37 @@ void DesktopNavigationPanel::commit_current_selection() {
   }
   selection_widget_->rollback();
   pending_region_revision_ = 0;
-  const int confirmed_index = display_combo_->findData(confirmed_display_id_);
-  if (confirmed_index >= 0 && confirmed_index != display_combo_->currentIndex()) {
-    display_combo_->blockSignals(true);
-    display_combo_->setCurrentIndex(confirmed_index);
-    display_combo_->blockSignals(false);
-    select_display(confirmed_index, false);
+  restore_confirmed_display();
+  status_label_->setText(QString::fromUtf8("切换请求未发送，已恢复原显示器"));
+}
+
+void DesktopNavigationPanel::restore_confirmed_display() {
+  for (std::size_t index = 0; index < displays_.size(); ++index) {
+    if (QString::fromStdString(displays_[index].display_id) == confirmed_display_id_) {
+      select_display(static_cast<int>(index), false); return;
+    }
   }
-  status_label_->setText("Region request could not be sent");
+}
+
+void DesktopNavigationPanel::update_display_buttons() {
+  const bool enabled = transport_available_ && !workspace_blocked_ && !displays_.empty();
+  display_picker_->setEnabled(enabled);
+  selection_widget_->setEnabled(enabled);
 }
 
 void DesktopNavigationPanel::update_display_text() {
   const auto* display = current_display();
   if (display == nullptr) {
-    resolution_label_->setText("No display catalog");
+    resolution_label_->setText(QString::fromUtf8("等待对端显示器信息"));
     return;
   }
-  resolution_label_->setText(QString("%1 x %2  |  rotation %3°")
-      .arg(display->pixel_width)
-      .arg(display->pixel_height)
-      .arg(display->rotation));
+  resolution_label_->setText(QString::fromUtf8("显示器 %1 · %2 × %3 · %4")
+      .arg(selected_display_index_ + 1).arg(display->pixel_width).arg(display->pixel_height)
+      .arg(display->pixel_height > display->pixel_width ? QString::fromUtf8("纵向") : QString::fromUtf8("横向")));
 }
 
 const redclaw::protocol::DesktopDisplayV1* DesktopNavigationPanel::current_display() const {
-  const int index = display_combo_->currentIndex();
+  const int index = selected_display_index_;
   if (index < 0 || index >= static_cast<int>(displays_.size())) return nullptr;
   return &displays_[static_cast<std::size_t>(index)];
 }

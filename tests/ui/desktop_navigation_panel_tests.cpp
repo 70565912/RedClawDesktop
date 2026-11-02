@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
-#include <QComboBox>
+#include <QButtonGroup>
+#include <QLabel>
+#include <QDir>
+#include <QFile>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFrame>
@@ -15,6 +18,7 @@
 #include <vector>
 
 #include "ui/desktop_navigation_panel.h"
+#include "ui/desktop_task_workspace.h"
 #include "redclaw/protocol/capture_region_control.h"
 
 namespace {
@@ -75,9 +79,9 @@ TEST(DesktopNavigationPanelTests, SwitchFailureReturnsToConfirmedDisplay) {
         requested_revision = revision;
         return true;
       });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(requested_display, "display-b");
   EXPECT_EQ(panel.selected_display_id(), QString("display-b"));
 
@@ -91,6 +95,129 @@ TEST(DesktopNavigationPanelTests, SwitchFailureReturnsToConfirmedDisplay) {
   EXPECT_EQ(panel.pending_region_revision(), 0U);
 }
 
+TEST(DesktopNavigationPanelTests, DisplayCardsUseHumanLabelsAndPreserveIdentityWithoutDriverNames) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.resize(520, 440);
+  auto catalog = displays();
+  catalog[0].display_name = "NVIDIA GeForce driver adapter";
+  catalog[1].display_name = "Microsoft Remote Display Adapter";
+  panel.set_display_catalog(catalog, 1);
+  panel.set_transport_available(true);
+  QFile style(qEnvironmentVariable("REDCLAW_UI_STYLE_FILE"));
+  if (style.open(QIODevice::ReadOnly)) panel.setStyleSheet(QString::fromUtf8(style.readAll()));
+  panel.show(); QApplication::processEvents();
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr); ASSERT_EQ(picker->buttons().size(), 2);
+  EXPECT_EQ(picker->checkedId(), 0);
+  EXPECT_TRUE(picker->button(0)->text().contains(QString::fromUtf8("显示器 1 · 主屏")));
+  EXPECT_TRUE(picker->button(1)->text().contains(QString::fromUtf8("显示器 2")));
+  EXPECT_TRUE(picker->button(1)->accessibleName().contains(QString::fromUtf8("1080 × 1920")));
+  EXPECT_TRUE(picker->button(1)->toolTip().contains(QString::fromUtf8("纵向")));
+  for (auto* button : picker->buttons()) {
+    EXPECT_FALSE(button->text().contains("Adapter")); EXPECT_FALSE(button->toolTip().contains("NVIDIA"));
+    EXPECT_FALSE(button->accessibleName().isEmpty());
+  }
+  int requests = 0;
+  panel.set_region_request_callback([&](const std::string& id, auto, auto, auto, auto, auto) {
+    EXPECT_EQ(id, "display-b"); ++requests; return true;
+  });
+  const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
+  if (!output.isEmpty()) { QDir().mkpath(output); panel.grab().save(output + "/display-picker.png"); }
+  picker->button(1)->click(); picker->button(1)->click();
+  EXPECT_EQ(requests, 1); EXPECT_EQ(panel.selected_display_id(), QString("display-b"));
+  std::reverse(catalog.begin(), catalog.end());
+  panel.set_display_catalog(catalog, 2);
+  EXPECT_EQ(panel.selected_display_id(), QString("display-b")); EXPECT_EQ(picker->checkedId(), 0);
+}
+
+TEST(DesktopNavigationPanelTests, DisplayCardsRespectConnectionAndTransferGatesWithoutIssuingRequests) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.set_display_catalog(displays(), 1);
+  auto* picker = panel.findChild<QButtonGroup*>(); ASSERT_NE(picker, nullptr);
+  int requests = 0;
+  panel.set_region_request_callback([&](const std::string&, auto, auto, auto, auto, auto) { ++requests; return true; });
+  EXPECT_FALSE(picker->button(1)->isEnabled()); picker->button(1)->click();
+  EXPECT_EQ(requests, 0);
+  panel.set_transport_available(true); panel.set_workspace_blocked(true);
+  EXPECT_FALSE(picker->button(1)->isEnabled()); picker->button(1)->click();
+  EXPECT_EQ(requests, 0);
+  panel.set_workspace_blocked(false); EXPECT_TRUE(picker->button(1)->isEnabled());
+  picker->button(1)->click(); EXPECT_EQ(requests, 1);
+  panel.set_transport_available(false); EXPECT_FALSE(picker->button(0)->isEnabled());
+}
+
+void send_button_mouse_click(QAbstractButton* button) {
+  const QPointF position = button->rect().center();
+  const QPointF global = button->mapToGlobal(position.toPoint());
+  QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+  QApplication::sendEvent(button, &press);
+  QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+  QApplication::sendEvent(button, &release);
+  QApplication::processEvents();
+}
+
+TEST(DesktopNavigationPanelTests, FirstClickOnDefaultScreenMustRequestHostBeforeItCanBeTreatedAsApplied) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  panel.resize(360, 274); panel.set_display_catalog(displays(), 1, 1);
+  panel.set_transport_available(true); panel.show(); QApplication::processEvents();
+  auto* picker = panel.findChild<QButtonGroup*>(); ASSERT_NE(picker, nullptr);
+  int requests = 0;
+  std::uint64_t token = 0;
+  panel.set_region_request_callback([&](const std::string& id, auto, auto, auto, auto, auto request) {
+    EXPECT_EQ(id, "display-a"); ++requests; token = request; return true;
+  });
+  send_button_mouse_click(picker->button(0));
+  ASSERT_EQ(requests, 1);
+  EXPECT_EQ(panel.pending_region_revision(), token);
+  send_button_mouse_click(picker->button(0)); EXPECT_EQ(requests, 1);
+  auto reply = region_message(redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionApplied, "display-a", 900);
+  reply.capture_region_command_version = 1; reply.capture_region_request_id = token;
+  panel.apply_region_applied(reply);
+  send_button_mouse_click(picker->button(0)); EXPECT_EQ(requests, 1);
+  panel.set_transport_available(false); panel.set_display_catalog(displays(), 1, 1); panel.set_transport_available(true);
+  send_button_mouse_click(picker->button(0)); EXPECT_EQ(requests, 2);
+}
+
+TEST(DesktopNavigationPanelTests, DefaultFloatingNavigationLeavesPreviewVisibleAndMouseClicksReachAnotherScreen) {
+  QWidget owner; owner.resize(1000, 700); owner.show();
+  redclaw::ui::DesktopTaskWorkspace workspace(&owner, nullptr);
+  auto* panel = new redclaw::ui::DesktopNavigationPanel;
+  panel->set_display_catalog(displays(), 1, 1); panel->set_transport_available(true);
+  workspace.add_task(redclaw::ui::DesktopTask::kNavigation, QString::fromUtf8("桌面导航"), panel, QSize(360, 320));
+  workspace.set_task_visible(redclaw::ui::DesktopTask::kNavigation, true);
+  QFile style(qEnvironmentVariable("REDCLAW_UI_STYLE_FILE"));
+  if (!style.fileName().isEmpty() && style.open(QIODevice::ReadOnly)) workspace.task_window(redclaw::ui::DesktopTask::kNavigation)->setStyleSheet(QString::fromUtf8(style.readAll()));
+  QApplication::processEvents();
+  auto* selection = panel->findChild<QWidget*>("desktopNavigationSelection"); ASSERT_NE(selection, nullptr);
+  EXPECT_GE(selection->visibleRegion().boundingRect().height(), 120);
+  auto* picker = panel->findChild<QButtonGroup*>(); ASSERT_NE(picker, nullptr);
+  EXPECT_LE(picker->button(0)->height(), 42);
+  int requests = 0;
+  panel->set_region_request_callback([&](const std::string& id, auto, auto, auto, auto, auto) {
+    EXPECT_EQ(id, "display-b"); ++requests; return true;
+  });
+  send_button_mouse_click(picker->button(1)); EXPECT_EQ(requests, 1);
+  EXPECT_EQ(panel->selected_display_id(), QString("display-b"));
+  auto reply = region_message(redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionApplied, "display-b", 900);
+  reply.capture_region_command_version = 1; reply.capture_region_request_id = panel->pending_region_revision();
+  panel->apply_region_applied(reply);
+  EXPECT_EQ(panel->pending_region_revision(), 0U);
+  EXPECT_EQ(panel->confirmed_display_id(), QString("display-b"));
+  const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
+  if (!output.isEmpty()) workspace.task_window(redclaw::ui::DesktopTask::kNavigation)->grab().save(output + "/navigation-360x320.png");
+}
+
+TEST(DesktopNavigationPanelTests, SingleDisplayHintDoesNotPromiseAnotherScreen) {
+  redclaw::ui::DesktopNavigationPanel panel;
+  auto catalog = displays(); catalog.resize(1);
+  panel.set_display_catalog(catalog, 1, 1); panel.set_transport_available(true);
+  auto* status = panel.findChild<QLabel*>("desktopNavigationStatus"); ASSERT_NE(status, nullptr);
+  EXPECT_TRUE(status->text().contains(QString::fromUtf8("1 个显示器")));
+  EXPECT_FALSE(status->text().contains(QString::fromUtf8("切换")));
+  EXPECT_EQ(panel.diagnostic_snapshot().value("display_count").toInt(), 1);
+  EXPECT_FALSE(panel.diagnostic_snapshot().value("host_confirmation_known").toBool());
+}
+
 TEST(DesktopNavigationPanelTests, NegotiatedCommandsDoNotChaseHostGeometryOrAcceptOldReplies) {
   using namespace redclaw::protocol;
   redclaw::ui::DesktopNavigationPanel panel;
@@ -101,9 +228,9 @@ TEST(DesktopNavigationPanelTests, NegotiatedCommandsDoNotChaseHostGeometryOrAcce
   panel.set_region_request_callback([&](const std::string&, auto, auto, auto, auto, auto id) {
     requests.push_back(id); return true;
   });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   ASSERT_EQ(requests, (std::vector<std::uint64_t>{2}));
   auto reply = region_message(StreamControlMessageTypeV1::kCaptureRegionApplied, "display-b", 901);
   reply.capture_region_command_version = 1;
@@ -114,7 +241,7 @@ TEST(DesktopNavigationPanelTests, NegotiatedCommandsDoNotChaseHostGeometryOrAcce
   panel.apply_region_applied(reply);
   EXPECT_EQ(panel.pending_region_revision(), 0U);
   EXPECT_EQ(panel.confirmed_display_id(), QString("display-b"));
-  combo->setCurrentIndex(0);
+  picker->button(0)->click();
   panel.apply_region_applied(reply);
   EXPECT_EQ(panel.pending_region_revision(), 3U);
   EXPECT_EQ(requests, (std::vector<std::uint64_t>{2, 3}));
@@ -139,16 +266,16 @@ TEST(DesktopNavigationPanelTests, ReconnectRenegotiatesAfterHostUpgradeOrDowngra
   panel.set_region_request_callback([&](const std::string&, auto, auto, auto, auto, auto id) {
     request_id = id; return true;
   });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(panel.capture_region_command_version(), 0U);
   EXPECT_EQ(request_id, 8U);
   panel.set_transport_available(false);
   panel.set_display_catalog(displays(), 1, 1);
   panel.set_transport_available(true);
   panel.observe_capture_region_revision(900);
-  combo->setCurrentIndex(0);
+  picker->button(0)->click();
   EXPECT_EQ(panel.capture_region_command_version(), 1U);
   EXPECT_EQ(request_id, 2U);
 }
@@ -168,9 +295,9 @@ TEST(DesktopNavigationPanelTests, HostRevisionOnAnotherDisplayAdvancesNextReques
         requested_revision = revision;
         return true;
       });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(requested_revision, 12U);
 }
 
@@ -232,12 +359,12 @@ TEST(DesktopNavigationPanelTests, SelectionCommitsOnlyOnMouseReleaseAndIsRemembe
   EXPECT_LT(last_right, 65535U);
   const std::uint16_t remembered_right = last_right;
 
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(last_display, "display-b");
   EXPECT_EQ(last_right, 65535U);
-  combo->setCurrentIndex(0);
+  picker->button(0)->click();
   EXPECT_EQ(last_display, "display-a");
   EXPECT_EQ(last_right, remembered_right);
 }
@@ -257,9 +384,9 @@ TEST(DesktopNavigationPanelTests, ObservedHostRevisionSurvivesCatalogRefreshAndP
         requested_revision = revision;
         return true;
       });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(requested_revision, 12U);
   panel.observe_capture_region_revision(11);
   panel.observe_capture_region_revision(12);
@@ -271,7 +398,7 @@ TEST(DesktopNavigationPanelTests, ObservedHostRevisionSurvivesCatalogRefreshAndP
       "display-b", 12));
   EXPECT_EQ(panel.pending_region_revision(), 0U);
   EXPECT_EQ(panel.confirmed_display_id(), QString("display-b"));
-  combo->setCurrentIndex(0);
+  picker->button(0)->click();
   EXPECT_EQ(requested_revision, 13U);
 }
 
@@ -291,9 +418,9 @@ TEST(DesktopNavigationPanelTests, NewHostSessionResetsObservedRegionRevision) {
         requested_revision = revision;
         return true;
       });
-  auto* combo = panel.findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel.findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(requested_revision, 2U);
 }
 
@@ -305,9 +432,9 @@ TEST(DesktopNavigationPanelTests, IndependentNavigationFailedSendRollsBack) {
   panel->set_region_request_callback(
       [](const std::string&, std::uint16_t, std::uint16_t,
          std::uint16_t, std::uint16_t, std::uint64_t) { return false; });
-  auto* combo = panel->findChild<QComboBox*>();
-  ASSERT_NE(combo, nullptr);
-  combo->setCurrentIndex(1);
+  auto* picker = panel->findChild<QButtonGroup*>();
+  ASSERT_NE(picker, nullptr);
+  picker->button(1)->click();
   EXPECT_EQ(panel->selected_display_id(), QString("display-a"));
   EXPECT_EQ(panel->pending_region_revision(), 0U);
 }
@@ -319,9 +446,9 @@ TEST(DesktopNavigationPanelTests, ReconnectAcceptsNewHostRevisionsForEveryDispla
   panel.set_transport_available(true);
   panel.show();
   QApplication::processEvents();
-  auto* combo = panel.findChild<QComboBox*>();
+  auto* picker = panel.findChild<QButtonGroup*>();
   auto* selection = panel.findChild<QWidget*>("desktopNavigationSelection");
-  ASSERT_NE(combo, nullptr);
+  ASSERT_NE(picker, nullptr);
   ASSERT_NE(selection, nullptr);
   QImage thumbnail(320, 180, QImage::Format_RGB32);
   const auto color_at_center = [&] {
@@ -331,7 +458,7 @@ TEST(DesktopNavigationPanelTests, ReconnectAcceptsNewHostRevisionsForEveryDispla
   thumbnail.fill(Qt::red);
   panel.set_thumbnail("display-a", thumbnail, 900);
   panel.set_thumbnail("display-b", thumbnail, 901);
-  combo->setCurrentIndex(1);
+  picker->button(1)->click();
   const QColor old_color = color_at_center();
   thumbnail.fill(Qt::green);
   panel.set_thumbnail("display-b", thumbnail, 1);
@@ -343,10 +470,11 @@ TEST(DesktopNavigationPanelTests, ReconnectAcceptsNewHostRevisionsForEveryDispla
   new_catalog[1].display_name = "New Host DISPLAY2";
   panel.set_display_catalog(new_catalog, 1);
   panel.set_transport_available(true);
-  EXPECT_EQ(combo->currentText(), QString("New Host DISPLAY2"));
+  EXPECT_EQ(picker->checkedId(), 1);
+  EXPECT_FALSE(picker->button(1)->text().contains("New Host DISPLAY2"));
   EXPECT_EQ(panel.selected_display_id(), QString("display-b"));
   for (int index = 0; index < 2; ++index) {
-    combo->setCurrentIndex(index);
+    picker->button(index)->click();
     const auto id = panel.selected_display_id().toStdString();
     thumbnail.fill(Qt::green);
     panel.set_thumbnail(id, thumbnail, 1);

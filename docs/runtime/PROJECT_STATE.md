@@ -2,12 +2,96 @@
 
 Updated: 2026-11-02
 
+## Approved navigation source publication and peer Host rollout
+
+The operator approves the current two-display review and authorizes normal source
+publication plus peer Host source synchronization, Debug build and restart. The
+approved source remains byte-identical to the 232-case/four-scale-case qualified
+patch and installed local Controller. Commit this checkpoint for normal main push;
+retain the running Controller. Peer rollout must retain complete rollback and
+independent recovery, with fresh Host publication, reconnect and advancing real
+media as acceptance. The existing remote Agent channel is available; peer execution
+and final acceptance are pending. Evidence: `navigation-publish-host-20261102`.
+
+## Navigation preview space and first-click confirmation
+
+The operator clarifies that a second screen was assumed; the live Host catalog
+contains one display. Show the count explicitly. Replace the oversized navigation
+cards with one compact horizontal row, 24x18 icons and 32-high buttons; keep the
+resolution outside the buttons and retain the preview in the default 360x320 tool.
+The two added reproductions fail before repair: buttons are 121 high, only 80 of
+the preview is visible, and the first click on the default selection sends nothing.
+After repair, the default floating-window preview has at least 120 visible pixels
+and mouse press/release events reach both default and other display requests.
+
+Default selection is no longer treated as Host confirmation. Only a matching
+applied reply establishes that state; pending repeats and confirmed same-screen
+repeats remain suppressed, and reconnect clears the confirmation. Preserve display
+identity, region memory, negotiated request versions and transfer/connection gates.
+No wire or capture change.
+
+Standard serial Debug builds pass, along with 232 cases in four related suites
+and four targeted cases at extra 1.5 scaling, without failures/skips. The complete
+345-file candidate and retained rollback pass full manifests and executable/launch
+identity checks. The authorized Controller replacement reconnects; a 10-second
+sample adds 28 receive/decode/presentation frames with zero GUI failures. A real
+local accessibility-button invocation issues exactly one request, receives Host
+confirmation, clears pending state and continues presentation (+23), with a live
+320x180 thumbnail. This is a single-display result; no live two-display switch is
+claimed. Host programs/settings are unchanged; no continuity/stress test. Evidence:
+`navigation-switch-20261102`. Source and runtime records remain uncommitted.
+
+## Compact connection strip and monitor cards
+
+The operator's screenshot exposes an expanded native tool window around a folded
+header. Hide the content before resizing and constrain the collapsed native height;
+use the header's natural width while retaining the expanded geometry. Windows
+client-rectangle checks and owner-resize/restore regressions pass. Product-themed
+isolated captures shrink from 600x425 to 208x53 pixels, with equivalent results at
+an additional 1.5 scale factor; this measures overlay footprint, not FPS or latency.
+
+Replace adapter-name navigation dropdowns with keyboard-focusable monitor cards:
+number, primary marker, resolution and portrait/landscape icon. Retain exact wire
+display IDs, selection memory, acknowledgement/rollback and existing transfer and
+connection gates. Same-card clicks do not repeat requests; catalog reorder retains
+the selected identity. No capture, protocol or authorization change.
+
+Standard serial Debug main/test builds pass. Four related automatic suites pass
+229 cases without failures/skips, plus three targeted cases at extra scaling.
+The complete 345-file candidate passes full manifest, build identity and command
+startup, bound to the local source patch on `e223401`. The authorized independent
+Controller replacement completes with full 345-file installed/rollback manifests,
+retained launch parameters and Normal priority, and no remaining one-shot task.
+Automatic reconnect reaches streaming/channel-open; a 10-second snapshot advances
+reception/GUI decode/presentation by 21/31/31 with zero synthetic frames or GUI
+failures. Evidence: `compact-navigation-20261102`. No Host operation or
+continuity/stress test. These changes and runtime notes remain uncommitted.
+
+## Local Controller synchronization and rollout
+
+At the operator's request, fast-forward clean main to `e223401` and rebuild the
+Debug application through the standard serial `build.ps1` entry. Four related
+UI/D3D11/clipboard/workspace suites pass all 226 cases with zero failures/skips.
+Publish a fresh complete 345-file candidate; build-byte identity, full manifest
+and command startup pass before the existing Controller is stopped.
+
+The independent update completes with a full 345-file rollback retained. Both
+installed/rollback manifests, exact launch arguments, executable identities and
+one-shot task removal are verified. Restore the recorded Normal GUI priority
+for the replacement process family after scheduled-task BelowNormal inheritance.
+The Controller automatically reconnects and reaches streaming/channel-open; a
+10-second snapshot adds 30 received, 17 GUI-decoded and 17 presented real frames,
+with zero synthetic frames or GUI decode/presentation failures. This is media
+counter evidence, not fresh visual or file-paste acceptance. No Host replacement,
+user input injection, file transfer or continuity/stress test. Evidence:
+`controller-sync-20261102`.
+
 ## Unified Controller window and connection overlay
 
 The approved third layout is implemented and qualified as an independent Debug
-candidate. Source delivery is committed for normal main publication under explicit
-operator authorization; the operator handles the Controller build/update and any
-subsequent Host update. The serving Controller and Host are not replaced here.
+candidate. Source is published as `e223401`; the subsequent authorized local
+Controller build/update is recorded above. The initial implementation checkpoint
+does not replace serving programs; any Host update remains separately scoped.
 Connection entry/progress and the fixed renderer share one main window. The
 always-visible draggable toolbar and lower-left status entry restore the Connection
 overlay. It starts expanded, supports collapse/hide and remembers geometry; incident
