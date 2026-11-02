@@ -8,21 +8,44 @@ The operator approves the current two-display review and authorizes normal sourc
 publication plus peer Host source synchronization, Debug build and restart. Commit
 `1d1ac8c` is normally pushed to main. Its implementation remains byte-identical to
 the 232-case/four-scale-case qualified patch and installed local Controller.
-Credential/documentation checks pass; source cloud documentation governance passes
-and unit CI is still running at the recorded checkpoint.
+Credential/documentation checks pass; source cloud documentation governance and
+unit CI both pass (unit run `41402667772`).
 
-The single peer Agent task returns a source-sync block: its execution environment
-cannot connect to GitHub, refuses Git synchronization metadata writes and prohibits
-requesting escalation. A read-only follow-up reconciles the same task without
-replaying effects. The peer reports that target build, regression, package and Host
-replacement have not run; the original Host remains connected with advancing real
-capture/encode/send and no new related failures. Local Controller observations also
-retain streaming/channel-open media and no changed Host instance/publication. This
-is a partial delivery, not a completed Host upgrade. Resume the existing task only
-after legitimate peer-local synchronization conditions are available; do not switch
-channels to bypass the explicit refusal. Complete rollback/independent recovery
-remain required before any future replacement. Evidence:
-`navigation-publish-host-20261102`.
+The original peer Agent task is blocked inside its own restricted environment.
+The operator subsequently authorizes the product's ordinary remote terminal. That
+terminal reaches GitHub and fast-forwards peer main to `7cc3fc4`, preserving the
+three existing runtime-document edits and retaining their patch/stash backups. No
+Agent approval policy, account permissions, security or network settings change.
+The earlier Agent refusal does not establish a Host-wide execution prohibition.
+
+The peer's actual Visual Studio build tree passes standard serial Debug builds and
+all four related suites (232 cases, zero failures/skips). A fresh complete 331-file
+candidate passes full manifest, build-byte identity and command startup checks.
+The first independent update reconnects and carries real media, but its final
+Host-publication check fails and automatically restores the original 321-file
+runtime. Restored manifest, exact runtime arguments, original priority and recovery
+task removal pass. A single bounded diagnostic retry identifies the cause: Windows
+PowerShell's default decoding cannot parse the GUI's valid UTF-8 JSON, while explicit
+UTF-8 parsing passes every unchanged publication condition. The same decoding fault
+also misreports the second rollback's publication, although original-file identity,
+restored arguments/priority and real media are verified. Both independent tasks are
+cleaned up. Fix `cda3cab` selects UTF-8 explicitly, retaining the 180-second production
+deadline and all identity/freshness/publication checks. The pre-fix Windows PowerShell
+fixture fails; all 13 post-fix checks pass under Windows PowerShell and PowerShell 7.
+The peer normally synchronizes to `cda3cab`, passes another standard incremental
+Debug main build and all 13 gate checks, and preserves the three local document edits.
+Native sources are unchanged from the 232-case regression checkpoint. Recreate and
+fully verify the 331-file candidate, including maintenance-helper byte identity.
+The standard independent update now completes its unchanged publication gate.
+Installed 331-file and rollback 321-file manifests, exact runtime arguments, original
+priority and one-shot task removal pass. The peer reports real capture/encode/send
+228/226/226 with zero synthetic frames or corresponding failures. Independently,
+the retained local Controller observes a newer fetched publication, streaming/open
+channels and receive/decode/present increases of 198/207/207 with zero GUI failures.
+Both source and maintenance-fix cloud unit/documentation checks pass.
+The local Controller binary and serving process family are unchanged. Evidence:
+`host-terminal-rollout-20261102` (supersedes the Agent-only checkpoint in
+`navigation-publish-host-20261102`). No continuity/stress or live two-display test.
 
 ## Navigation preview space and first-click confirmation
 
@@ -50,7 +73,7 @@ local accessibility-button invocation issues exactly one request, receives Host
 confirmation, clears pending state and continues presentation (+23), with a live
 320x180 thumbnail. This is a single-display result; no live two-display switch is
 claimed. Host programs/settings are unchanged; no continuity/stress test. Evidence:
-`navigation-switch-20261102`. Source and runtime records remain uncommitted.
+`navigation-switch-20261102`. Source and records are published in `1d1ac8c`; the later peer Host update is recorded above.
 
 ## Compact connection strip and monitor cards
 
@@ -76,7 +99,7 @@ retained launch parameters and Normal priority, and no remaining one-shot task.
 Automatic reconnect reaches streaming/channel-open; a 10-second snapshot advances
 reception/GUI decode/presentation by 21/31/31 with zero synthetic frames or GUI
 failures. Evidence: `compact-navigation-20261102`. No Host operation or
-continuity/stress test. These changes and runtime notes remain uncommitted.
+continuity/stress test. Source and records are published in `1d1ac8c`; the later peer Host update is recorded above.
 
 ## Local Controller synchronization and rollout
 
