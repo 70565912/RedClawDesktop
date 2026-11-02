@@ -5,13 +5,24 @@ Updated: 2026-11-02
 ## Approved navigation source publication and peer Host rollout
 
 The operator approves the current two-display review and authorizes normal source
-publication plus peer Host source synchronization, Debug build and restart. The
-approved source remains byte-identical to the 232-case/four-scale-case qualified
-patch and installed local Controller. Commit this checkpoint for normal main push;
-retain the running Controller. Peer rollout must retain complete rollback and
-independent recovery, with fresh Host publication, reconnect and advancing real
-media as acceptance. The existing remote Agent channel is available; peer execution
-and final acceptance are pending. Evidence: `navigation-publish-host-20261102`.
+publication plus peer Host source synchronization, Debug build and restart. Commit
+`1d1ac8c` is normally pushed to main. Its implementation remains byte-identical to
+the 232-case/four-scale-case qualified patch and installed local Controller.
+Credential/documentation checks pass; source cloud documentation governance passes
+and unit CI is still running at the recorded checkpoint.
+
+The single peer Agent task returns a source-sync block: its execution environment
+cannot connect to GitHub, refuses Git synchronization metadata writes and prohibits
+requesting escalation. A read-only follow-up reconciles the same task without
+replaying effects. The peer reports that target build, regression, package and Host
+replacement have not run; the original Host remains connected with advancing real
+capture/encode/send and no new related failures. Local Controller observations also
+retain streaming/channel-open media and no changed Host instance/publication. This
+is a partial delivery, not a completed Host upgrade. Resume the existing task only
+after legitimate peer-local synchronization conditions are available; do not switch
+channels to bypass the explicit refusal. Complete rollback/independent recovery
+remain required before any future replacement. Evidence:
+`navigation-publish-host-20261102`.
 
 ## Navigation preview space and first-click confirmation
 
