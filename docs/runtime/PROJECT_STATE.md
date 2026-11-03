@@ -13,9 +13,23 @@ Standard serial Debug main/test builds pass all 200 related UI/native-D3D11
 cases; the toolbar case also passes at 1.5 scaling. The complete 321-file
 independent candidate passes manifest/build identity, command startup and isolated
 GUI startup/exit, preserving the earlier approved dark UI.
-The operator authorizes normal source commit/push and a local switch from
-Controller to Host. Preserve prior unrelated document changes and all settings;
-Host standby/publication will be recorded after independent startup verification.
+Normally commit/push the approved dark workspace and alignment repair as
+`871de08`; actual remote main matches at publication. Preserve all 85 lines of
+earlier unrelated document additions outside the source commit.
+
+The authorized independent local Controller-to-Host replacement completes.
+Both installed/rollback 321-file manifests, exact new GUI arguments and unique
+Host runtime pass; Normal priority, existing password/control/Agent preferences
+and network launch parameters are retained. A fresh, matching Host status confirms
+positive DHT publication and `dht_waiting`, not connected. Remote input is configured
+from the existing authorization and real capture remains required. The old bundle
+is retained, no rollback occurs, and the one-shot task removes itself. Reuse the
+two unchanged recovery-path fixtures already passed in this session; 13 publication
+gate checks also pass. The old session had fully verified clipboard content still
+awaiting target-application confirmation; normal session closure ends that wait,
+without claiming successful native paste or submitting a source move. No new
+user-file transfer, peer action or continuity/stress test. Peer media/input and
+physical multi-monitor behavior are not accepted by Host standby evidence.
 Evidence: `toolbar-alignment-host-20261103`.
 
 ## Authorized local Controller replacement
