@@ -1,4 +1,5 @@
 #include "ui/connection_progress_page.h"
+#include "ui/desktop_workspace_theme.h"
 
 #include <array>
 #include <utility>
@@ -255,7 +256,7 @@ void ConnectionProgressPage::set_snapshot(const ConnectionFlowSnapshot& snapshot
   if (presentation_ == ConnectionProgressPresentation::kOverlay) {
     for (int index = 0; index < kConnectionStageCount - 1; ++index) {
       const bool complete = snapshot.stages[index] == ConnectionStageState::kComplete;
-      const auto style = QString("background-color: %1;").arg(complete ? "#10b981" : "#2a405e");
+      const auto style = QString("background-color: %1;").arg(complete ? "#4a9a80" : "#303e4f");
       if (arrows_[index]->styleSheet() != style) arrows_[index]->setStyleSheet(style);
       arrows_[index]->setProperty("complete", complete);
     }
@@ -343,9 +344,25 @@ void ConnectionProgressPage::apply_stage_state(int index, ConnectionStageState s
   if (stages_[index].state->text() != text) stages_[index].state->setText(text);
   // setStyleSheet repolishes the whole stage subtree even for an identical
   // string. Periodic transport snapshots must not invalidate its layout.
-  const auto frame_style = stage_style(state) + (compact ? " QLabel { background: transparent; }" : "");
+  auto frame_style = stage_style(state);
   auto label_style = state_style(state);
-  if (compact) label_style.replace("padding: 6px 8px;", "padding: 2px 0px;");
+  if (compact) {
+    const auto* color = desktop_theme::kMuted;
+    const char* background = "#202c39";
+    const char* border = "#52677e";
+    switch (state) {
+    case ConnectionStageState::kComplete: color = desktop_theme::kSuccess; background = "#20382f"; border = color; break;
+    case ConnectionStageState::kCurrent: color = desktop_theme::kProgress; background = "#203449"; border = color; break;
+    case ConnectionStageState::kFailed: color = desktop_theme::kDanger; background = "#3b2c37"; border = color; break;
+    case ConnectionStageState::kPending: break;
+    }
+    frame_style = QString("QFrame#connectionStage { background: %1; border: 1px solid %2; border-radius: 10px; }"
+        " QLabel { background: transparent; border: none; }"
+        " QLabel#connectionStageNumber { color: #9aaabd; font: 9pt 'Microsoft YaHei UI'; }"
+        " QLabel#connectionStageTitle { color: #e4ebf3; font: 600 10pt 'Microsoft YaHei UI'; }").arg(background, border);
+    label_style = QString("QLabel#connectionStageState { color: %1; background: transparent; border: none;"
+        " padding: 2px 0; font: 9pt 'Microsoft YaHei UI'; }").arg(color);
+  }
   if (stages_[index].frame->styleSheet() != frame_style) stages_[index].frame->setStyleSheet(frame_style);
   if (stages_[index].state->styleSheet() != label_style) stages_[index].state->setStyleSheet(label_style);
 }

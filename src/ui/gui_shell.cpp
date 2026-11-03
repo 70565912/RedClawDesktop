@@ -2196,7 +2196,7 @@ bool launch_gui_shell(
   });
   sealed_exchange_toggle->setVisible(false);
 
-  auto* session_log_box = new QGroupBox(QString::fromUtf8("运行日志"), shell);
+  auto* session_log_box = new QGroupBox(shell);
   session_log_box->setObjectName("primaryCard");
   session_log_box->setProperty("persistent", true);
   session_log_box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
@@ -2205,6 +2205,10 @@ bool launch_gui_shell(
   session_log_layout->setContentsMargins(12, 6, 12, 10);
   session_log_layout->setSpacing(6);
   auto* session_log_toolbar = new QHBoxLayout();
+  auto* session_log_title = new QLabel(QString::fromUtf8("运行日志"), session_log_box);
+  session_log_title->setObjectName("connectionSectionTitle");
+  session_log_toolbar->addWidget(session_log_title);
+  session_log_toolbar->addStretch();
   auto* session_log_hint = new QLabel("Pairing, ICE, DHT, and stream events appear here during a session.", session_log_box);
   session_log_hint->setWordWrap(true);
   session_log_hint->setObjectName("pageIntro");
@@ -2219,7 +2223,6 @@ bool launch_gui_shell(
   session_log_copy_feedback->setObjectName("statusCardTitle");
   session_log_toolbar->addWidget(copy_session_log_button);
   session_log_toolbar->addWidget(clear_session_log_button);
-  session_log_toolbar->addStretch();
   session_log_toolbar->addWidget(session_log_copy_feedback);
   auto* session_log = new RuntimeLogView(session_log_box);
   session_log->setObjectName("runtimeSessionLog");

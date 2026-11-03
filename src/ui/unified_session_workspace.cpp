@@ -1,5 +1,6 @@
 #include "ui/unified_session_workspace.h"
 #include "ui/connection_overlay.h"
+#include "ui/desktop_workspace_theme.h"
 #include <QCloseEvent>
 #include <QMainWindow>
 #include <QMessageBox>
@@ -26,6 +27,8 @@ struct UnifiedSessionWorkspace::Impl {
     Impl(QMainWindow* owner, QWidget* entry, QWidget* log, QSettings* settings)
         : window(owner), pages(new QStackedWidget(owner)), home(entry), desktop(new QWidget(pages)) {
         pages->setObjectName("sessionWorkspacePages"); desktop->setObjectName("playbackWindow");
+        desktop_theme::apply_canvas_palette(desktop);
+        desktop->setStyleSheet("QWidget#playbackWindow { background: #0d131b; }");
         auto* layout = new QVBoxLayout(desktop); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(0);
         pages->addWidget(home); pages->addWidget(desktop); pages->setCurrentWidget(home);
         owner->setCentralWidget(pages);

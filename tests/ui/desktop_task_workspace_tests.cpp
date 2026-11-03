@@ -4,6 +4,7 @@
 #include "ui/playback_window_geometry_controller.h"
 
 #include <gtest/gtest.h>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QEventLoop>
 #include <QFocusEvent>
@@ -209,6 +210,26 @@ TEST(DesktopTaskWorkspace, ToolbarWrapsAndTaskOperationsLeaveCanvasUnchanged) {
     DesktopTaskWorkspace workspace(&owner, nullptr);
     for (const auto task : tasks) workspace.add_task(task, "Task window", new QWidget, {360, 320});
     owner.show(); QApplication::processEvents();
+    workspace.audio_button()->show();
+    workspace.control_button()->setText("Stop Control");
+    const auto expect_aligned_buttons = [&] {
+        const auto buttons = workspace.button_bar()->findChildren<QAbstractButton*>(QString(), Qt::FindDirectChildrenOnly);
+        ASSERT_FALSE(buttons.empty());
+        const int height = workspace.control_button()->height();
+        for (auto* button : buttons) {
+            if (!button->isVisible()) continue;
+            EXPECT_EQ(button->height(), height) << button->objectName().toStdString();
+            EXPECT_GE(button->contentsRect().height(), button->fontMetrics().height());
+            // Equal-height rows keep both button types and their text centered,
+            // including the checked backgrounds after fullscreen/tool toggles.
+            EXPECT_EQ((button->y() - 6) % (height + 6), 0) << button->objectName().toStdString();
+        }
+    };
+    settle(); expect_aligned_buttons();
+    workspace.audio_button()->setChecked(true);
+    workspace.fullscreen_button()->setChecked(true);
+    workspace.connection_button()->setChecked(true);
+    settle(); expect_aligned_buttons();
     geometry.start(); geometry.publish_initial_viewport(); settle();
     ASSERT_GT(viewports, 0);
     const auto initial_viewports = viewports;
@@ -236,6 +257,7 @@ TEST(DesktopTaskWorkspace, ToolbarWrapsAndTaskOperationsLeaveCanvasUnchanged) {
     for (auto* child : bar->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
         if (child->isVisible()) EXPECT_TRUE(bar->rect().contains(child->geometry())) << child->objectName().toStdString();
     EXPECT_GT(bar->height(), 40);
+    expect_aligned_buttons();
     EXPECT_EQ(canvas->size(), owner.size());
 }
 } // namespace

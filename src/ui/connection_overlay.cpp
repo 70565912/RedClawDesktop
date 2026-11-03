@@ -60,12 +60,15 @@ struct ConnectionOverlay::Impl {
           panel(std::make_unique<BoundedFloatingWindow>(owner, false)) {
         log_style = view->styleSheet();
         panel->setObjectName("connectionOverlay");
+        panel->setStyleSheet(desktop_theme::connection_panel_style());
         panel->setWindowTitle(QString::fromUtf8("连接"));
-        auto* layout = new QVBoxLayout(panel.get()); layout->setContentsMargins(6, 6, 6, 6);
+        auto* layout = new QVBoxLayout(panel.get()); layout->setContentsMargins(16, 6, 16, 6); layout->setSpacing(10);
         layout->setSizeConstraint(QLayout::SetNoConstraint);
         header = new QWidget(panel.get()); header->setFixedHeight(30);
+        header->setObjectName("connectionOverlayHeader");
         auto* row = new QHBoxLayout(header); row->setContentsMargins(4, 0, 0, 0);
         auto* title = new QLabel(QString::fromUtf8("连接"), header);
+        title->setObjectName("connectionOverlayTitle");
         summary = new QLabel(header); summary->setTextFormat(Qt::PlainText);
         row->addWidget(title); row->addWidget(summary, 1);
         fold = new QToolButton(header); fold->setObjectName("connectionOverlayFold");
@@ -76,13 +79,15 @@ struct ConnectionOverlay::Impl {
         scroll = new QScrollArea(panel.get()); scroll->setObjectName("connectionOverlayScroll");
         scroll->setFrameShape(QFrame::NoFrame); scroll->setWidgetResizable(true); scroll->setMinimumSize(0, 0);
         body = new QWidget(scroll); body->setMinimumWidth(448); body_layout = new QVBoxLayout(body);
-        body_layout->setContentsMargins(6, 0, 6, 6); body_layout->setSpacing(8);
+        body_layout->setContentsMargins(0, 0, 0, 0); body_layout->setSpacing(12);
         progress = new ConnectionProgressPage(ConnectionFlowRole::kController, body, ConnectionProgressPresentation::kOverlay);
         body_layout->addWidget(progress);
-        auto* status_title = new QLabel(QString::fromUtf8("运行状态"), body); body_layout->addWidget(status_title);
+        auto* status_title = new QLabel(QString::fromUtf8("运行状态"), body);
+        status_title->setObjectName("connectionSectionTitle"); body_layout->addWidget(status_title);
         auto* states = new QGridLayout; states->setHorizontalSpacing(12); states->setVerticalSpacing(4);
         auto add_indicator = [&](int row, int column, const QString& title, const char* name) {
             auto* label = new QLabel(title, body);
+            label->setObjectName("connectionRuntimeLabel");
             auto* value = new QLabel(body); value->setObjectName(name); value->setTextFormat(Qt::PlainText);
             states->addWidget(label, row, column); states->addWidget(value, row, column + 1);
             return value;
@@ -91,20 +96,21 @@ struct ConnectionOverlay::Impl {
         handshake = add_indicator(0, 2, QString::fromUtf8("握手"), "connectionHandshakeState");
         link = add_indicator(1, 0, QString::fromUtf8("实时链路"), "connectionLiveLinkState");
         process = add_indicator(1, 2, QString::fromUtf8("程序"), "connectionProcessState");
-        indicator(pairing, QString::fromUtf8("就绪"), "#cbd5e1");
-        indicator(handshake, QString::fromUtf8("等待中"), "#fde68a");
-        indicator(link, QString::fromUtf8("等待中"), "#fde68a");
-        indicator(process, QString::fromUtf8("空闲"), "#cbd5e1");
+        indicator(pairing, QString::fromUtf8("就绪"), desktop_theme::kMuted);
+        indicator(handshake, QString::fromUtf8("等待中"), desktop_theme::kMuted);
+        indicator(link, QString::fromUtf8("等待中"), desktop_theme::kMuted);
+        indicator(process, QString::fromUtf8("空闲"), desktop_theme::kMuted);
         body_layout->addLayout(states);
         details = new QLabel(body); details->setTextFormat(Qt::PlainText); details->setWordWrap(true);
         details->setObjectName("connectionRuntimeDetails");
         body_layout->addWidget(details);
         actions = new QWidget(panel.get());
-        auto* buttons = new QHBoxLayout(actions); buttons->setContentsMargins(6, 0, 6, 0);
+        actions->setObjectName("connectionOverlayActions");
+        auto* buttons = new QHBoxLayout(actions); buttons->setContentsMargins(0, 10, 0, 0); buttons->addStretch();
         reconnect = new QPushButton(QString::fromUtf8("重连"), body); reconnect->setObjectName("connectionOverlayReconnect");
         disconnect = new QPushButton(QString::fromUtf8("断开"), body); disconnect->setObjectName("connectionOverlayDisconnect");
-        disconnect->setStyleSheet("QPushButton#connectionOverlayDisconnect { border-color: #ef4444; color: #fca5a5; }");
-        buttons->addWidget(reconnect, 1); buttons->addWidget(disconnect, 1);
+        reconnect->setFixedSize(100, 34); disconnect->setFixedSize(100, 34);
+        buttons->addWidget(reconnect); buttons->addWidget(disconnect);
         scroll->setWidget(body); layout->addWidget(scroll, 1); layout->addWidget(actions);
         if (settings) preferred = settings->value(kGeometry).toRect();
         panel->interacted = [this] { interact(); };
@@ -139,8 +145,8 @@ struct ConnectionOverlay::Impl {
     }
     void text() {
         const QString phase = phase_text(flow);
-        const auto color = flow.status == ConnectionFlowStatus::kComplete ? "#86efac"
-            : flow.status == ConnectionFlowStatus::kFailed ? "#fca5a5" : "#fde68a";
+        const auto color = flow.status == ConnectionFlowStatus::kComplete ? desktop_theme::kSuccess
+            : flow.status == ConnectionFlowStatus::kFailed ? desktop_theme::kDanger : desktop_theme::kWarning;
         indicator(summary, phase, color);
         progress->set_snapshot(flow);
         if (button) {
@@ -181,7 +187,8 @@ struct ConnectionOverlay::Impl {
         if (collapsed) {
             const int height = std::min(42, area.height());
             panel->setFixedHeight(height);
-            target.setSize(QSize(std::min(target.width(), header->sizeHint().width() + 12), height));
+            const auto margins = panel->layout()->contentsMargins();
+            target.setSize(QSize(std::min(target.width(), header->sizeHint().width() + margins.left() + margins.right()), height));
         } else {
             panel->setMinimumHeight(0);
             panel->setMaximumHeight(QWIDGETSIZE_MAX);
@@ -206,7 +213,7 @@ void ConnectionOverlay::set_active(bool active) {
     if (active) {
         impl_->home_layout->removeWidget(impl_->log); impl_->log->setParent(impl_->body);
         impl_->log->setStyleSheet(impl_->log_style +
-            " QGroupBox#primaryCard { border: none; margin-top: 18px; padding: 0; background: transparent; }"
+            " QGroupBox#primaryCard { border: none; margin-top: 0; padding: 0; background: transparent; }"
             " QGroupBox#primaryCard::title { left: 0; padding: 0; }");
         impl_->body_layout->addWidget(impl_->log, 1); impl_->log->show();
         impl_->flow = ConnectionFlowSnapshot{};
@@ -229,25 +236,25 @@ void ConnectionOverlay::update_connection(const ConnectionFlowSnapshot& snapshot
 }
 void ConnectionOverlay::set_pairing_state(ConnectionPairingState state) {
     switch (state) {
-    case ConnectionPairingState::kReady: indicator(impl_->pairing, QString::fromUtf8("就绪"), "#cbd5e1"); break;
-    case ConnectionPairingState::kConnecting: indicator(impl_->pairing, QString::fromUtf8("连接中"), "#fde68a"); break;
-    case ConnectionPairingState::kConnected: indicator(impl_->pairing, QString::fromUtf8("已连接"), "#86efac"); break;
-    case ConnectionPairingState::kAttention: indicator(impl_->pairing, QString::fromUtf8("连接异常"), "#fca5a5"); break;
-    case ConnectionPairingState::kClosed: indicator(impl_->pairing, QString::fromUtf8("已关闭"), "#cbd5e1"); break;
+    case ConnectionPairingState::kReady: indicator(impl_->pairing, QString::fromUtf8("就绪"), desktop_theme::kMuted); break;
+    case ConnectionPairingState::kConnecting: indicator(impl_->pairing, QString::fromUtf8("连接中"), desktop_theme::kProgress); break;
+    case ConnectionPairingState::kConnected: indicator(impl_->pairing, QString::fromUtf8("已连接"), desktop_theme::kSuccess); break;
+    case ConnectionPairingState::kAttention: indicator(impl_->pairing, QString::fromUtf8("连接异常"), desktop_theme::kDanger); break;
+    case ConnectionPairingState::kClosed: indicator(impl_->pairing, QString::fromUtf8("已关闭"), desktop_theme::kMuted); break;
     }
 }
 void ConnectionOverlay::set_handshake_ready(bool ready) {
-    indicator(impl_->handshake, QString::fromUtf8(ready ? "已就绪" : "等待中"), ready ? "#86efac" : "#fde68a");
+    indicator(impl_->handshake, QString::fromUtf8(ready ? "已就绪" : "等待中"), ready ? desktop_theme::kSuccess : desktop_theme::kMuted);
 }
 void ConnectionOverlay::set_link_live(bool live) {
-    indicator(impl_->link, QString::fromUtf8(live ? "在线" : "等待中"), live ? "#86efac" : "#fde68a");
+    indicator(impl_->link, QString::fromUtf8(live ? "在线" : "等待中"), live ? desktop_theme::kSuccess : desktop_theme::kProgress);
 }
 void ConnectionOverlay::set_process_state(ConnectionProcessState state) {
     switch (state) {
-    case ConnectionProcessState::kIdle: indicator(impl_->process, QString::fromUtf8("空闲"), "#cbd5e1"); break;
-    case ConnectionProcessState::kActive: indicator(impl_->process, QString::fromUtf8("运行中"), "#86efac"); break;
-    case ConnectionProcessState::kStopping: indicator(impl_->process, QString::fromUtf8("正在停止"), "#fde68a"); break;
-    case ConnectionProcessState::kFailed: indicator(impl_->process, QString::fromUtf8("运行异常"), "#fca5a5"); break;
+    case ConnectionProcessState::kIdle: indicator(impl_->process, QString::fromUtf8("空闲"), desktop_theme::kMuted); break;
+    case ConnectionProcessState::kActive: indicator(impl_->process, QString::fromUtf8("运行中"), desktop_theme::kSuccess); break;
+    case ConnectionProcessState::kStopping: indicator(impl_->process, QString::fromUtf8("正在停止"), desktop_theme::kWarning); break;
+    case ConnectionProcessState::kFailed: indicator(impl_->process, QString::fromUtf8("运行异常"), desktop_theme::kDanger); break;
     }
 }
 void ConnectionOverlay::update_runtime(const QString& transport, const QString& frame) {

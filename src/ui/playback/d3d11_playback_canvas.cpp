@@ -4,6 +4,7 @@
 #endif
 #include "playback_backends.h"
 #include "ui/gui_latency_probe.h"
+#include "ui/desktop_workspace_theme.h"
 #include <QDateTime>
 #include <QLayout>
 #include <QPaintEngine>
@@ -58,8 +59,10 @@ D3DCompileProc load_d3d_compile() {
 class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
  public:
   explicit D3D11PlaybackWidget(QWidget* parent = nullptr) : QWidget(parent) {
+    desktop_theme::apply_canvas_palette(this);
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_PaintOnScreen);
+    setAttribute(Qt::WA_OpaquePaintEvent);
     setAutoFillBackground(false);
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -101,10 +104,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     frame_width_ = 0;
     frame_height_ = 0;
     if (context_ && render_target_ && swap_chain_) {
-      const FLOAT clear_color[4] = {0.008F, 0.024F, 0.090F, 1.0F};
-      context_->ClearRenderTargetView(render_target_.Get(), clear_color);
+      context_->ClearRenderTargetView(render_target_.Get(), desktop_theme::kCanvasClear.data());
       (void)present_swap_chain(0, nullptr, true);
     }
+    update();
   }
 
   void set_geometry_transaction_active(bool active) override {
@@ -219,6 +222,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  protected:
+  bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override {
+    const auto* native = static_cast<MSG*>(message);
+    if (native->message == WM_ERASEBKGND && !frame_texture_ && !latest_frame_is_surface_) {
+      fill_native_background(reinterpret_cast<HDC>(native->wParam));
+      *result = 1;
+      return true;
+    }
+    return QWidget::nativeEvent(type, message, result);
+  }
   bool event(QEvent* event) override {
     if (event->type() == QEvent::WinIdChange && swap_chain_) {
       // Qt can recreate the native window without replacing this widget.
@@ -251,6 +263,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   void paintEvent(QPaintEvent*) override {
     if (frame_texture_ && !latest_frame_is_surface_) {
       (void)render(nullptr, true);
+    } else if (!frame_texture_ && !latest_frame_is_surface_) {
+      paint_waiting_desktop();
     }
   }
 
@@ -274,6 +288,36 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  private:
+  void fill_native_background(HDC dc) {
+    RECT area{}; GetClientRect(reinterpret_cast<HWND>(winId()), &area);
+    const auto brush = CreateSolidBrush(RGB(qRed(desktop_theme::kCanvas), qGreen(desktop_theme::kCanvas), qBlue(desktop_theme::kCanvas)));
+    FillRect(dc, &area, brush); DeleteObject(brush);
+  }
+  void paint_waiting_desktop() {
+    // WA_PaintOnScreen bypasses Qt's raster fill before the first swap chain.
+    // Paint this static empty state only; video frames keep their existing path.
+    const auto hwnd = reinterpret_cast<HWND>(winId());
+    const auto dc = GetDC(hwnd); if (!dc) return;
+    fill_native_background(dc);
+    RECT area{}; GetClientRect(hwnd, &area);
+    const auto scale = devicePixelRatioF();
+    const int center = area.right > qRound(800 * scale) ? area.right / 3 : area.right / 2;
+    const int middle = area.bottom / 2;
+    const int half = qRound(250 * scale);
+    SetBkMode(dc, TRANSPARENT);
+    const auto heading = CreateFontW(-qRound(19 * scale), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    const auto previous = SelectObject(dc, heading);
+    SetTextColor(dc, RGB(228, 235, 243));
+    RECT title{center - half, middle - qRound(18 * scale), center + half, middle + qRound(18 * scale)};
+    DrawTextW(dc, L"正在连接远程桌面", -1, &title, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    const auto body = CreateFontW(-qRound(14 * scale), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    SelectObject(dc, body); SetTextColor(dc, RGB(154, 170, 189));
+    RECT subtitle{center - half, middle + qRound(24 * scale), center + half, middle + qRound(52 * scale)};
+    DrawTextW(dc, L"安全连接建立后，画面将在这里显示", -1, &subtitle, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, previous); DeleteObject(heading); DeleteObject(body); ReleaseDC(hwnd, dc);
+  }
   struct Vertex {
     float x;
     float y;
@@ -616,7 +660,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     }
 
     D3D11_VIDEO_COLOR background{};
-    background.RGBA.A = 1.0F;
+    background.RGBA = {desktop_theme::kCanvasClear[0], desktop_theme::kCanvasClear[1], desktop_theme::kCanvasClear[2], 1.0F};
     video_context_->VideoProcessorSetOutputBackgroundColor(video_processor_.Get(), FALSE, &background);
     video_context_->VideoProcessorSetStreamFrameFormat(
         video_processor_.Get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
@@ -971,8 +1015,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     }
 
     update_vertices();
-    const FLOAT clear_color[4] = {0.008F, 0.024F, 0.090F, 1.0F};
-    context_->ClearRenderTargetView(render_target_.Get(), clear_color);
+    context_->ClearRenderTargetView(render_target_.Get(), desktop_theme::kCanvasClear.data());
 
     // Use physical pixel dimensions so the viewport matches the actual DXGI
     // back-buffer size on high-DPI displays (e.g. 125 % / 150 % scaling).

@@ -6,6 +6,7 @@
 #include "ui/desktop_task_workspace.h"
 #include "ui/unified_session_workspace.h"
 #include "ui/connection_overlay.h"
+#include "ui/desktop_workspace_theme.h"
 #include <QMainWindow>
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/playback_window_fullscreen_controller.h"
@@ -20,6 +21,11 @@
 #include <QThread>
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QDir>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QToolButton>
+#include "ui/runtime_log_view.h"
 #include <QPushButton>
 #include <QWindow>
 #include <d3d11.h>
@@ -28,6 +34,86 @@
 #include <chrono>
 #include <thread>
 #include <QUuid>
+
+TEST(D3D11Playback, NativeEmptyBackgroundIsDarkBeforeFirstFrameAndAfterClear) {
+    QWidget owner; owner.resize(640, 400);
+    const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&owner);
+    ASSERT_NE(renderer.widget, nullptr);
+    renderer.widget->resize(owner.size()); owner.show(); renderer.widget->show(); QCoreApplication::processEvents();
+    auto* dc = CreateCompatibleDC(nullptr); ASSERT_NE(dc, nullptr);
+    auto* bitmap = CreateBitmap(4, 4, 1, 32, nullptr); ASSERT_NE(bitmap, nullptr);
+    auto* previous = SelectObject(dc, bitmap);
+    auto check_dark = [&] {
+        RECT sample{0, 0, 4, 4}; FillRect(dc, &sample, reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        EXPECT_EQ(SendMessageW(reinterpret_cast<HWND>(renderer.widget->winId()), WM_ERASEBKGND, reinterpret_cast<WPARAM>(dc), 0), 1);
+        const auto pixel = GetPixel(dc, 1, 1);
+        EXPECT_LT(GetRValue(pixel), 32); EXPECT_LT(GetGValue(pixel), 32); EXPECT_LT(GetBValue(pixel), 40);
+    };
+    check_dark();
+    QImage image(64, 64, QImage::Format_RGB32); image.fill(Qt::white); QString error;
+    EXPECT_NE(renderer.canvas->present_image(image, &error), redclaw::ui::PresentOutcome::kFailed);
+    renderer.canvas->clear_frame(); QCoreApplication::processEvents(); check_dark();
+    SelectObject(dc, previous); DeleteObject(bitmap); DeleteDC(dc);
+}
+
+TEST(PlaybackTheme, EmptyAndLetterboxedQtCanvasStayDarkWithoutRecoloringRemotePixels) {
+    QWidget owner; owner.resize(640, 400);
+    const auto renderer = redclaw::ui::create_qt_playback_renderer(&owner);
+    renderer.widget->resize(owner.size()); owner.show(); renderer.widget->show(); QCoreApplication::processEvents();
+    auto dark_corner = [&] {
+        const auto image = renderer.widget->grab().toImage(); const auto color = image.pixelColor(4, 4);
+        EXPECT_LT(color.red(), 32); EXPECT_LT(color.green(), 32); EXPECT_LT(color.blue(), 40);
+    };
+    dark_corner();
+    QImage frame(64, 64, QImage::Format_RGB32); frame.fill(Qt::white); QString error;
+    ASSERT_NE(renderer.canvas->present_image(frame, &error), redclaw::ui::PresentOutcome::kFailed);
+    QCoreApplication::processEvents(); dark_corner();
+    auto image = renderer.widget->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() / 2, image.height() / 2), QColor(Qt::white));
+    renderer.canvas->clear_frame(); QCoreApplication::processEvents(); dark_corner();
+}
+
+TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponents) {
+    using namespace redclaw::ui;
+    QMainWindow window; auto* home = new QWidget; auto* layout = new QVBoxLayout(home);
+    auto* log_box = new QGroupBox(home); log_box->setObjectName("primaryCard");
+    auto* log_layout = new QVBoxLayout(log_box); auto* log_header = new QHBoxLayout;
+    auto* label = new QLabel(QString::fromUtf8("运行日志")); label->setObjectName("connectionSectionTitle");
+    log_header->addWidget(label); log_header->addStretch();
+    log_header->addWidget(new QPushButton(QString::fromUtf8("复制日志")));
+    log_header->addWidget(new QPushButton(QString::fromUtf8("清空显示")));
+    log_layout->addLayout(log_header); auto* log = new RuntimeLogView(log_box); log_layout->addWidget(log); layout->addWidget(log_box);
+    UnifiedSessionWorkspace session(&window, home, log_box, nullptr);
+    const auto renderer = create_qt_playback_renderer(session.desktop_page());
+    session.desktop_page()->layout()->addWidget(renderer.widget);
+    DesktopTaskWorkspace tools(session.desktop_page(), nullptr); session.connection_overlay()->bind_button(tools.connection_button());
+    tools.add_task(DesktopTask::kNavigation, QString::fromUtf8("桌面导航"), new QWidget, {360, 320});
+    ConnectionFlowModel flow; flow.start(ConnectionFlowRole::kController);
+    flow.apply(ConnectionFlowEvent::kLocalDescriptionPublished);
+    window.resize(1440, 900); window.show(); session.update_connection(flow.snapshot());
+    session.connection_overlay()->set_pairing_state(ConnectionPairingState::kConnected);
+    session.connection_overlay()->set_handshake_ready(true);
+    session.connection_overlay()->set_process_state(ConnectionProcessState::kActive);
+    session.update_runtime("unknown", QString::fromUtf8("等待首帧"));
+    for (const auto* text : {"开始连接远程设备", "已找到等待设备", "安全配对已完成", "正在建立网络路径"})
+        log->appendPlainText(QString::fromUtf8("[10:24:01] ") + QString::fromUtf8(text));
+    QCoreApplication::processEvents(); log->flush_pending();
+    const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
+    if (!output.isEmpty()) {
+        QDir().mkpath(output);
+        // Composite only this fixture's real widgets; no live desktop capture.
+        auto preview = window.grab(); QPainter painter(&preview);
+        for (auto* widget : {session.connection_overlay()->panel(), tools.button_bar()})
+            painter.drawPixmap(widget->mapToGlobal(QPoint()) - window.mapToGlobal(QPoint()), widget->grab());
+        painter.end(); preview.save(output + "/workspace-connecting.png");
+        session.connection_overlay()->panel()->grab().save(output + "/connection-panel.png");
+    }
+    EXPECT_FALSE(tools.task_visible(DesktopTask::kNavigation));
+    flow.observe_transport(true, true); flow.apply(ConnectionFlowEvent::kFirstFrameReady);
+    session.update_connection(flow.snapshot());
+    EXPECT_EQ(session.connection_overlay()->state(), ConnectionOverlayState::kHidden);
+    EXPECT_FALSE(session.connection_overlay()->panel()->isVisible());
+}
 
 TEST(D3D11Playback, UnifiedWindowOverlayDoesNotResizeRendererAndReconnectRetainsCanvas) {
     using namespace redclaw::ui;

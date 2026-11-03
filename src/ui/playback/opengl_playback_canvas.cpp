@@ -1,5 +1,6 @@
 #if defined(REDCLAW_ENABLE_QT_OPENGL)
 #include "playback_backends.h"
+#include "ui/desktop_workspace_theme.h"
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
@@ -15,6 +16,7 @@ class OpenGLPlaybackWidget final : public QOpenGLWidget,
  public:
   explicit OpenGLPlaybackWidget(QWidget* parent = nullptr)
       : QOpenGLWidget(parent) {
+    desktop_theme::apply_canvas_palette(this);
     // Request a 3.3 core profile for the texture-blit shaders.
     QSurfaceFormat fmt;
     fmt.setVersion(3, 3);
@@ -139,7 +141,7 @@ void main() { fragColor = texture(uTex, vUV); }
   }
 
   void paintGL() override {
-    glClearColor(0.008f, 0.024f, 0.090f, 1.0f);
+    glClearColor(desktop_theme::kCanvasClear[0], desktop_theme::kCanvasClear[1], desktop_theme::kCanvasClear[2], 1.0F);
     glClear(GL_COLOR_BUFFER_BIT);
 
     if (!gl_init_ok_) return;

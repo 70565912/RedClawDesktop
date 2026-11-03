@@ -2,6 +2,7 @@
 #include "ui/bounded_floating_window.h"
 
 #include <QApplication>
+#include <QAbstractButton>
 #include <QCloseEvent>
 #include <QHideEvent>
 #include <QLayout>
@@ -52,7 +53,14 @@ class TaskBarLayout final : public QLayout {
 public:
     explicit TaskBarLayout(QWidget* parent) : QLayout(parent) { setContentsMargins(8, 6, 8, 6); setSpacing(6); }
     ~TaskBarLayout() override { while (auto* item = takeAt(0)) delete item; }
-    void addItem(QLayoutItem* item) override { items_.push_back(item); invalidate(); }
+    void addItem(QLayoutItem* item) override {
+        if (auto* button = qobject_cast<QAbstractButton*>(item->widget())) {
+            auto policy = button->sizePolicy();
+            policy.setVerticalPolicy(QSizePolicy::Preferred);
+            button->setSizePolicy(policy);
+        }
+        items_.push_back(item); invalidate();
+    }
     int count() const override { return static_cast<int>(items_.size()); }
     QLayoutItem* itemAt(int index) const override { return index >= 0 && index < count() ? items_[index] : nullptr; }
     QLayoutItem* takeAt(int index) override {
@@ -71,10 +79,13 @@ public:
 private:
     int arrange(const QRect& rect, bool apply) const {
         const QRect area = rect.marginsRemoved(contentsMargins());
+        int item_height = 28;
+        for (auto* item : items_)
+            if (!item->isEmpty()) item_height = std::max(item_height, item->sizeHint().height());
         int x = area.left(), y = area.top(), row_height = 0;
         for (auto* item : items_) {
             if (item->isEmpty()) continue;
-            const QSize size(std::min(std::max(1, area.width()), item->sizeHint().width()), std::max(28, item->sizeHint().height()));
+            const QSize size(std::min(std::max(1, area.width()), item->sizeHint().width()), item_height);
             if (x > area.left() && x + size.width() > area.right() + 1) { x = area.left(); y += row_height + spacing(); row_height = 0; }
             if (apply) item->setGeometry(QRect(QPoint(x, y), size));
             x += size.width() + spacing(); row_height = std::max(row_height, size.height());
@@ -110,11 +121,7 @@ struct DesktopTaskWorkspace::Impl {
     Impl(QWidget* window, QSettings* store) : owner(window), root(window->window()), settings(store), bar(std::make_unique<BoundedFloatingWindow>(window, true)) {
         bar->setObjectName("desktopTaskButtonBar");
         // Override the application's opaque QWidget rule, without fading text.
-        bar->setStyleSheet(
-            "QWidget#desktopTaskButtonBar, QLabel { background: transparent; color: #e2e8f0; }"
-            "QToolButton { padding: 5px 7px; border: 1px solid transparent; border-radius: 5px; color: #e2e8f0; background: transparent; }"
-            "QToolButton:checked { background: #234766; border-color: #6198c2; }"
-            "QToolButton:hover { background: #24415b; }");
+        bar->setStyleSheet(desktop_theme::toolbar_style());
         bar_layout = new TaskBarLayout(bar.get());
         bar_layout->setSizeConstraint(QLayout::SetNoConstraint);
         bar_layout->setContentsMargins(8, 6, 8, 6); bar_layout->setSpacing(6);

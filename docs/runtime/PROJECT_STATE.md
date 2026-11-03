@@ -1,6 +1,63 @@
 # Project State
 
-Updated: 2026-11-02
+Updated: 2026-11-03
+
+## Toolbar alignment and authorized local Host transition
+
+The reported toolbar mismatch is reproduced by an actual-widget regression:
+push/tool buttons have different heights (28 versus 31 logical pixels). Use the
+largest visible size hint as the common toolbar row height, allowing both button
+types to occupy it. Preserve content-based width, font/DPI sizing, checked
+backgrounds, narrow-window wrapping and the existing fixed desktop canvas.
+Standard serial Debug main/test builds pass all 200 related UI/native-D3D11
+cases; the toolbar case also passes at 1.5 scaling. The complete 321-file
+independent candidate passes manifest/build identity, command startup and isolated
+GUI startup/exit, preserving the earlier approved dark UI.
+The operator authorizes normal source commit/push and a local switch from
+Controller to Host. Preserve prior unrelated document changes and all settings;
+Host standby/publication will be recorded after independent startup verification.
+Evidence: `toolbar-alignment-host-20261103`.
+
+## Authorized local Controller replacement
+
+Replace only the local Controller with the qualified dark-workspace candidate.
+Recheck all 13 recorded source hashes and the complete 321-file candidate against
+the existing standard Debug build and 200 passing UI/native-D3D11 cases; no source
+drift. Fresh isolated startup-rollback and initiating-process-exit fixtures both
+pass. The independent current-user worker validates ownership, complete bundles
+and startup before taking responsibility, retaining the full previous runtime.
+
+The previous GUI had no active runtime and reported stopped. Retain its launch
+arguments; the new GUI automatically connects and reaches streaming/open channels.
+A bounded 12-second sample advances real receive/decode/presentation by 19/19/19,
+with zero synthetic frames or GUI failures. Common clipboard capability is 5.
+Native accessibility shows one main window, the connected D3D11 toolbar/canvas,
+and hidden Connection/navigation panels. Installed and rollback manifests both
+pass for all 321 files; Normal priority is retained and the one-shot task removes
+itself. No rollback is triggered. Screenshot capture times out, so actual visible
+pixels and visual appearance are not newly accepted. No Host operation, source
+commit/push, user-file operation or continuity/stress test. Existing work remains
+intact. Evidence: `dark-controller-update-runtime-20261103`.
+
+## Coordinated dark workspace presentation
+
+The approved charcoal/slate design is implemented for the desktop background,
+floating toolbar and Connection panel. Shared colors cover native pre-frame/clear,
+D3D11/OpenGL letterboxing and the Qt fallback, while remote image colors remain
+unchanged. The panel uses quieter stage/status/log styling and compact fixed
+footer actions. Navigation remains off by default, and connection/recovery
+completion hides the panel once; the toolbar restores it without heartbeat-driven
+closure. Existing input, fullscreen, ownership and geometry boundaries are retained.
+
+Standard Debug builds and all 200 related automatic UI/native-D3D11 cases pass,
+zero failures/skips. Native empty-background/clear and Qt remote-color checks pass.
+The independent complete 321-file candidate passes full manifest/build identity,
+command startup and restricted-path isolated GUI launch/exit, including default
+visibility, return-home and explicit-Quit checks. Component screenshots use only
+isolated fixture widgets, not a live remote session. Prior uncommitted records are
+preserved; this checkpoint makes no source publication or runtime replacement.
+Live dual-machine and physical multi-monitor visual behavior are not newly tested.
+Evidence: `dark-workspace-20261102`.
 
 ## Boxed connection stages, completion auto-hide and navigation off by default
 

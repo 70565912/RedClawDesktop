@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/desktop_workspace_theme.h"
 #include <QWidget>
 #include <QCloseEvent>
 #include <QHideEvent>
@@ -46,9 +47,11 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QColor(73, 104, 136));
-        painter.setBrush(QColor(9, 20, 35, translucent_ ? 204 : 255));
-        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 7, 7);
+        painter.setPen(QColor(desktop_theme::kBorder));
+        auto color = QColor(desktop_theme::kSurface);
+        color.setAlpha(translucent_ ? 242 : 255);
+        painter.setBrush(color);
+        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 12, 12);
     }
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove

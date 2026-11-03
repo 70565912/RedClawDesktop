@@ -1,10 +1,12 @@
 #include "playback_backends.h"
+#include "ui/desktop_workspace_theme.h"
 #include <QPainter>
 namespace redclaw::ui {
 namespace {
 class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
  public:
   explicit QtPlaybackWidget(QWidget* parent = nullptr) : QWidget(parent) {
+    desktop_theme::apply_canvas_palette(this);
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
@@ -58,7 +60,7 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
  protected:
   void paintEvent(QPaintEvent*) override {
     QPainter p(this);
-    p.fillRect(rect(), QColor(2, 6, 23));
+    p.fillRect(rect(), QColor(desktop_theme::kCanvas));
     if (!current_image_.isNull()) {
       const QSize img_size = current_image_.size().scaled(
           size(), Qt::KeepAspectRatio);
@@ -67,7 +69,7 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
           (height() - img_size.height()) / 2,
           img_size.width(), img_size.height());
       p.drawImage(dst, current_image_);
-    }
+    } else desktop_theme::paint_waiting_desktop(p, rect());
   }
 
  private:
