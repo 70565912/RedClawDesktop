@@ -173,6 +173,9 @@ Debug Host startup (2026-10-16, M10-T01 — done): synchronize main to `e74f792`
 ## M11 Portable Client
 
 - `M11-T01` Android-first portable client architecture — planned.
+- `M11-S0.1` Android Controller tech spike, slice 1 — in-progress (scaffold delivered 2026-11-05). Portable `redclaw_controller_core` (DHT request/offer/answer, ICE/DataChannel with connection auth, stream-control Hello/Ping/Viewport/Keyframe/transport feedback, encoded-video reassembly) builds with `REDCLAW_CONTROLLER_CORE_ONLY=ON` for NDK `arm64-v8a`; Kotlin + JNI + async MediaCodec spike APK `assembleDebug` succeeds on Linux. No Host behavior change, no device or RC7TST01 connection yet; Windows build/CTest of the new target not run in the cloud VM. Remaining S0.2 LAN connect, S0.3 decode/reconnect, S0.4 touch/Unicode input, S0.5 mixed-version checks and Host prerequisites are listed in [the spike README](../../clients/android-controller-spike/README.md).
+
+Updated: 2026-11-05
 
 ## X00 Cross-module delivery
 

@@ -127,6 +127,8 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 标准入口会完成构建并将可运行文件发布到 `release\Debug\` 或 `release\Release\`。不要直接用裸 `cmake --build` 代替主程序构建，否则发布目录可能仍是旧版本。详细说明见 [开发文档索引](docs/README.md)。
 
+Android Controller 技术验证（S0.1 spike，非正式产品）的 NDK/Gradle 构建方式与后续验收清单见 [android-controller-spike](clients/android-controller-spike/README.md)。
+
 ## 项目状态
 
 `v0.1.11` 沿用真实桌面、连接密码、远程声音及 Control / Media / Agent 基线，包含桌面导航请求与画面版本分离、D3D11 显示恢复，以及已有的控制状态、右 Shift 和启动/升级修复，并保留 X00-T27–T29 优化和 T30 过期计数刷新修复。T30/T31 历史停顿原因仍未知，按有界排查结果暂时结项；不宣称所有端到端延迟目标通过。自动验收与人工开发评估分开；本机双端证据不等于所有异地网络覆盖。严格性能目标作为持续观测项；性能结果会随硬件、驱动、分辨率和网络环境变化。

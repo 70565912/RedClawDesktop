@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-11-05 — M11-S0.1 Android Controller spike scaffold
+
+- Add `src/controller_core` (`redclaw_controller_core`): a portable Controller session that composes the existing DHT client/store, negotiation coordinator, publication transaction, `IceConnectivityWrapper` connection auth, stream-control codec and encoded-video reassembler. No second protocol implementation; Controller advertises only viewport/transport-feedback/keyframe-recovery and version 0 for terminal/transfer/clipboard/audio/Agent. ICE repair, reconnect and input lease remain only in `run_runtime_mode`; the Windows Controller is not switched to the new core.
+- Interface/build changes: new `REDCLAW_CONTROLLER_CORE_ONLY` option builds core/protocol/net/security/service/diag/controller_core only and skips executables/tests/installer; `redclaw_net` links `LibDataChannel::LibDataChannelStatic` when the shared target is absent; one `std::max` int64 type fix in the libtorrent DHT adapter for libc++. No wire or persisted format changed.
+- Add `clients/android-controller-spike` (Kotlin shell, JNI, async MediaCodec to SurfaceView, arm64-only vcpkg manifest). Cloud Linux evidence: vcpkg `arm64-android` dependencies install, `build-android-native.sh` links an AArch64 `libredclaw_controller_jni.so` exporting only JNI entry points, Gradle `assembleDebug` packages it with `libc++_shared.so`. Not run: Windows `build.ps1`/CTest for the new target, device install, LAN connection to `RC7TST01`. Next: S0.2 LAN connect by the coordinator.
+
 ## 2026-11-05 — Publish the compact overlay and run the authorized local Host
 
 - Normally commit and push the isolated six-file M10-T02 UI/regression/document change as `727c5cd`, preserving prior unrelated launcher and document edits. Rebuild Debug through `build.ps1` with the matching compiler; 65 related automatic cases and 13 publication checks pass without failures/skips. Both independent startup-rollback and parent-exit fixtures pass. Preserve the initial wrapper argument/encoding failures separately from the successful checks. The fresh complete 346-file candidate passes full manifest/build identity, restricted-path command startup and actual isolated GUI layout/home-return/exit checks.
