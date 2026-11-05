@@ -5,7 +5,6 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QLayout>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -36,9 +35,7 @@ QString phase_text(const ConnectionFlowSnapshot& flow) {
 }
 
 struct ConnectionOverlay::Impl {
-    QPointer<QWidget> surface, root, log, home;
-    QPointer<QPlainTextEdit> log_editor;
-    QLayout* home_layout;
+    QPointer<QWidget> surface, root;
     QPointer<QSettings> settings;
     std::unique_ptr<BoundedFloatingWindow> panel;
     QWidget *header, *body, *actions;
@@ -54,20 +51,13 @@ struct ConnectionOverlay::Impl {
     ConnectionFlowSnapshot flow;
     QRect preferred;
     QSize expanded_applied;
-    QMargins log_margins;
-    QSizePolicy log_policy;
-    QString transport, frame, stop_error, log_style;
+    QString transport, frame, stop_error;
     bool active = false, syncing = false, manual_size = false;
     std::function<void()> interacted, disconnect_requested, reconnect_requested;
 
-    Impl(QWidget* owner, QWidget* view, QSettings* store)
-        : surface(owner), root(owner->window()), log(view), home(view->parentWidget()),
-          home_layout(home->layout()), settings(store),
+    Impl(QWidget* owner, QSettings* store)
+        : surface(owner), root(owner->window()), settings(store),
           panel(std::make_unique<BoundedFloatingWindow>(owner, false)) {
-        log_style = view->styleSheet();
-        log_editor = view->findChild<QPlainTextEdit*>();
-        if (log_editor) log_policy = log_editor->sizePolicy();
-        if (view->layout()) log_margins = view->layout()->contentsMargins();
         panel->setObjectName("connectionOverlay");
         panel->setStyleSheet(desktop_theme::connection_panel_style());
         panel->setWindowTitle(QString::fromUtf8("连接"));
@@ -146,19 +136,10 @@ struct ConnectionOverlay::Impl {
         QObject::connect(disconnect, &QPushButton::clicked, owner, [this] { if (disconnect_requested) disconnect_requested(); });
         QObject::connect(reconnect, &QPushButton::clicked, owner, [this] { if (reconnect_requested) reconnect_requested(); });
     }
-    // Do not reparent/show log widgets during owner destruction: GUI callbacks
-    // may already have gone out of scope. Normal return-home restores the log.
     ~Impl() = default;
     QRect bounds() const { return surface ? QRect(surface->mapToGlobal(QPoint()), surface->size()) : QRect{}; }
     void raise_toolbar() { if (button && button->window()->isVisible()) button->window()->raise(); }
     void interact() { raise_toolbar(); if (interacted) interacted(); }
-    void move_log_home() {
-        if (!log || !home || log->parentWidget() == home) return;
-        body_layout->removeWidget(log); log->setParent(home); log->setStyleSheet(log_style);
-        if (log->layout()) log->layout()->setContentsMargins(log_margins);
-        if (log_editor) log_editor->setSizePolicy(log_policy);
-        home_layout->addWidget(log); log->show();
-    }
     void change(ConnectionOverlayState next) {
         state = next; sync();
         if (button) { const QSignalBlocker blocker(button); button->setChecked(state == ConnectionOverlayState::kExpanded); }
@@ -172,7 +153,7 @@ struct ConnectionOverlay::Impl {
         if (button) {
             button->setText(QString::fromUtf8("● ") + phase);
             button->setAccessibleName(QString::fromUtf8("连接：%1").arg(phase));
-            button->setToolTip(QString::fromUtf8("%1；点击显示或隐藏连接状态和日志").arg(phase));
+            button->setToolTip(QString::fromUtf8("%1；点击显示或隐藏连接状态").arg(phase));
             const auto style = QString("QToolButton { color: %1; }").arg(color);
             if (button->styleSheet() != style) button->setStyleSheet(style);
         }
@@ -199,8 +180,8 @@ struct ConnectionOverlay::Impl {
         const int content_height = body->hasHeightForWidth() ? body->heightForWidth(content_width) : body->sizeHint().height();
         const int chrome_height = margins.top() + margins.bottom() + header->height()
             + actions->sizeHint().height() + 2 * panel->layout()->spacing() + frame;
-        // Automatic height follows the compact log viewport and wrapped status
-        // text. Saved manual sizes bypass this calculation in sync().
+        // Automatic height follows the wrapped status text. Saved manual sizes
+        // bypass this calculation in sync(). The panel does not host a log view.
         return {width, std::min(available.height(),
             std::max(content_height, body->minimumSizeHint().height()) + chrome_height)};
     }
@@ -243,8 +224,8 @@ struct ConnectionOverlay::Impl {
     }
 };
 
-ConnectionOverlay::ConnectionOverlay(QWidget* surface, QWidget* log, QSettings* settings)
-    : QObject(surface), impl_(std::make_unique<Impl>(surface, log, settings)) {
+ConnectionOverlay::ConnectionOverlay(QWidget* surface, QSettings* settings)
+    : QObject(surface), impl_(std::make_unique<Impl>(surface, settings)) {
     qApp->installEventFilter(this);
 }
 ConnectionOverlay::~ConnectionOverlay() { qApp->removeEventFilter(this); }
@@ -252,23 +233,9 @@ void ConnectionOverlay::set_active(bool active) {
     if (impl_->active == active) return;
     impl_->active = active;
     if (active) {
-        impl_->home_layout->removeWidget(impl_->log); impl_->log->setParent(impl_->body);
-        impl_->log->setStyleSheet(impl_->log_style +
-            " QGroupBox#primaryCard { border: none; margin-top: 0; padding: 0; background: transparent; }"
-            " QGroupBox#primaryCard::title { left: 0; padding: 0; }");
-        if (impl_->log->layout()) {
-            impl_->log->layout()->setContentsMargins(0, 0, 0, 0);
-        }
-        if (impl_->log_editor) {
-            // Keep the group's minimum readable height and wrapped-text sizing;
-            // only the editor's larger preferred viewport is expendable.
-            auto policy = impl_->log_policy; policy.setVerticalPolicy(QSizePolicy::Ignored);
-            impl_->log_editor->setSizePolicy(policy);
-        }
-        impl_->body_layout->addWidget(impl_->log, 1); impl_->log->show();
         impl_->flow = ConnectionFlowSnapshot{};
         impl_->stop_error.clear(); impl_->change(ConnectionOverlayState::kExpanded);
-    } else { impl_->move_log_home(); impl_->sync(); }
+    } else { impl_->sync(); }
 }
 void ConnectionOverlay::set_state(ConnectionOverlayState state) { impl_->change(state); }
 ConnectionOverlayState ConnectionOverlay::state() const { return impl_->state; }

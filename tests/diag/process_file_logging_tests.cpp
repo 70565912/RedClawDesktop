@@ -1,16 +1,30 @@
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <sstream>
 #include <streambuf>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 #include <vector>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#else
+#include <cerrno>
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 #include <gtest/gtest.h>
 
@@ -62,6 +76,42 @@ std::filesystem::path make_test_directory(std::string_view suffix) {
         / ("redclaw-diag-log-test-" + std::string(suffix) + '-' + std::to_string(stamp));
 }
 
+bool pid_is_absent(std::uint64_t pid) {
+#if defined(_WIN32)
+    if (pid > static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max())) return true;
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (handle == nullptr) return GetLastError() != ERROR_ACCESS_DENIED;
+    DWORD code = 0;
+    const BOOL ok = GetExitCodeProcess(handle, &code);
+    CloseHandle(handle);
+    return !(ok == TRUE && code == STILL_ACTIVE);
+#else
+    if (pid > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) return true;
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) return false;
+    return errno != EPERM;
+#endif
+}
+
+std::uint64_t current_test_pid() {
+#if defined(_WIN32)
+    return static_cast<std::uint64_t>(GetCurrentProcessId());
+#else
+    return static_cast<std::uint64_t>(::getpid());
+#endif
+}
+
+std::uint64_t find_absent_pid() {
+    for (std::uint64_t pid = 300000; pid < 301000; ++pid) {
+        if (pid_is_absent(pid)) return pid;
+    }
+    return 4000000000ULL;
+}
+
+void write_bytes(const std::filesystem::path& path, std::string_view text) {
+    std::ofstream output(path, std::ios::binary);
+    output.write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
 std::string read_all_logs(const std::filesystem::path& directory) {
     std::string result;
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
@@ -109,6 +159,94 @@ TEST(ProcessFileLogger, RotatesAndRedactsSensitiveValues) {
     EXPECT_EQ(text.find("debug-password"), std::string::npos);
     EXPECT_EQ(text.find("abc123"), std::string::npos);
     EXPECT_NE(text.find("[REDACTED"), std::string::npos);
+
+    std::error_code ec;
+    std::filesystem::remove_all(directory, ec);
+}
+
+TEST(ProcessFileLogger, StartupDeletesPreviousSessionLogsAndCapsLeftovers) {
+    const auto directory = make_test_directory("startup-clean");
+    std::filesystem::create_directories(directory);
+    const auto dead = find_absent_pid();
+    ASSERT_TRUE(pid_is_absent(dead));
+    const auto live_pid = current_test_pid();
+    const auto stale = directory / ("redclaw-desktop-host-20200101-000000-" + std::to_string(dead) + ".log");
+    const auto stale_rotated = directory / ("redclaw-desktop-host-20200101-000000-" + std::to_string(dead) + ".log.2");
+    const auto live = directory / ("redclaw-desktop-gui-20200101-000001-" + std::to_string(live_pid) + ".log");
+    const auto unrelated = directory / "notes.txt";
+    const auto expired = directory / "redclaw-unscoped-expired.log";
+    const auto older = directory / "redclaw-unscoped-older.log";
+    const auto newer = directory / "redclaw-unscoped-newer.log";
+    write_bytes(stale, "previous-session");
+    write_bytes(stale_rotated, "previous-rotation");
+    write_bytes(live, "live-sibling");
+    write_bytes(unrelated, "keep-me");
+    write_bytes(expired, std::string(4000, 'e'));
+    write_bytes(older, std::string(4000, 'o'));
+    write_bytes(newer, std::string(4000, 'n'));
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::error_code ec;
+    std::filesystem::last_write_time(expired, now - std::chrono::hours(24 * 10), ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(live, now - std::chrono::hours(24 * 10), ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(older, now - std::chrono::hours(2), ec);
+    ASSERT_FALSE(ec);
+
+    redclaw::diag::ProcessFileLoggerConfig config;
+    config.directory = directory;
+    config.file_stem = "redclaw-test";
+    config.role = "host";
+    config.max_file_bytes = 1024 * 1024;
+    config.retention_days = 7;
+    config.max_directory_bytes = 5000;
+
+    redclaw::diag::ProcessFileLogger logger;
+    std::string error;
+    ASSERT_TRUE(logger.start(config, &error)) << error;
+    logger.write_line("test", "current-session");
+    logger.stop();
+
+    EXPECT_FALSE(std::filesystem::exists(stale));
+    EXPECT_FALSE(std::filesystem::exists(stale_rotated));
+    EXPECT_FALSE(std::filesystem::exists(expired));
+    EXPECT_FALSE(std::filesystem::exists(older));
+    EXPECT_TRUE(std::filesystem::exists(newer));
+    EXPECT_TRUE(std::filesystem::exists(live));
+    EXPECT_TRUE(std::filesystem::exists(unrelated));
+    const std::string text = read_all_logs(directory);
+    EXPECT_NE(text.find("current-session"), std::string::npos);
+    EXPECT_NE(text.find("live-sibling"), std::string::npos);
+    EXPECT_NE(text.find("keep-me"), std::string::npos);
+    EXPECT_EQ(text.find("previous-session"), std::string::npos);
+    EXPECT_EQ(text.find("previous-rotation"), std::string::npos);
+
+    std::filesystem::remove_all(directory, ec);
+}
+
+TEST(AuxiliarySessionLog, StartupDiscardAndAppendStayWithinCapacity) {
+    const auto directory = make_test_directory("auxiliary");
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "control-events.log";
+    write_bytes(path, "previous session\n");
+    write_bytes(std::filesystem::path(path.string() + ".1"), "older backup\n");
+    redclaw::diag::discard_previous_auxiliary_log(path);
+    EXPECT_FALSE(std::filesystem::exists(path));
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(path.string() + ".1")));
+
+    const std::string chunk(100, 'a');
+    const std::string line = chunk + '\n';
+    for (int index = 0; index < 40; ++index) {
+        ASSERT_TRUE(redclaw::diag::append_bounded_text_file(path, line, 250));
+    }
+    EXPECT_LE(std::filesystem::file_size(path), 250U);
+    const auto backup = std::filesystem::path(path.string() + ".1");
+    ASSERT_TRUE(std::filesystem::exists(backup));
+    EXPECT_LE(std::filesystem::file_size(backup), 250U);
+    const std::string text = read_all_logs(directory);
+    EXPECT_EQ(text.find("previous session"), std::string::npos);
+    EXPECT_EQ(text.find("older backup"), std::string::npos);
+    EXPECT_NE(text.find(chunk), std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove_all(directory, ec);

@@ -53,7 +53,7 @@ protected:
         window.setAttribute(Qt::WA_QuitOnClose, false);
         auto* layout = new QVBoxLayout(home);
         log = new RuntimeLogView(home); layout->addWidget(log);
-        workspace = std::make_unique<UnifiedSessionWorkspace>(&window, home, log, &settings);
+        workspace = std::make_unique<UnifiedSessionWorkspace>(&window, home, &settings);
         canvas = new QWidget(workspace->desktop_page()); canvas->setFocusPolicy(Qt::StrongFocus);
         workspace->desktop_page()->layout()->addWidget(canvas);
         tools = std::make_unique<DesktopTaskWorkspace>(workspace->desktop_page(), &settings);
@@ -73,7 +73,7 @@ TEST(UnifiedSessionOwnership, MainWindowDestroysTheActiveWorkspaceAndOwnedToolsE
     window->setAttribute(Qt::WA_QuitOnClose, false);
     auto* home = new QWidget; auto* layout = new QVBoxLayout(home);
     auto* log = new RuntimeLogView(home); layout->addWidget(log);
-    QPointer<UnifiedSessionWorkspace> session = new UnifiedSessionWorkspace(window, home, log, nullptr);
+    QPointer<UnifiedSessionWorkspace> session = new UnifiedSessionWorkspace(window, home, nullptr);
     auto* canvas = new QWidget(session->desktop_page()); session->desktop_page()->layout()->addWidget(canvas);
     QPointer<DesktopTaskWorkspace> tools = new DesktopTaskWorkspace(session->desktop_page(), nullptr);
     session->connection_overlay()->bind_button(tools->connection_button());
@@ -108,16 +108,21 @@ TEST_F(UnifiedSessionFixture, FoldHideAndToolbarStatusRestoresThePanel) {
     EXPECT_EQ(workspace->desktop_page()->findChild<QToolButton*>("connectionStatusEntry"), nullptr);
     EXPECT_TRUE(tools->connection_button()->text().contains(QString::fromUtf8("已连接")));
     EXPECT_TRUE(overlay()->panel()->isVisible());
-    EXPECT_GE(overlay()->panel()->width(), 400); EXPECT_GE(overlay()->panel()->height(), 300);
+    EXPECT_GE(overlay()->panel()->width(), 400); EXPECT_GT(overlay()->panel()->height(), 180);
+    EXPECT_EQ(overlay()->panel()->findChild<QPlainTextEdit*>(), nullptr);
+    EXPECT_EQ(log->parentWidget(), home); EXPECT_FALSE(log->isVisible());
     overlay()->panel()->findChild<QToolButton*>("connectionOverlayFold")->click();
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kCollapsed);
-    EXPECT_LE(overlay()->panel()->height(), 42); EXPECT_FALSE(log->isVisible());
+    EXPECT_LE(overlay()->panel()->height(), 42);
+    EXPECT_FALSE(overlay()->panel()->findChild<QScrollArea*>("connectionOverlayScroll")->isVisible());
     tools->connection_button()->click(); EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
     overlay()->panel()->findChild<QToolButton*>("connectionOverlayHide")->click();
     EXPECT_FALSE(overlay()->panel()->isVisible()); EXPECT_TRUE(tools->connection_button()->isVisible());
     EXPECT_TRUE(tools->connection_button()->text().contains(QString::fromUtf8("已连接")));
     tools->connection_button()->click();
-    EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded); EXPECT_TRUE(log->isVisible());
+    EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
+    EXPECT_TRUE(overlay()->panel()->findChild<QScrollArea*>("connectionOverlayScroll")->isVisible());
+    EXPECT_EQ(log->parentWidget(), home); EXPECT_FALSE(log->isVisible());
     EXPECT_TRUE(tools->connection_button()->isChecked());
 }
 
@@ -137,7 +142,8 @@ TEST_F(UnifiedSessionFixture, CollapseShrinksNativeWindowAndRestoresExpandedGeom
     EXPECT_LE(panel->height(), 42);
     EXPECT_LT(panel->width(), expanded.width());
     EXPECT_EQ(canvas->size(), canvas_size);
-    EXPECT_FALSE(log->isVisible());
+    EXPECT_EQ(log->parentWidget(), home); EXPECT_FALSE(log->isVisible());
+    EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
 #ifdef _WIN32
     RECT client{};
     ASSERT_TRUE(GetClientRect(reinterpret_cast<HWND>(panel->winId()), &client));
@@ -147,7 +153,9 @@ TEST_F(UnifiedSessionFixture, CollapseShrinksNativeWindowAndRestoresExpandedGeom
     window.resize(1200, 760); settle();
     EXPECT_LE(panel->height(), 42);
     fold->click(); settle();
-    EXPECT_EQ(panel->size(), expanded); EXPECT_TRUE(log->isVisible());
+    EXPECT_EQ(panel->size(), expanded);
+    EXPECT_TRUE(panel->findChild<QScrollArea*>("connectionOverlayScroll")->isVisible());
+    EXPECT_EQ(log->parentWidget(), home);
     EXPECT_NE(canvas_size, canvas->size()); // Only the owner's explicit resize changes the canvas.
 }
 
@@ -172,7 +180,8 @@ TEST_F(UnifiedSessionFixture, IncidentsAutoExpandWithoutFocusAndRecoveryHidesOnl
     flow.status = ConnectionFlowStatus::kFailed; workspace->update_connection(flow);
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
     EXPECT_TRUE(tools->connection_button()->text().contains(QString::fromUtf8("连接失败")));
-    EXPECT_TRUE(tools->connection_button()->toolTip().contains(QString::fromUtf8("连接状态和日志")));
+    EXPECT_TRUE(tools->connection_button()->toolTip().contains(QString::fromUtf8("连接状态")));
+    EXPECT_FALSE(tools->connection_button()->toolTip().contains(QString::fromUtf8("日志")));
 }
 
 TEST_F(UnifiedSessionFixture, MissingTransportEvidenceRemainsUnknownRatherThanImplyingNegotiationOrDirect) {
@@ -186,21 +195,31 @@ TEST_F(UnifiedSessionFixture, MissingTransportEvidenceRemainsUnknownRatherThanIm
     EXPECT_FALSE(contains(QString::fromUtf8("协商中")));
 }
 
-TEST_F(UnifiedSessionFixture, HiddenAndCollapsedLogsDoNotRefreshAndBufferRemainsShared) {
-    auto buffer = log->buffer(); log->flush_pending();
-    for (auto state : {ConnectionOverlayState::kHidden, ConnectionOverlayState::kCollapsed}) {
-        overlay()->set_state(state); const auto count = log->refresh_count();
-        buffer->append("retained while hidden"); log->flush_pending();
-        EXPECT_EQ(log->refresh_count(), count); EXPECT_EQ(log->buffer(), buffer);
+TEST_F(UnifiedSessionFixture, OverlayDoesNotHostTheSessionLog) {
+    auto buffer = log->buffer();
+    EXPECT_EQ(log->parentWidget(), home);
+    EXPECT_EQ(overlay()->panel()->findChild<QPlainTextEdit*>(), nullptr);
+    const auto refreshes = log->refresh_count();
+    buffer->append("kept on the home page");
+    log->flush_pending();
+    EXPECT_EQ(log->refresh_count(), refreshes);
+    EXPECT_FALSE(log->isVisible());
+    for (auto state : {ConnectionOverlayState::kHidden, ConnectionOverlayState::kCollapsed, ConnectionOverlayState::kExpanded}) {
+        overlay()->set_state(state); log->flush_pending();
+        EXPECT_EQ(log->refresh_count(), refreshes);
+        EXPECT_EQ(log->parentWidget(), home);
+        EXPECT_EQ(overlay()->panel()->findChild<QPlainTextEdit*>(), nullptr);
     }
-    overlay()->set_state(ConnectionOverlayState::kExpanded); log->flush_pending();
-    EXPECT_EQ(log->toPlainText().count("retained while hidden"), 2);
     workspace->set_confirm_disconnect([] { return true; });
     workspace->set_request_stop([] {}); workspace->set_runtime_running([] { return false; });
     workspace->request_disconnect(); settle();
     EXPECT_EQ(log->parentWidget(), home); EXPECT_EQ(log->buffer(), buffer);
+    EXPECT_TRUE(log->isVisible());
+    log->flush_pending();
+    EXPECT_EQ(log->toPlainText().count("kept on the home page"), 1);
     workspace->update_connection(connected()); settle();
     EXPECT_TRUE(workspace->desktop_visible()); EXPECT_EQ(log->buffer(), buffer);
+    EXPECT_EQ(log->parentWidget(), home);
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kHidden);
 }
 
@@ -312,7 +331,7 @@ TEST_F(UnifiedSessionFixture, FirstFrameCompletionHidesPanelAndManualOpeningSurv
     canvas->setFocus(); settle(); const auto focus = QApplication::focusWidget();
     model.apply(ConnectionFlowEvent::kFirstFrameReady); workspace->update_connection(model.snapshot()); settle();
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kHidden);
-    EXPECT_FALSE(overlay()->panel()->isVisible()); EXPECT_FALSE(log->isVisible());
+    EXPECT_FALSE(overlay()->panel()->isVisible()); EXPECT_EQ(log->parentWidget(), home); EXPECT_FALSE(log->isVisible());
     EXPECT_EQ(QApplication::focusWidget(), focus);
     EXPECT_TRUE(tools->connection_button()->text().contains(QString::fromUtf8("已连接")));
     EXPECT_FALSE(tools->connection_button()->isChecked());
@@ -320,7 +339,10 @@ TEST_F(UnifiedSessionFixture, FirstFrameCompletionHidesPanelAndManualOpeningSurv
     for (int i = 0; i < 20; ++i) {
         workspace->update_connection(model.snapshot()); workspace->update_runtime("direct", "frame ready");
     }
-    EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded); EXPECT_TRUE(log->isVisible());
+    EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
+    EXPECT_TRUE(overlay()->panel()->findChild<QScrollArea*>("connectionOverlayScroll")->isVisible());
+    EXPECT_EQ(overlay()->panel()->findChild<QPlainTextEdit*>(), nullptr);
+    EXPECT_EQ(log->parentWidget(), home);
     model.observe_transport(false, false); workspace->update_connection(model.snapshot());
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
     model.apply(ConnectionFlowEvent::kAutomaticRetry); workspace->update_connection(model.snapshot());

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cctype>
 #include <chrono>
@@ -12,7 +13,9 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -26,6 +29,7 @@
 #define NOMINMAX
 #include <Windows.h>
 #else
+#include <signal.h>
 #include <unistd.h>
 #endif
 
@@ -87,6 +91,50 @@ bool starts_with_redclaw_log_prefix(const std::filesystem::path& path) {
     return name.rfind("redclaw-", 0) == 0;
 }
 
+bool process_is_running(std::uint64_t pid) {
+    if (pid == 0) return false;
+#if defined(_WIN32)
+    if (pid > static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max())) return false;
+    if (pid == current_process_id()) return true;
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (handle == nullptr) {
+        // Access denied still means a process exists. Do not delete its open log.
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    }
+    DWORD code = 0;
+    const BOOL ok = GetExitCodeProcess(handle, &code);
+    CloseHandle(handle);
+    return ok == TRUE && code == STILL_ACTIVE;
+#else
+    if (pid > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) return false;
+    if (pid == current_process_id()) return true;
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
+    return errno == EPERM;
+#endif
+}
+
+// redclaw-<stem>-<role>-<YYYYMMDD>-<HHMMSS>-<pid>.log[.N]
+std::optional<std::uint64_t> session_pid_from_log_name(const std::filesystem::path& path) {
+    std::string name = path.filename().string();
+    const auto log_pos = name.rfind(".log");
+    if (log_pos == std::string::npos || log_pos == 0) return std::nullopt;
+    if (log_pos + 4 < name.size()) {
+        if (name[log_pos + 4] != '.') return std::nullopt;
+        for (std::size_t index = log_pos + 5; index < name.size(); ++index) {
+            if (std::isdigit(static_cast<unsigned char>(name[index])) == 0) return std::nullopt;
+        }
+    }
+    name.resize(log_pos);
+    const auto dash = name.rfind('-');
+    if (dash == std::string::npos || dash + 1 >= name.size()) return std::nullopt;
+    std::uint64_t pid = 0;
+    const char* begin = name.data() + dash + 1;
+    const char* end = name.data() + name.size();
+    const auto parsed = std::from_chars(begin, end, pid);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || pid == 0) return std::nullopt;
+    return pid;
+}
+
 void cleanup_log_directory(const ProcessFileLoggerConfig& config) {
     std::error_code ec;
     if (!std::filesystem::is_directory(config.directory, ec)) {
@@ -107,14 +155,30 @@ void cleanup_log_directory(const ProcessFileLoggerConfig& config) {
             ec.clear();
             continue;
         }
+        // A new process must not keep the previous session's files. A live PID
+        // belongs to a sibling that still has the file open.
+        if (const auto pid = session_pid_from_log_name(entry.path());
+            pid.has_value() && !process_is_running(*pid)) {
+            std::filesystem::remove(entry.path(), ec);
+            ec.clear();
+            continue;
+        }
         const auto modified = entry.last_write_time(ec);
         if (ec) {
             ec.clear();
             continue;
         }
         if (config.retention_days > 0 && now - modified > retention) {
+            if (const auto pid = session_pid_from_log_name(entry.path());
+                pid.has_value() && process_is_running(*pid)) {
+                continue;
+            }
             std::filesystem::remove(entry.path(), ec);
             ec.clear();
+            continue;
+        }
+        if (const auto pid = session_pid_from_log_name(entry.path());
+            pid.has_value() && process_is_running(*pid)) {
             continue;
         }
         const auto size = entry.file_size(ec);
@@ -757,6 +821,39 @@ ProcessLogSnapshot ProcessFileLogger::snapshot(
     std::size_t max_lines,
     std::size_t max_bytes) const {
     return impl_->snapshot(after_cursor, max_lines, max_bytes);
+}
+
+void discard_previous_auxiliary_log(const std::filesystem::path& path) {
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(std::filesystem::path(path.string() + ".1"), ec);
+}
+
+bool append_bounded_text_file(
+    const std::filesystem::path& path,
+    std::string_view text,
+    std::uint64_t max_bytes) {
+    if (path.empty() || max_bytes == 0) return false;
+    std::error_code ec;
+    const bool exists = std::filesystem::is_regular_file(path, ec);
+    const auto size = exists && !ec ? std::filesystem::file_size(path, ec) : 0;
+    if (!ec && exists && size > 0 && size + text.size() > max_bytes) {
+        const auto backup = std::filesystem::path(path.string() + ".1");
+        std::filesystem::remove(backup, ec);
+        ec.clear();
+        std::filesystem::rename(path, backup, ec);
+        if (ec) {
+            ec.clear();
+            std::ofstream truncated(path, std::ios::binary | std::ios::trunc);
+            if (!truncated) return false;
+        }
+    }
+    std::ofstream output(path, std::ios::binary | std::ios::app);
+    if (!output) return false;
+    output.write(text.data(), static_cast<std::streamsize>(text.size()));
+    output.flush();
+    return static_cast<bool>(output);
 }
 
 ScopedProcessStreamCapture::ScopedProcessStreamCapture() : impl_(std::make_unique<Impl>()) {

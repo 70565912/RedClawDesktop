@@ -24,7 +24,7 @@ struct UnifiedSessionWorkspace::Impl {
     std::function<bool()> confirm, runtime_running;
     std::function<void()> request_stop, before_home;
 
-    Impl(QMainWindow* owner, QWidget* entry, QWidget* log, QSettings* settings)
+    Impl(QMainWindow* owner, QWidget* entry, QSettings* settings)
         : window(owner), pages(new QStackedWidget(owner)), home(entry), desktop(new QWidget(pages)) {
         pages->setObjectName("sessionWorkspacePages"); desktop->setObjectName("playbackWindow");
         desktop_theme::apply_canvas_palette(desktop);
@@ -32,7 +32,7 @@ struct UnifiedSessionWorkspace::Impl {
         auto* layout = new QVBoxLayout(desktop); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(0);
         pages->addWidget(home); pages->addWidget(desktop); pages->setCurrentWidget(home);
         owner->setCentralWidget(pages);
-        overlay = new ConnectionOverlay(desktop, log, settings);
+        overlay = new ConnectionOverlay(desktop, settings);
         stop_deadline = new QTimer(pages); stop_deadline->setSingleShot(true); stop_deadline->setInterval(15000);
         confirm = [owner] {
             QMessageBox prompt(QMessageBox::Question, QString::fromUtf8("断开连接？"),
@@ -52,8 +52,8 @@ struct UnifiedSessionWorkspace::Impl {
         pages->setCurrentWidget(home);
     }
 };
-UnifiedSessionWorkspace::UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QWidget* log, QSettings* settings)
-    : QObject(window), impl_(std::make_unique<Impl>(window, home, log, settings)) {
+UnifiedSessionWorkspace::UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QSettings* settings)
+    : QObject(window), impl_(std::make_unique<Impl>(window, home, settings)) {
     window->installEventFilter(this);
     impl_->overlay->set_disconnect_callback([this] { request_disconnect(); });
     connect(impl_->stop_deadline, &QTimer::timeout, this, [this] {
