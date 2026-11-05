@@ -193,6 +193,7 @@ private:
     std::uint64_t viewport_transaction_ = 0;
     bool viewport_sent_ = false;
     std::string last_dht_error_;
+    std::string last_logged_publish_error_;
 
     std::mutex control_send_mutex_;
     std::string control_epoch_;
@@ -525,16 +526,29 @@ void ControllerSession::Impl::publish_dht(std::uint64_t now_ms) {
     (void)publication_->observe(snapshot.revision, result);
 
     std::optional<ControllerSessionPhase> next;
+    bool publish_error_changed = false;
     {
         std::lock_guard lock(mutex_);
         if (!result) {
             if (!refresh) signal_dirty_ = true;
             next_publish_retry_ms_ = now_steady_ms()
                 + (result.state == service::DhtPublishState::kPending ? kLoopIntervalMs : config_.dht_publish_retry_ms);
+            publish_error_changed = publish_error != last_logged_publish_error_;
+            last_logged_publish_error_ = publish_error;
             last_dht_error_ = publish_error;
-            return;
         }
+    }
+    if (!result) {
+        if (publish_error_changed) {
+            log("controller_core dht publish not yet confirmed type=" + snapshot.description_type
+                + " error=" + (publish_error.empty() ? std::string("pending") : publish_error));
+        }
+        return;
+    }
+    {
+        std::lock_guard lock(mutex_);
         ++stats_.dht_publish_success;
+        last_logged_publish_error_.clear();
         local_revision_ = snapshot.revision;
         next_publish_retry_ms_ = 0;
         next_publish_refresh_ms_ = now_steady_ms() + kDhtPublishRefreshMs;

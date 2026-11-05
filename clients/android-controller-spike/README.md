@@ -149,7 +149,9 @@ Do not stop/restart the operator Host for these checks.
   adaptation relies on transport feedback only.
 - Phone-side ICE port is fixed (default 55000) like the desktop runtime.
 - `redclaw_controller_core_tests` (CTest) covers only config validation and
-  fail-closed start; the DHT/ICE/auth/media path is exercised by S0.2+ on
+  fail-closed start. A Linux x64 smoke of `start()` (unregistered machine code)
+  reached `requesting`, published the request to mainline DHT after ~20 s of
+  bootstrap and stopped cleanly; the DHT/ICE/auth/media path is exercised by S0.2+ on
   real hardware. The reused modules keep their existing suites
   (`tests/cmake/service-tests.cmake`, `net-tests.cmake`, `protocol-tests.cmake`,
   `security-tests.cmake`).
