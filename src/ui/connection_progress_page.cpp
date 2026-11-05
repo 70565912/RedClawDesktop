@@ -82,7 +82,7 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
 
   auto* root = new QVBoxLayout(this);
   root->setContentsMargins(compact ? QMargins{} : QMargins{24, 12, 24, 10});
-  root->setSpacing(7);
+  root->setSpacing(compact ? 4 : 7);
 
   title_ = new QLabel(this);
   title_->setObjectName("heroTitle");
@@ -130,7 +130,7 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
       "QGroupBox#connectionFlowBox { border: none; margin-top: 18px; padding: 0; background: transparent; }"
       "QGroupBox#connectionFlowBox::title { left: 0; padding: 0; }");
   auto* flow = new QHBoxLayout(flow_box);
-  flow->setContentsMargins(compact ? QMargins{0, 12, 0, 0} : QMargins{14, 14, 14, 10});
+  flow->setContentsMargins(compact ? QMargins{0, 6, 0, 0} : QMargins{14, 14, 14, 10});
   flow->setSpacing(compact ? 0 : 8);
 
   const auto& stage_names = role_ == ConnectionFlowRole::kHost ? kHostStages : kControllerStages;
@@ -140,10 +140,10 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
     auto* frame = new QFrame(flow_box);
     frame->setObjectName("connectionStage");
     frame->setMinimumWidth(compact ? 0 : 124);
-    frame->setMinimumHeight(compact ? 94 : 116);
+    frame->setMinimumHeight(compact ? 72 : 116);
     auto* card = new QVBoxLayout(frame);
-    card->setContentsMargins(compact ? QMargins{4, 6, 4, 6} : QMargins{12, 11, 12, 11});
-    card->setSpacing(compact ? 4 : 7);
+    card->setContentsMargins(compact ? QMargins{4, 4, 4, 4} : QMargins{12, 11, 12, 11});
+    card->setSpacing(compact ? 2 : 7);
 
     auto* number = new QLabel((compact ? QString::fromUtf8("阶段 %1") : QString("Stage %1")).arg(index + 1), frame);
     number->setObjectName("connectionStageNumber");
@@ -156,7 +156,7 @@ ConnectionProgressPage::ConnectionProgressPage(ConnectionFlowRole role, QWidget*
     auto* state = new QLabel("Pending", frame);
     state->setObjectName("connectionStageState");
     state->setAlignment(Qt::AlignCenter);
-    state->setMinimumHeight(compact ? 22 : 32);
+    state->setMinimumHeight(compact ? 20 : 32);
 
     card->addWidget(number);
     card->addWidget(name, 1);

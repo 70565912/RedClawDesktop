@@ -5,6 +5,7 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QLayout>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -36,6 +37,7 @@ QString phase_text(const ConnectionFlowSnapshot& flow) {
 
 struct ConnectionOverlay::Impl {
     QPointer<QWidget> surface, root, log, home;
+    QPointer<QPlainTextEdit> log_editor;
     QLayout* home_layout;
     QPointer<QSettings> settings;
     std::unique_ptr<BoundedFloatingWindow> panel;
@@ -52,6 +54,8 @@ struct ConnectionOverlay::Impl {
     ConnectionFlowSnapshot flow;
     QRect preferred;
     QSize expanded_applied;
+    QMargins log_margins;
+    QSizePolicy log_policy;
     QString transport, frame, stop_error, log_style;
     bool active = false, syncing = false, manual_size = false;
     std::function<void()> interacted, disconnect_requested, reconnect_requested;
@@ -61,10 +65,13 @@ struct ConnectionOverlay::Impl {
           home_layout(home->layout()), settings(store),
           panel(std::make_unique<BoundedFloatingWindow>(owner, false)) {
         log_style = view->styleSheet();
+        log_editor = view->findChild<QPlainTextEdit*>();
+        if (log_editor) log_policy = log_editor->sizePolicy();
+        if (view->layout()) log_margins = view->layout()->contentsMargins();
         panel->setObjectName("connectionOverlay");
         panel->setStyleSheet(desktop_theme::connection_panel_style());
         panel->setWindowTitle(QString::fromUtf8("连接"));
-        auto* layout = new QVBoxLayout(panel.get()); layout->setContentsMargins(16, 6, 16, 6); layout->setSpacing(10);
+        auto* layout = new QVBoxLayout(panel.get()); layout->setContentsMargins(16, 6, 16, 6); layout->setSpacing(6);
         layout->setSizeConstraint(QLayout::SetNoConstraint);
         header = new QWidget(panel.get()); header->setFixedHeight(30);
         header->setObjectName("connectionOverlayHeader");
@@ -81,12 +88,12 @@ struct ConnectionOverlay::Impl {
         scroll = new QScrollArea(panel.get()); scroll->setObjectName("connectionOverlayScroll");
         scroll->setFrameShape(QFrame::NoFrame); scroll->setWidgetResizable(true); scroll->setMinimumSize(0, 0);
         body = new QWidget(scroll); body->setMinimumWidth(448); body_layout = new QVBoxLayout(body);
-        body_layout->setContentsMargins(0, 0, 0, 0); body_layout->setSpacing(12);
+        body_layout->setContentsMargins(0, 0, 0, 0); body_layout->setSpacing(8);
         progress = new ConnectionProgressPage(ConnectionFlowRole::kController, body, ConnectionProgressPresentation::kOverlay);
         body_layout->addWidget(progress);
         auto* status_title = new QLabel(QString::fromUtf8("运行状态"), body);
         status_title->setObjectName("connectionSectionTitle"); body_layout->addWidget(status_title);
-        auto* states = new QGridLayout; states->setHorizontalSpacing(12); states->setVerticalSpacing(4);
+        auto* states = new QGridLayout; states->setHorizontalSpacing(12); states->setVerticalSpacing(2);
         auto add_indicator = [&](int row, int column, const QString& title, const char* name) {
             auto* label = new QLabel(title, body);
             label->setObjectName("connectionRuntimeLabel");
@@ -108,10 +115,10 @@ struct ConnectionOverlay::Impl {
         body_layout->addWidget(details);
         actions = new QWidget(panel.get());
         actions->setObjectName("connectionOverlayActions");
-        auto* buttons = new QHBoxLayout(actions); buttons->setContentsMargins(0, 10, 0, 0); buttons->addStretch();
+        auto* buttons = new QHBoxLayout(actions); buttons->setContentsMargins(0, 4, 0, 0); buttons->addStretch();
         reconnect = new QPushButton(QString::fromUtf8("重连"), body); reconnect->setObjectName("connectionOverlayReconnect");
         disconnect = new QPushButton(QString::fromUtf8("断开"), body); disconnect->setObjectName("connectionOverlayDisconnect");
-        reconnect->setFixedSize(100, 34); disconnect->setFixedSize(100, 34);
+        reconnect->setFixedSize(100, 32); disconnect->setFixedSize(100, 32);
         buttons->addWidget(reconnect); buttons->addWidget(disconnect);
         scroll->setWidget(body); layout->addWidget(scroll, 1); layout->addWidget(actions);
         if (settings) {
@@ -148,6 +155,8 @@ struct ConnectionOverlay::Impl {
     void move_log_home() {
         if (!log || !home || log->parentWidget() == home) return;
         body_layout->removeWidget(log); log->setParent(home); log->setStyleSheet(log_style);
+        if (log->layout()) log->layout()->setContentsMargins(log_margins);
+        if (log_editor) log_editor->setSizePolicy(log_policy);
         home_layout->addWidget(log); log->show();
     }
     void change(ConnectionOverlayState next) {
@@ -190,10 +199,10 @@ struct ConnectionOverlay::Impl {
         const int content_height = body->hasHeightForWidth() ? body->heightForWidth(content_width) : body->sizeHint().height();
         const int chrome_height = margins.top() + margins.bottom() + header->height()
             + actions->sizeHint().height() + 2 * panel->layout()->spacing() + frame;
-        // Fit the log viewport and all status sections, not the unbounded log
-        // history. Retained small geometry grows only as far as owner bounds allow.
-        return {width, std::min(available.height(), std::max(requested.height(),
-            std::max(content_height, body->minimumSizeHint().height()) + chrome_height))};
+        // Automatic height follows the compact log viewport and wrapped status
+        // text. Saved manual sizes bypass this calculation in sync().
+        return {width, std::min(available.height(),
+            std::max(content_height, body->minimumSizeHint().height()) + chrome_height)};
     }
     void sync() {
         if (syncing || !surface) return;
@@ -202,7 +211,7 @@ struct ConnectionOverlay::Impl {
         const bool available = active && surface->isVisible() && !surface->window()->isMinimized() && !area.isEmpty();
         if (!available) { panel->hide(); syncing = false; return; }
         if (!preferred.isValid()) {
-            const QSize size = expanded_size({560, 560}, area.size());
+            const QSize size = expanded_size({560, 0}, area.size());
             preferred = QRect(QPoint(std::max(0, area.width() - size.width() - 12), std::max(0, area.height() - size.height() - 12)), size);
         }
         QRect target = preferred.translated(area.topLeft());
@@ -247,6 +256,15 @@ void ConnectionOverlay::set_active(bool active) {
         impl_->log->setStyleSheet(impl_->log_style +
             " QGroupBox#primaryCard { border: none; margin-top: 0; padding: 0; background: transparent; }"
             " QGroupBox#primaryCard::title { left: 0; padding: 0; }");
+        if (impl_->log->layout()) {
+            impl_->log->layout()->setContentsMargins(0, 0, 0, 0);
+        }
+        if (impl_->log_editor) {
+            // Keep the group's minimum readable height and wrapped-text sizing;
+            // only the editor's larger preferred viewport is expendable.
+            auto policy = impl_->log_policy; policy.setVerticalPolicy(QSizePolicy::Ignored);
+            impl_->log_editor->setSizePolicy(policy);
+        }
         impl_->body_layout->addWidget(impl_->log, 1); impl_->log->show();
         impl_->flow = ConnectionFlowSnapshot{};
         impl_->stop_error.clear(); impl_->change(ConnectionOverlayState::kExpanded);

@@ -2,6 +2,24 @@
 
 Updated: 2026-11-05
 
+## Compact aligned Connection overlay ready for review
+
+Remove the log group's extra horizontal inset only while it is in the floating
+panel, restoring its original home margins and editor size policy on return.
+Tighten the compact stage cards, section gaps and footer without changing font
+sizes. Automatic height follows current content instead of the retained old
+default height; explicit user sizes and small-owner scrolling remain supported.
+At a 560-unit width the isolated connected fixture shrinks from 606 to 468 units,
+with log and status edges matching at 16/544 and at least six readable log lines.
+
+Standard serial Debug main/test builds and 65 related automatic checks pass,
+including wrapped diagnostics, manual sizing, collapse/return-home, native
+rendering and an offscreen 1.5-scale layout. Preserve the initial reproduction
+and intermediate wrapped-layout failure; final checks have no failures/skips.
+The complete independent 346-file Debug candidate passes manifest/build identity,
+restricted-path command startup and actual isolated GUI layout/home-return/exit
+checks. The serving Controller remains unchanged. Evidence: `overlay-compact-20261105`.
+
 ## Content-fitting overlay committed and local Host replaced
 
 Under direct authorization, locally commit the isolated M10-T02 UI, tests and
