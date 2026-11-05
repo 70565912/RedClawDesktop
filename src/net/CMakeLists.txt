@@ -25,7 +25,7 @@ target_include_directories(redclaw_net
 
 target_link_libraries(redclaw_net
   PUBLIC
-    LibDataChannel::LibDataChannel
+    $<IF:$<TARGET_EXISTS:LibDataChannel::LibDataChannel>,LibDataChannel::LibDataChannel,LibDataChannel::LibDataChannelStatic>
     redclaw_security
   PRIVATE OpenSSL::Crypto
 )

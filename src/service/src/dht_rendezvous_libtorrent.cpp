@@ -633,9 +633,10 @@ struct LibtorrentDhtRendezvousStore::Impl {
     }
 
     void update_fetch_elapsed_diagnostics(const PendingFetchState& state) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - state.started_at)
-                                 .count();
+        const auto elapsed = static_cast<std::int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - state.started_at)
+                .count());
         diagnostics.last_mutable_get_elapsed_ms = elapsed;
         diagnostics.max_mutable_get_elapsed_ms = std::max(
             diagnostics.max_mutable_get_elapsed_ms,

@@ -1,15 +1,23 @@
 add_subdirectory(core)
 add_subdirectory(protocol)
-add_subdirectory(agent)
 add_subdirectory(net)
 add_subdirectory(security)
+add_subdirectory(service)
+add_subdirectory(diag)
+add_subdirectory(controller_core)
+
+# Portable Controller builds (Android NDK) stop here: no capture, encode,
+# render, Qt or Windows service code is part of the Controller session core.
+if(REDCLAW_CONTROLLER_CORE_ONLY)
+  return()
+endif()
+
+add_subdirectory(agent)
 add_subdirectory(session)
 add_subdirectory(capture)
 add_subdirectory(render)
 add_subdirectory(input)
-add_subdirectory(service)
 add_subdirectory(helper)
-add_subdirectory(diag)
 add_subdirectory(runtime)
 add_subdirectory(workspace)
 

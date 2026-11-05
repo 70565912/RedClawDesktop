@@ -36,6 +36,10 @@ target_link_libraries(redclaw_protocol PUBLIC protobuf::libprotobuf
   PRIVATE OpenSSL::Crypto $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
 redclaw_apply_warnings(redclaw_protocol)
 
+if(REDCLAW_CONTROLLER_CORE_ONLY)
+  return()
+endif()
+
 # The local PowerShell API uses the same production codec, not a second wire
 # implementation or an old-text compatibility parser.
 find_package(Boost REQUIRED COMPONENTS json)

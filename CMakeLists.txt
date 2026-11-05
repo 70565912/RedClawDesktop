@@ -52,6 +52,12 @@ option(
   OFF
 )
 
+option(
+  REDCLAW_CONTROLLER_CORE_ONLY
+  "Build only the portable Controller session core and its module dependencies (Android NDK spike)"
+  OFF
+)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -66,6 +72,10 @@ function(redclaw_apply_warnings target_name)
 endfunction()
 
 add_subdirectory(src)
+
+if(REDCLAW_CONTROLLER_CORE_ONLY)
+  return()
+endif()
 
 if(WIN32)
   add_custom_target(redclaw_m03_trust_store_env_override_smoke
