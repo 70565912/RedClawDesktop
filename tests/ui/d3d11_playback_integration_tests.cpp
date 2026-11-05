@@ -27,6 +27,11 @@
 #include <QToolButton>
 #include "ui/runtime_log_view.h"
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QScreen>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QWindow>
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -75,6 +80,10 @@ TEST(PlaybackTheme, EmptyAndLetterboxedQtCanvasStayDarkWithoutRecoloringRemotePi
 
 TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponents) {
     using namespace redclaw::ui;
+    QTemporaryDir directory; ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("ui.ini"), QSettings::IniFormat);
+    // Existing installations may remember the former fixed default size.
+    settings.setValue("controller/connection_overlay/v1/geometry", QRect(24, 32, 560, 560));
     QMainWindow window; auto* home = new QWidget; auto* layout = new QVBoxLayout(home);
     auto* log_box = new QGroupBox(home); log_box->setObjectName("primaryCard");
     auto* log_layout = new QVBoxLayout(log_box); auto* log_header = new QHBoxLayout;
@@ -83,7 +92,7 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     log_header->addWidget(new QPushButton(QString::fromUtf8("复制日志")));
     log_header->addWidget(new QPushButton(QString::fromUtf8("清空显示")));
     log_layout->addLayout(log_header); auto* log = new RuntimeLogView(log_box); log_layout->addWidget(log); layout->addWidget(log_box);
-    UnifiedSessionWorkspace session(&window, home, log_box, nullptr);
+    UnifiedSessionWorkspace session(&window, home, log_box, &settings);
     const auto renderer = create_qt_playback_renderer(session.desktop_page());
     session.desktop_page()->layout()->addWidget(renderer.widget);
     DesktopTaskWorkspace tools(session.desktop_page(), nullptr); session.connection_overlay()->bind_button(tools.connection_button());
@@ -98,6 +107,43 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     for (const auto* text : {"开始连接远程设备", "已找到等待设备", "安全配对已完成", "正在建立网络路径"})
         log->appendPlainText(QString::fromUtf8("[10:24:01] ") + QString::fromUtf8(text));
     QCoreApplication::processEvents(); log->flush_pending();
+    auto* panel = session.connection_overlay()->panel();
+    auto* scroll = panel->findChild<QScrollArea*>("connectionOverlayScroll"); ASSERT_NE(scroll, nullptr);
+    const auto expect_full_information = [&] {
+        // Native tool windows cannot exceed the physical display's tracking
+        // limit, even if an oversized test owner extends beyond the display.
+        auto* content = scroll->widget();
+        const int content_height = content->hasHeightForWidth() ? content->heightForWidth(content->width()) : content->sizeHint().height();
+        const int required = content_height + panel->height() - scroll->viewport()->height();
+        const int available = QApplication::platformName() == "offscreen" ? session.desktop_page()->height()
+            : std::min(session.desktop_page()->height(), panel->screen()->availableGeometry().height());
+        const bool room = available >= required;
+        if (room) {
+            EXPECT_EQ(scroll->verticalScrollBar()->maximum(), 0);
+            EXPECT_EQ(scroll->horizontalScrollBar()->maximum(), 0);
+            EXPECT_GE(log->height(), log->sizeHint().height());
+            EXPECT_TRUE(scroll->viewport()->rect().contains(QRect(log_box->mapTo(scroll->viewport(), QPoint()), log_box->size())));
+        }
+        auto* disconnect = panel->findChild<QPushButton*>("connectionOverlayDisconnect");
+        EXPECT_NE(disconnect, nullptr);
+        if (!disconnect) return false;
+        EXPECT_TRUE(panel->rect().contains(QRect(disconnect->mapTo(panel, QPoint()), disconnect->size())));
+        return room;
+    };
+    expect_full_information();
+    const QSize expanded = panel->size();
+    const QSize canvas = renderer.widget->size();
+    window.resize(360, 240); QCoreApplication::processEvents();
+    const QRect small_bounds(session.desktop_page()->mapToGlobal(QPoint()), session.desktop_page()->size());
+    EXPECT_TRUE(small_bounds.contains(panel->geometry()));
+    EXPECT_GT(scroll->verticalScrollBar()->maximum(), 0);
+    window.resize(1440, 900); QCoreApplication::processEvents(); QCoreApplication::processEvents();
+    expect_full_information(); EXPECT_EQ(panel->size(), expanded); EXPECT_EQ(renderer.widget->size(), canvas);
+    // Log history scrolls inside the fixed log viewport, without growing the panel.
+    for (int line = 0; line < 80; ++line) log->appendPlainText(QString("log entry %1").arg(line));
+    log->flush_pending(); QCoreApplication::processEvents();
+    EXPECT_EQ(panel->size(), expanded); expect_full_information();
+    EXPECT_GT(log->verticalScrollBar()->maximum(), 0);
     const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
     if (!output.isEmpty()) {
         QDir().mkpath(output);
@@ -108,6 +154,10 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
         painter.end(); preview.save(output + "/workspace-connecting.png");
         session.connection_overlay()->panel()->grab().save(output + "/connection-panel.png");
     }
+    session.update_runtime("direct", QString("Frame diagnostic detail ").repeated(12));
+    QCoreApplication::processEvents(); QCoreApplication::processEvents();
+    if (expect_full_information()) EXPECT_GE(panel->height(), expanded.height());
+    EXPECT_EQ(renderer.widget->size(), canvas);
     EXPECT_FALSE(tools.task_visible(DesktopTask::kNavigation));
     flow.observe_transport(true, true); flow.apply(ConnectionFlowEvent::kFirstFrameReady);
     session.update_connection(flow.snapshot());

@@ -32,7 +32,7 @@
 
 namespace {
 using namespace redclaw::ui;
-void settle() { QApplication::processEvents(); }
+void settle() { QApplication::processEvents(); QApplication::processEvents(); }
 ConnectionFlowSnapshot connected() {
     ConnectionFlowSnapshot flow; flow.role = ConnectionFlowRole::kController;
     flow.view = ConnectionFlowView::kConnecting; flow.status = ConnectionFlowStatus::kComplete;
@@ -271,6 +271,26 @@ TEST_F(UnifiedSessionFixture, DragPersistsPositionAndCollapseDoesNotOverwriteExp
     EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
     EXPECT_EQ(overlay()->panel()->size(), expanded);
     EXPECT_EQ(overlay()->panel()->pos() - workspace->desktop_page()->mapToGlobal(QPoint()), saved.topLeft());
+    auto* panel = overlay()->panel();
+    const auto start = panel->mapToGlobal(QPoint(panel->width() - 2, panel->height() - 2));
+    const auto end = start + QPoint(-40, -100);
+    auto resize_mouse = [&](QEvent::Type type, QPoint global, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(panel->mapFromGlobal(global)), QPointF(global),
+            type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+        QApplication::sendEvent(panel, &event);
+    };
+    resize_mouse(QEvent::MouseButtonPress, start, Qt::LeftButton);
+    resize_mouse(QEvent::MouseMove, end, Qt::LeftButton);
+    resize_mouse(QEvent::MouseButtonRelease, end, Qt::NoButton); settle();
+    const auto manual = panel->size();
+    EXPECT_LT(manual.height(), expanded.height());
+    EXPECT_TRUE(settings.value("controller/connection_overlay/v1/manual_size").toBool());
+    EXPECT_EQ(settings.value("controller/connection_overlay/v1/geometry").toRect().size(), manual);
+    overlay()->set_state(ConnectionOverlayState::kCollapsed);
+    overlay()->set_state(ConnectionOverlayState::kExpanded); settle();
+    EXPECT_EQ(panel->size(), manual);
+    window.resize(1100, 760); settle();
+    EXPECT_EQ(panel->size(), manual);
 }
 
 TEST_F(UnifiedSessionFixture, HostPageCloseIsNotRoutedAsControllerDisconnect) {

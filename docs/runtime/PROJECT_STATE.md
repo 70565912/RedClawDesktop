@@ -1,6 +1,29 @@
 # Project State
 
-Updated: 2026-11-03
+Updated: 2026-11-05
+
+## Content-fitting Connection overlay
+
+Default expansion now measures the status sections, wrapped diagnostics and the
+log viewport instead of relying only on 560x560. Grow older saved default geometry
+when room permits, retain position/larger sizes, and fall back to scrolling within
+the owner's bounds when space is limited. Log history remains internally scrollable.
+An optional versioned UI preference marks explicit user resizes; those sizes remain
+remembered across folding/reopening and owner resizing. Content layout requests
+update automatic sizing without a timer or per-frame work.
+
+The real-component regression reproduces the old 48-unit outer scroll range in a
+roomy owner and passes after repair. Standard Debug main/test builds, 61 focused
+UI/log/input/fullscreen cases and all 10 native-D3D11/Qt cases pass with zero final
+failures/skips. Native 1.5 scaling verifies limited-screen fallback; an offscreen
+scaled fixture verifies the roomy case without a physical-monitor requirement.
+Both are automatic layout evidence, not physical multi-monitor visual acceptance.
+The fresh complete 321-file independent Debug candidate passes manifest/build
+identity, command startup and isolated GUI startup/exit, including existing default
+hide/home/Quit behavior. Preserve previous uncommitted documents. No source push,
+running-program replacement or peer action; the existing Host stays in service.
+The unrelated earlier Agent megabyte timing failure is not retested or resolved.
+Evidence: `connection-overlay-fit-20261105`.
 
 ## Toolbar alignment and authorized local Host transition
 

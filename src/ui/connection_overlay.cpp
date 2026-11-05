@@ -15,6 +15,7 @@
 namespace redclaw::ui {
 namespace {
 constexpr auto kGeometry = "controller/connection_overlay/v1/geometry";
+constexpr auto kManualSize = "controller/connection_overlay/v1/manual_size";
 void indicator(QLabel* label, const QString& text, const char* color) {
     if (label->text() != text) label->setText(text);
     const auto style = QString("color: %1; background: transparent;").arg(color);
@@ -50,8 +51,9 @@ struct ConnectionOverlay::Impl {
     ConnectionOverlayState state = ConnectionOverlayState::kExpanded;
     ConnectionFlowSnapshot flow;
     QRect preferred;
+    QSize expanded_applied;
     QString transport, frame, stop_error, log_style;
-    bool active = false, syncing = false;
+    bool active = false, syncing = false, manual_size = false;
     std::function<void()> interacted, disconnect_requested, reconnect_requested;
 
     Impl(QWidget* owner, QWidget* view, QSettings* store)
@@ -112,13 +114,22 @@ struct ConnectionOverlay::Impl {
         reconnect->setFixedSize(100, 34); disconnect->setFixedSize(100, 34);
         buttons->addWidget(reconnect); buttons->addWidget(disconnect);
         scroll->setWidget(body); layout->addWidget(scroll, 1); layout->addWidget(actions);
-        if (settings) preferred = settings->value(kGeometry).toRect();
+        if (settings) {
+            preferred = settings->value(kGeometry).toRect();
+            manual_size = preferred.isValid() && settings->value(kManualSize, false).toBool();
+        }
         panel->interacted = [this] { interact(); };
         panel->geometry_committed = [this] {
             QRect rect = panel->geometry().translated(-bounds().topLeft());
             if (state == ConnectionOverlayState::kCollapsed) preferred.moveTopLeft(rect.topLeft());
-            else preferred = rect;
-            if (settings) settings->setValue(kGeometry, preferred);
+            else {
+                if (rect.size() != expanded_applied) manual_size = true;
+                preferred = rect;
+            }
+            if (settings) {
+                settings->setValue(kGeometry, preferred);
+                settings->setValue(kManualSize, manual_size);
+            }
         };
         QObject::connect(fold, &QToolButton::clicked, owner, [this] {
             interact(); change(state == ConnectionOverlayState::kCollapsed ? ConnectionOverlayState::kExpanded : ConnectionOverlayState::kCollapsed);
@@ -167,6 +178,23 @@ struct ConnectionOverlay::Impl {
             && (flow.status == ConnectionFlowStatus::kComplete || flow.status == ConnectionFlowStatus::kFailed
                 || flow.status == ConnectionFlowStatus::kDisconnected || flow.status == ConnectionFlowStatus::kRetryWaiting));
     }
+    QSize expanded_size(QSize requested, QSize available) const {
+        panel->ensurePolished();
+        const auto margins = panel->layout()->contentsMargins();
+        const int frame = 2 * scroll->frameWidth();
+        const int horizontal = margins.left() + margins.right();
+        const int content_minimum = body->minimumSizeHint().width() + horizontal + frame;
+        const int chrome_minimum = std::max(header->minimumSizeHint().width(), actions->minimumSizeHint().width()) + horizontal;
+        const int width = std::min(available.width(), std::max({requested.width(), content_minimum, chrome_minimum}));
+        const int content_width = std::max(body->minimumWidth(), width - horizontal - frame);
+        const int content_height = body->hasHeightForWidth() ? body->heightForWidth(content_width) : body->sizeHint().height();
+        const int chrome_height = margins.top() + margins.bottom() + header->height()
+            + actions->sizeHint().height() + 2 * panel->layout()->spacing() + frame;
+        // Fit the log viewport and all status sections, not the unbounded log
+        // history. Retained small geometry grows only as far as owner bounds allow.
+        return {width, std::min(available.height(), std::max(requested.height(),
+            std::max(content_height, body->minimumSizeHint().height()) + chrome_height))};
+    }
     void sync() {
         if (syncing || !surface) return;
         syncing = true;
@@ -174,7 +202,7 @@ struct ConnectionOverlay::Impl {
         const bool available = active && surface->isVisible() && !surface->window()->isMinimized() && !area.isEmpty();
         if (!available) { panel->hide(); syncing = false; return; }
         if (!preferred.isValid()) {
-            const QSize size = QSize(560, 560).boundedTo(area.size());
+            const QSize size = expanded_size({560, 560}, area.size());
             preferred = QRect(QPoint(std::max(0, area.width() - size.width() - 12), std::max(0, area.height() - size.height() - 12)), size);
         }
         QRect target = preferred.translated(area.topLeft());
@@ -192,9 +220,13 @@ struct ConnectionOverlay::Impl {
         } else {
             panel->setMinimumHeight(0);
             panel->setMaximumHeight(QWIDGETSIZE_MAX);
+            if (!manual_size) target.setSize(expanded_size(target.size(), area.size()));
         }
         panel->set_resizable(!collapsed); panel->set_bounds(area);
-        if (!panel->dragging()) panel->setGeometry(bounded_floating_rect(target, area));
+        if (!panel->dragging()) {
+            panel->setGeometry(bounded_floating_rect(target, area));
+            if (!collapsed) expanded_applied = panel->size();
+        }
         panel->setVisible(available && state != ConnectionOverlayState::kHidden);
         if (panel->isVisible()) panel->raise();
         raise_toolbar();
@@ -280,6 +312,8 @@ void ConnectionOverlay::set_reconnect_callback(std::function<void()> callback) {
 QWidget* ConnectionOverlay::panel() const { return impl_->panel.get(); }
 bool ConnectionOverlay::eventFilter(QObject* watched, QEvent* event) {
     if (impl_->syncing) return false;
+    if (watched == impl_->body && event->type() == QEvent::LayoutRequest
+        && impl_->state == ConnectionOverlayState::kExpanded && !impl_->manual_size) impl_->sync();
     if (watched == impl_->surface || watched == impl_->root) {
         switch (event->type()) {
         case QEvent::Show: case QEvent::Hide: case QEvent::Move: case QEvent::Resize:

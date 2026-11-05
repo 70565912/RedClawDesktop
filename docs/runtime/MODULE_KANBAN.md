@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-11-03
+Updated: 2026-11-05
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -110,7 +110,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-03
+Updated: 2026-11-05
+
+Content-fitting Connection overlay (2026-11-05, M10-T02) — implemented and locally verified. Measure natural content/wrapped diagnostics and fit the default expanded panel within owner bounds; upgrade older small defaults while retaining positions and larger sizes. Keep log history scrolling inside its viewport, small-window outer scrolling and remembered explicit user sizes. A pre-fix 48-unit outer range regression, standard Debug build, 61 focused UI and 10 native-D3D11/Qt cases, plus native/offscreen 1.5-scale fixture checks pass without final failures/skips. The complete 321-file candidate passes full manifest/build identity and command/isolated GUI startup/exit. Preserve prior work; no push or runtime/Host replacement. Physical multi-monitor/peer visuals remain unperformed; the earlier unrelated Agent timing issue remains recorded below. Evidence: `connection-overlay-fit-20261105`.
 
 Toolbar alignment and local Host standby (2026-11-03, M10-T02) — done. Reproduce unequal push/tool button heights, then give every visible toolbar item one content/DPI-sized row height and permit buttons to fill it. Retain checked styling, wrapping, input isolation and unchanged canvas geometry. Standard Debug build, all 200 related UI/native-D3D11 cases, the targeted layout case at 1.5 scaling and all 13 publication-gate checks pass. Normally publish source `871de08`, preserving 85 unrelated document lines outside the commit. The authorized independent local role switch completes with both 321-file installed/rollback manifests, exact arguments, existing settings/Normal priority and task cleanup verified. A fresh Host status confirms DHT publication and waiting for the peer; no rollback. Standby does not prove peer media/input or native-paste completion. See the development log. Evidence: `toolbar-alignment-host-20261103`.
 
