@@ -2,6 +2,31 @@
 
 Updated: 2026-11-05
 
+## Compact overlay published and local controlled Host running
+
+Normally commit and push the scoped M10-T02 UI, regression and documentation as
+`727c5cd`, preserving all prior unrelated local records and launcher changes.
+Rebuild Debug through the serial standard entry; 65 related UI/native-render/
+scaled-layout checks, 13 publication checks and both independent startup-rollback
+and parent-exit fixtures pass. The fresh complete 346-file candidate passes full
+manifest/build identity, restricted-path command startup and actual isolated GUI
+layout/home-return/exit checks.
+
+After the operator explicitly requests stopping Controller and running Host,
+recheck the previous clipboard batch: the transfer gate is already idle, so no
+cancel request is needed. Independent current-user recovery owns the transition
+before graceful Controller exit and full-directory replacement. Both candidate
+and old-program Host starts are bound to the operator's private local code and
+retained Host password, with publication required for success. Installed, rollback
+and pre-stop checkpoint manifests each verify 346 files. Three encrypted
+credentials, the Controller's private target and original Normal priority remain
+intact; the one-shot recovery task is removed.
+
+Fresh matching Host publication, DHT reachability/listener readiness and the
+controlled Debug interface pass. Leave Host in `dht_waiting`, with no connected
+peer or runtime error; no peer media or continuity test is claimed. Evidence:
+`compact-host-deploy-20261105/result.json`.
+
 ## Compact aligned Connection overlay ready for review
 
 Remove the log group's extra horizontal inset only while it is in the floating
