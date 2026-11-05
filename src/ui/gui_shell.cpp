@@ -44,6 +44,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -1282,10 +1283,13 @@ bool launch_gui_shell(
   GuiDiagnosticWriter diagnostic_writer([process_logger, echo = gui_auto_start.auto_start](
       const GuiDiagnosticWriter::LogRecord& record, QString* error) {
     if (!record.append_path.isEmpty()) {
-      QFile file(record.append_path);
-      const bool ok = file.open(QIODevice::WriteOnly | QIODevice::Append)
-          && file.write(record.text) == record.text.size() && file.flush();
-      if (!ok && error) *error = file.errorString();
+      const auto* data = record.text.constData();
+      const std::string_view bytes(data == nullptr ? "" : data, static_cast<std::size_t>(record.text.size()));
+      const bool ok = redclaw::diag::append_bounded_text_file(
+          std::filesystem::path(record.append_path.toStdWString()),
+          bytes,
+          redclaw::diag::kAuxiliarySessionLogMaxBytes);
+      if (!ok && error) *error = "GUI auxiliary log write failed";
       return ok;
     }
     if (echo) std::cout << record.text.toStdString() << '\n';
@@ -1741,6 +1745,7 @@ bool launch_gui_shell(
   const QString status_path = QDir(effective_log_dir).filePath("status.json");
   const QString evidence_manifest_path = QDir(effective_log_dir).filePath("evidence-manifest.json");
   const QString control_events_path = QDir(effective_log_dir).filePath("control-events.log");
+  redclaw::diag::discard_previous_auxiliary_log(std::filesystem::path(control_events_path.toStdWString()));
   redclaw::diag::DebugRuntimeStatus debug_status;
   debug_status.run_id = gui_auto_start.run_id.toStdString();
   debug_status.role = gui_auto_start.role.toStdString();
@@ -2290,7 +2295,7 @@ bool launch_gui_shell(
   });
   QTimer::singleShot(0, tabs, sync_connection_view_height);
 
-  session_workspace = new UnifiedSessionWorkspace(&window, shell, session_log_box, ui_settings);
+  session_workspace = new UnifiedSessionWorkspace(&window, shell, ui_settings);
   auto refresh_connection_flow_page = [&]() {
     const ConnectionFlowSnapshot& snapshot = connection_flow_model.snapshot();
     connecting_page->set_snapshot(snapshot);

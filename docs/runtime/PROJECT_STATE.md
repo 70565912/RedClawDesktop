@@ -2,6 +2,18 @@
 
 Updated: 2026-11-05
 
+## Connection overlay no longer shows the runtime log
+
+The floating Connection panel keeps progress, pairing/handshake/live-link/process
+indicators, path and picture status, and reconnect/disconnect. It does not host
+the scrolling log. The connection page still has its own log view. Diagnostics
+continue to go to capacity-limited files under `%LOCALAPPDATA%\RedClawDesktop\logs`
+(or `%TEMP%\RedClawDesktop\logs`, or `--log-dir`). Each file rotates at 10 MiB
+with 5 generations. Startup deletes previous-session `redclaw-*` logs whose
+process is gone, and still applies the 7-day and 250 MiB caps to unnamed
+leftovers. `control-events.log` is cleared on GUI startup and capped at 10 MiB
+with one backup. Windows Debug and UI execution remain for the coordinator.
+
 ## Compact overlay published and local controlled Host running
 
 Normally commit and push the scoped M10-T02 UI, regression and documentation as

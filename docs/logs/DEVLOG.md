@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-11-05 — Remove the Connection overlay log and bound startup log files
+
+- The floating Connection panel no longer reparents or displays the scrolling runtime log. Pairing, handshake, live-link, process, path and picture status stay in the panel, with reconnect and disconnect. The connection page still keeps its own bounded log view, and every GUI log line is still written through the existing process file logger.
+- Startup of `ProcessFileLogger` deletes previous-session `redclaw-*` files whose PID is not running, including rotated `.log.N` siblings. Logs owned by a live process stay in place. Files that do not carry a PID still follow the existing 7-day and 250 MiB directory caps. Each active file still rotates at 10 MiB with at most 5 generations. Default directory remains `%LOCALAPPDATA%\RedClawDesktop\logs` (`%TEMP%\RedClawDesktop\logs` or `--log-dir` otherwise).
+- GUI `control-events.log` is removed on startup, then appended with a 10 MiB cap and one `.1` backup.
+- This environment cannot run the Windows Debug/`build.ps1` UI suites. The cleanup and auxiliary-log functions were extracted and executed on Linux against the same startup, retention, directory-cap and 10 MiB-style append cases; that check passed. The project cases are `ProcessFileLogger.StartupDeletesPreviousSessionLogsAndCapsLeftovers` and `AuxiliarySessionLog.StartupDiscardAndAppendStayWithinCapacity`. Overlay coverage is in the existing unified-session, connection-flow and playback layout tests.
+
 ## 2026-11-05 — Publish the compact overlay and run the authorized local Host
 
 - Normally commit and push the isolated six-file M10-T02 UI/regression/document change as `727c5cd`, preserving prior unrelated launcher and document edits. Rebuild Debug through `build.ps1` with the matching compiler; 65 related automatic cases and 13 publication checks pass without failures/skips. Both independent startup-rollback and parent-exit fixtures pass. Preserve the initial wrapper argument/encoding failures separately from the successful checks. The fresh complete 346-file candidate passes full manifest/build identity, restricted-path command startup and actual isolated GUI layout/home-return/exit checks.

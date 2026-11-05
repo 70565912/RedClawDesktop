@@ -101,7 +101,7 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     log_layout->addLayout(log_header); auto* log = new RuntimeLogView(log_box); log->setMinimumHeight(84);
     const auto home_editor_policy = log->sizePolicy();
     log_layout->addWidget(log, 1); layout->addWidget(log_box);
-    UnifiedSessionWorkspace session(&window, home, log_box, &settings);
+    UnifiedSessionWorkspace session(&window, home, &settings);
     const auto renderer = create_qt_playback_renderer(session.desktop_page());
     session.desktop_page()->layout()->addWidget(renderer.widget);
     DesktopTaskWorkspace tools(session.desktop_page(), nullptr); session.connection_overlay()->bind_button(tools.connection_button());
@@ -118,6 +118,9 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     QCoreApplication::processEvents(); log->flush_pending(); QCoreApplication::processEvents();
     auto* panel = session.connection_overlay()->panel();
     auto* scroll = panel->findChild<QScrollArea*>("connectionOverlayScroll"); ASSERT_NE(scroll, nullptr);
+    EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
+    EXPECT_EQ(log_box->parentWidget(), home);
+    EXPECT_FALSE(panel->isAncestorOf(log_box));
     const auto expect_full_information = [&](const char* phase) {
         SCOPED_TRACE(phase);
         // Native tool windows cannot exceed the physical display's tracking
@@ -125,14 +128,17 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
         const int available = QApplication::platformName() == "offscreen" ? session.desktop_page()->height()
             : std::min(session.desktop_page()->height(), panel->screen()->availableGeometry().height());
         const bool room = panel->height() < available;
+        EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
+        EXPECT_EQ(log_box->parentWidget(), home);
         if (room) {
             EXPECT_EQ(scroll->verticalScrollBar()->maximum(), 0);
             EXPECT_EQ(scroll->horizontalScrollBar()->maximum(), 0);
-            EXPECT_GE(log->viewport()->height(), 6 * log->fontMetrics().lineSpacing());
-            const QRect log_bounds(log_box->mapTo(scroll->viewport(), QPoint()), log_box->size());
-            EXPECT_TRUE(scroll->viewport()->rect().contains(log_bounds))
+            auto* details = panel->findChild<QLabel*>("connectionRuntimeDetails");
+            ASSERT_NE(details, nullptr);
+            const QRect detail_bounds(details->mapTo(scroll->viewport(), QPoint()), details->size());
+            EXPECT_TRUE(scroll->viewport()->rect().contains(detail_bounds))
                 << "viewport=" << scroll->viewport()->width() << 'x' << scroll->viewport()->height()
-                << " log=" << log_bounds.x() << ',' << log_bounds.y() << ',' << log_bounds.width() << ',' << log_bounds.height();
+                << " details=" << detail_bounds.x() << ',' << detail_bounds.y() << ',' << detail_bounds.width() << ',' << detail_bounds.height();
         }
         auto* disconnect = panel->findChild<QPushButton*>("connectionOverlayDisconnect");
         EXPECT_NE(disconnect, nullptr);
@@ -142,11 +148,6 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     };
     expect_full_information("initial layout");
     auto* progress = panel->findChild<QWidget*>("connectingPage"); ASSERT_NE(progress, nullptr);
-    const int section_left = progress->mapTo(panel, QPoint()).x();
-    const int section_right = section_left + progress->width();
-    EXPECT_EQ(label->mapTo(panel, QPoint()).x(), section_left);
-    EXPECT_EQ(log->mapTo(panel, QPoint()).x(), section_left);
-    EXPECT_EQ(log->mapTo(panel, QPoint()).x() + log->width(), section_right);
     EXPECT_LE(panel->height(), 500);
     const QSize expanded = panel->size();
     const QSize canvas = renderer.widget->size();
@@ -156,11 +157,11 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     EXPECT_GT(scroll->verticalScrollBar()->maximum(), 0);
     window.resize(1440, 900); QCoreApplication::processEvents(); QCoreApplication::processEvents();
     expect_full_information("owner restored"); EXPECT_EQ(panel->size(), expanded); EXPECT_EQ(renderer.widget->size(), canvas);
-    // Log history scrolls inside the fixed log viewport, without growing the panel.
+    // Home-page log history must not change the floating panel, which has no log view.
     for (int line = 0; line < 80; ++line) log->appendPlainText(QString("log entry %1").arg(line));
     log->flush_pending(); QCoreApplication::processEvents();
     EXPECT_EQ(panel->size(), expanded); expect_full_information("long log history");
-    EXPECT_GT(log->verticalScrollBar()->maximum(), 0);
+    EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
     const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
     if (!output.isEmpty()) {
         QDir().mkpath(output);
@@ -184,7 +185,7 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     session.update_runtime("unknown", "Remote desktop live (1760x990, backend: d3d11).");
     QCoreApplication::processEvents(); QCoreApplication::processEvents();
     EXPECT_LE(panel->height(), 500);
-    EXPECT_EQ(log->mapTo(panel, QPoint()).x(), progress->mapTo(panel, QPoint()).x());
+    EXPECT_EQ(log_box->parentWidget(), home);
     if (!output.isEmpty()) {
         panel->grab().save(output + "/connection-connected.png");
         QFile metrics(output + "/connection-metrics.json");
@@ -192,10 +193,8 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
         metrics.write(QJsonDocument(QJsonObject{
             {"width", panel->width()}, {"height", panel->height()},
             {"section_left", progress->mapTo(panel, QPoint()).x()},
-            {"log_left", log->mapTo(panel, QPoint()).x()},
-            {"log_right", log->mapTo(panel, QPoint()).x() + log->width()},
             {"section_right", progress->mapTo(panel, QPoint()).x() + progress->width()},
-            {"log_viewport_height", log->viewport()->height()}}).toJson());
+            {"log_in_panel", false}}).toJson());
     }
     session.set_confirm_disconnect([] { return true; });
     session.set_request_stop([] {}); session.set_runtime_running([] { return false; });
@@ -209,9 +208,8 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
 TEST(D3D11Playback, UnifiedWindowOverlayDoesNotResizeRendererAndReconnectRetainsCanvas) {
     using namespace redclaw::ui;
     QMainWindow window;
-    auto* home = new QWidget; auto* home_layout = new QVBoxLayout(home);
-    auto* log = new QLabel("isolated UI fixture log", home); home_layout->addWidget(log);
-    UnifiedSessionWorkspace session(&window, home, log, nullptr);
+    auto* home = new QWidget;
+    UnifiedSessionWorkspace session(&window, home, nullptr);
     const auto renderer = try_create_d3d11_playback_renderer(session.desktop_page());
     ASSERT_NE(renderer.widget, nullptr);
     session.desktop_page()->layout()->addWidget(renderer.widget);

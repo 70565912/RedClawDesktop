@@ -18,7 +18,7 @@ enum class SessionDisconnectState { kIdle, kStopping, kFailed };
 // the runtime controller remains the authority for actual session shutdown.
 class UnifiedSessionWorkspace final : public QObject {
 public:
-    UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QWidget* log, QSettings* settings);
+    UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QSettings* settings);
     ~UnifiedSessionWorkspace() override;
     [[nodiscard]] QWidget* desktop_page() const;
     [[nodiscard]] ConnectionOverlay* connection_overlay() const;

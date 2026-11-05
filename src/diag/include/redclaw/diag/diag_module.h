@@ -58,6 +58,10 @@ struct ProcessFileLoggerConfig {
 	std::filesystem::path directory;
 	std::string file_stem = "redclaw-desktop";
 	std::string role = "app";
+	// Each active file rotates at max_file_bytes and keeps max_file_count generations.
+	// Startup deletes previous-session redclaw-* logs whose PID is not running, then
+	// applies retention_days and max_directory_bytes to remaining unscoped files.
+	// Logs owned by a live sibling process are left open.
 	std::uint64_t max_file_bytes = 10ULL * 1024ULL * 1024ULL;
 	std::size_t max_file_count = 5;
 	std::uint32_t retention_days = 7;
@@ -273,6 +277,14 @@ private:
 [[nodiscard]] std::string export_support_bundle(const SupportBundleRequest& request);
 [[nodiscard]] std::string export_connectivity_diagnostics_snapshot(const ConnectivityDiagnosticsSnapshot& snapshot);
 [[nodiscard]] std::string redact_log_text(std::string_view line);
+// Auxiliary session logs, such as control-events.log, are discarded at GUI startup.
+// Appends keep one .1 backup and stay within this size except for a single oversized record.
+inline constexpr std::uint64_t kAuxiliarySessionLogMaxBytes = 10ULL * 1024ULL * 1024ULL;
+void discard_previous_auxiliary_log(const std::filesystem::path& path);
+[[nodiscard]] bool append_bounded_text_file(
+	const std::filesystem::path& path,
+	std::string_view text,
+	std::uint64_t max_bytes = kAuxiliarySessionLogMaxBytes);
 [[nodiscard]] bool remote_diagnostics_allowed_by_policy(
 	bool release_build,
 	bool local_opt_in) noexcept;

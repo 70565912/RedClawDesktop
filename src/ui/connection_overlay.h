@@ -15,10 +15,10 @@ enum class ConnectionOverlayState { kExpanded, kCollapsed, kHidden };
 enum class ConnectionPairingState { kReady, kConnecting, kConnected, kAttention, kClosed };
 enum class ConnectionProcessState { kIdle, kActive, kStopping, kFailed };
 
-// Presentation only. The existing session owns transport and log storage.
+// Presentation only. The session owns transport. Diagnostics stay in log files.
 class ConnectionOverlay final : public QObject {
 public:
-    ConnectionOverlay(QWidget* surface, QWidget* log, QSettings* settings);
+    ConnectionOverlay(QWidget* surface, QSettings* settings);
     ~ConnectionOverlay() override;
     void set_active(bool active);
     void set_state(ConnectionOverlayState state);
