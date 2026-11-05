@@ -1,0 +1,22 @@
+{
+  "name": "redclaw-android-controller-spike",
+  "version-string": "0.1.11",
+  "description": "S0.1 spike: dependencies of the portable Controller session core only (no capture/encode/Qt).",
+  "dependencies": [
+    "openssl",
+    "boost-json",
+    "protobuf",
+    "zstd",
+    {
+      "name": "libdatachannel",
+      "features": [
+        "srtp"
+      ]
+    },
+    {
+      "name": "libtorrent",
+      "default-features": false
+    },
+    "miniupnpc"
+  ]
+}
