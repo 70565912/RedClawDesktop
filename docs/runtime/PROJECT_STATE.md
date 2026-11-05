@@ -2,6 +2,31 @@
 
 Updated: 2026-11-05
 
+## Content-fitting overlay committed and local Host replaced
+
+Under direct authorization, locally commit the isolated M10-T02 UI, tests and
+documentation as `d3e4462`, preserving all unrelated uncommitted records. Rebuild
+the committed Debug application through `build.ps1` and publish a fresh complete
+321-file candidate. Package integrity/build identity, command and isolated GUI
+startup pass. The 67 protocol/capture/input cases, 10 native-D3D11/Qt cases and
+61 focused UI cases pass without failures/skips. Reuse unchanged-source scaled
+layout evidence; fresh independent startup-rollback/parent-exit fixtures and all
+13 publication-gate checks also pass. The earlier unrelated Agent megabyte
+timing failure remains recorded and is not retested or claimed repaired.
+
+The independent current-user recovery worker replaces only this local Host,
+retaining its active launch parameters, saved credentials/authorizations and
+complete original bundle. Startup or missing fresh publication triggers automatic
+restoration of the original Host. The actual replacement completes with fresh
+Host publication, locally observed automatic reconnection and common clipboard
+capability 5. One fixed 12-second window advances real capture/encode/transmit by
+20 each, with no synthetic or related failure increase. Both installed and rollback
+321-file manifests pass; Normal priority and one-shot task removal are verified.
+No rollback is triggered. No GitHub push, peer operation, user clipboard/file
+operation, network/security change or continuity/stress test. Peer physical pixels,
+peer receive/decode/presentation and physical input are not independently observed.
+Evidence: `connection-fit-host-deploy-20261105`.
+
 ## Content-fitting Connection overlay
 
 Default expansion now measures the status sections, wrapped diagnostics and the
