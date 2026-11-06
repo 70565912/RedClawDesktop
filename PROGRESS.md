@@ -8,9 +8,36 @@ Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.m
 
 ## This branch, not merged
 
-Root `AGENTS.md` now opens with the onboarding gate Ryan approved on 2026-11-06 (via 小程). It is on PR #4. Merge waits for Ryan's explicit yes. The build, security, and protocol rules already in that file stay below the gate.
+Branch `cursor/fix-controller-host-clipboard-paste-0a34`: Controller-to-Host clipboard paste fix (M10-T03). Merge waits for Ryan's explicit yes. Decision: [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
+
+- Root cause. With capability 5, the Host injects the fixed Ctrl+V right after it installs the offer, before any bulk transfer exists. Injection went through `RemoteInputSession::paste_verified_clipboard`, which only works while a transfer gate is held. So every Host shortcut paste failed with `clipboard_input_revoked`. The Controller only showed the error in the hidden file panel. That is why no four-key paste inject reached the Host.
+- Contributing liveness defects, all silent before:
+  - A stopped native port (listener failure, queue overflow, exception) stayed dead for the whole session.
+  - Clipboard capture and `OleSetClipboard` were not retried while another program held the clipboard open, so the Host kept a stale `RedClaw.ClipboardOffer.v5`.
+  - A Host demand with a stale token, or one that hit a busy slot, was dropped without a reply.
+  - Unanswered reservations and shortcut waits had no bound.
+- Fix:
+  - `paste_shortcut_clipboard` injects the shortcut paste. It is bound to the eligibility revision and refused while a transfer gate is held.
+  - Every request the session cannot serve gets a `kCancel` with an error code.
+  - A text or image reservation with no peer reply is released after 15 s, which ends a blocked `GetData`.
+  - A shortcut capture that does not answer fails after 5 s.
+  - Failed offer sends are retried.
+  - A dead native port restarts with a 1 s to 30 s backoff.
+  - The native port retries capture, install, and listener registration.
+  - The Controller UI shows every refusal.
+  - Runtime lines starting `Runtime clipboard role=` and the GUI line `Clipboard shortcut intercepted` log state changes, never payloads.
+- Automated: `redclaw_clipboard_demand_liveness_tests` (11 cases) and `RemoteInputSessionTests.ShortcutClipboardPasteNeedsNoTransferGateButStaysRevisionBound`. Both run in the unit CI. On Linux with a capability shim, all 11 liveness cases pass on this branch, and 10 fail against the previous session code. The Windows build and the two-machine check have not been run here.
+- Run locally: `cmake --build --preset debug-local --target redclaw_clipboard_demand_liveness_tests redclaw_remote_input_session_tests`, then `ctest --test-dir build/vs2022-x64 -C Debug --output-on-failure -R "clipboard_demand_liveness|remote_input_session"`.
+- Two-machine check after both sides rebuild with `.\build.ps1`:
+  1. Copy text on the Controller. The Host log shows `event=offer_received`, and then `event=port offer_installed`.
+  2. Focus a Host text field, take input control, and press Ctrl+V, right Ctrl+V, and Shift+Insert. The text appears on the Host. The Host log shows `event=paste_inject ... result=ok`.
+  3. Use Host right-click paste. The text appears, or the app returns within 15 s.
+  4. Any failure is shown in the Controller file/clipboard panel with a reason.
+- Rollback: revert this pull request, or redeploy the previous Debug binaries on both machines. The wire messages are unchanged, so mixed old and new builds still connect. Shortcut paste needs the new Host build. With an old Host it still fails as before, but a new Controller times out and shows the failure.
 
 ## Mainline
+
+- PR #4 (`eca4b31`) is merged: root `SPEC.md`, `PROGRESS.md`, `DECISIONS.md`, and the root `AGENTS.md` onboarding gate.
 
 - `main` @ `40b80cc` is the merge of PR #1, "Remove the Connection overlay log and clean logs on startup" (https://github.com/70565912/RedClawDesktop/pull/1). Author Ryan Chen. Merged 2026-11-05 14:46 UTC (2026-11-05 22:46 Asia/Shanghai).
 - The floating Connection panel no longer shows the scrolling runtime log. Progress, pairing, handshake, live link, path and picture status, and reconnect/disconnect stay. The connection page keeps its own log. Diagnostics stay in capacity-limited files. The same behavior is described in [README.md](README.md) and the 2026-11-05 section of [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).

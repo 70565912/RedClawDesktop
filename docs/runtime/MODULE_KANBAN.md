@@ -110,7 +110,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-05
+Updated: 2026-11-06
+
+Controller-to-Host clipboard paste liveness (2026-11-06, M10-T03) — implemented on branch `cursor/fix-controller-host-clipboard-paste-0a34`; two-machine qualification pending. Root cause: the capability-5 Host shortcut paste went through the transfer-gated `paste_verified_clipboard`, so every Host Ctrl+V failed with `clipboard_input_revoked`. It now uses the revision-bound `paste_shortcut_clipboard`. Stale or unserviceable demands and invokes are cancelled. An unanswered text/image reservation is released after 15 s, and a shortcut wait after 5 s. The native port retries capture, install and listener registration, and restarts with backoff after it stops. The Controller UI shows every refusal. Clipboard diagnostics carry no payload. `redclaw_clipboard_demand_liveness_tests` (11 cases) and one `RemoteInputSessionTests` case were added. All pass on Linux with a capability shim. The Windows build was not run in the authoring environment. Decision D7 in root `DECISIONS.md`.
 
 Connection overlay log removed (2026-11-05, M10-T02) — implemented. The floating Connection panel no longer shows the scrolling runtime log. The connection page keeps its log view. Process logs stay capacity-limited: 10 MiB per file, 5 rotations, and each startup deletes `redclaw-*` logs whose PID is not running. Unscoped leftovers keep the 7-day and 250 MiB directory caps. `control-events.log` is cleared on GUI startup and capped at 10 MiB with one backup. Default path: `%LOCALAPPDATA%\RedClawDesktop\logs`. Windows Debug build and the focused UI/diag suites were not executed in the authoring environment.
 

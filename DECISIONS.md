@@ -52,6 +52,17 @@ On 2026-11-06 Ryan approved, via 小程, a short gate at the top of root [AGENTS
 
 This approval adds the gate to the open pull request. It is not a merge. Merge still needs Ryan's explicit yes.
 
+## D7 — Capability-5 clipboard requests always end visibly
+
+Made 2026-11-06 for the Controller-to-Host paste fix (branch `cursor/fix-controller-host-clipboard-paste-0a34`).
+
+- Shortcut paste is input the user just typed in the authorized remote view. It does not need a transfer gate. It still needs the unchanged eligibility revision: same input lease, focus, and ordinary desktop. It is refused while a transfer gate is held. `paste_verified_clipboard` keeps its gate requirement for the older paste-after-transfer modes.
+- A side that cannot serve a demand or an invoke replies with `kCancel` and an error code. Silence is not allowed. Examples are a stale token, a busy slot, or no native port.
+- A text or image reservation the peer has not answered within 15 s is released. That also ends a blocked native `GetData`. After the peer answers, the old rule stands: only completion, cancel, or session loss ends it. File flows keep explicit-cancel semantics, because enumeration and confirmation can take long.
+- A dead native clipboard port is restarted with a 1 s to 30 s backoff instead of staying off for the session.
+- Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
+- No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).

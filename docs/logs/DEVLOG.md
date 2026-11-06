@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-11-06 — Capability-5 Controller-to-Host clipboard paste liveness
+
+- Root cause: the Host injected the shortcut paste through `RemoteInputSession::paste_verified_clipboard`, which requires a held transfer gate. A capability-5 shortcut paste runs before any transfer, so every Host Ctrl+V or Shift+Insert failed with `clipboard_input_revoked`. The Controller showed the failure only in the hidden file panel.
+- Interface changes:
+  - `RemoteInputSession::paste_shortcut_clipboard(revision, error)` (input). It is revision-bound and refused while a transfer gate is held.
+  - `ClipboardHostActions::submit_shortcut_paste` and `ClipboardHostActions::diagnostic` (workspace).
+  - `ClipboardDemandPort::restart()` and `ClipboardDemandEventKind::kDiagnostic`; `kUnavailable` now carries a reason (workspace).
+  - The wire protocol is unchanged.
+- Liveness:
+  - The session replies `kCancel` to stale, busy or unserviceable demands and invokes.
+  - It releases an unanswered text/image reservation after 15 s and a shortcut wait after 5 s.
+  - It retries a failed offer send and restarts a stopped native port with a 1 s to 30 s backoff.
+  - The native port retries `OleGetClipboard`, `OleSetClipboard` and `AddClipboardFormatListener` instead of stopping, and releases `GetData` callers when it stops.
+- Diagnostics: runtime `Runtime clipboard role=host|controller event=...` lines and the GUI line `Clipboard shortcut intercepted clipboard_sequence=N`. They carry ids truncated to 8 characters, format bits, sequence numbers and error codes, never payload or paths.
+- Tests: `redclaw_clipboard_demand_liveness_tests` (new unit target) and `RemoteInputSessionTests.ShortcutClipboardPasteNeedsNoTransferGateButStaysRevisionBound`. Run on Linux through a local harness with the capability constant forced on: 11 of 11 liveness cases pass, and 10 of 11 fail against the previous session code. The existing demand tests keep their Linux-only file-flow baseline. The Windows-only port code passes a mingw-w64 syntax check. The Windows `build.ps1` build and the two-machine check have not been run.
+
 ## 2026-11-05 — Remove the Connection overlay log and bound startup log files
 
 - The floating Connection panel no longer reparents or displays the scrolling runtime log. Pairing, handshake, live-link, process, path and picture status stay in the panel, with reconnect and disconnect. The connection page still keeps its own bounded log view, and every GUI log line is still written through the existing process file logger.
