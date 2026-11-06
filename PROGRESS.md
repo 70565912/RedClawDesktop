@@ -2,13 +2,13 @@
 
 As of 2026-11-06 (Asia/Shanghai).
 
-Surveyed local `main` at `40b80ccbea9e6a14b8fffddcfc1d793b449a5af2` after `git fetch origin main`. `HEAD` and `origin/main` match. Open pull requests were read from GitHub and were not modified. This snapshot does not start the next steps below.
+`main` includes the clipboard paste fix at `c8ec2a2` (PR #5). Product version metadata is 0.1.12 so the Windows publish script can run after this preparation merges. That script has not been run. The published GitHub package remains v0.1.11, and there is no v0.1.12 tag.
 
 Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
 
-## This branch, not merged
+## Clipboard paste fix, on main
 
-Branch `cursor/fix-controller-host-clipboard-paste-0a34`: Controller-to-Host clipboard paste fix (M10-T03). Merge waits for Ryan's explicit yes. Decision: [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
+Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly). [Release notes](docs/releases/v0.1.12.md).
 
 - Root cause. With capability 5, the Host injects the fixed Ctrl+V right after it installs the offer, before any bulk transfer exists. Injection went through `RemoteInputSession::paste_verified_clipboard`, which only works while a transfer gate is held. So every Host shortcut paste failed with `clipboard_input_revoked`. The Controller only showed the error in the hidden file panel. That is why no four-key paste inject reached the Host.
 - Contributing liveness defects, all silent before:
@@ -26,23 +26,23 @@ Branch `cursor/fix-controller-host-clipboard-paste-0a34`: Controller-to-Host cli
   - The native port retries capture, install, and listener registration.
   - The Controller UI shows every refusal.
   - Runtime lines starting `Runtime clipboard role=` and the GUI line `Clipboard shortcut intercepted` log state changes, never payloads.
-- Automated: `redclaw_clipboard_demand_liveness_tests` (11 cases) and `RemoteInputSessionTests.ShortcutClipboardPasteNeedsNoTransferGateButStaysRevisionBound`. Both run in the unit CI. On Linux with a capability shim, all 11 liveness cases pass on this branch, and 10 fail against the previous session code. The Windows build and the two-machine check have not been run here.
+- Automated: `redclaw_clipboard_demand_liveness_tests` (11 cases) and `RemoteInputSessionTests.ShortcutClipboardPasteNeedsNoTransferGateButStaysRevisionBound`. Both run in the unit CI. On Linux with a capability shim, all 11 liveness cases passed on the fix, and 10 failed against the previous session code. PR #5 CI jobs `build-and-test`, `hint`, and `docs-guard` passed (Actions runs [42169935054](https://github.com/70565912/RedClawDesktop/actions/runs/42169935054), [42169935102](https://github.com/70565912/RedClawDesktop/actions/runs/42169935102), and [42169935053](https://github.com/70565912/RedClawDesktop/actions/runs/42169935053)). Ryan confirmed bidirectional Controller-to-Host clipboard paste on live two-machine Debug builds of `ce0990fd`, now on main as `c8ec2a2`. The Windows Release portable package and its publish-step smoke are produced later and are not part of this preparation.
 - Run locally: `cmake --build --preset debug-local --target redclaw_clipboard_demand_liveness_tests redclaw_remote_input_session_tests`, then `ctest --test-dir build/vs2022-x64 -C Debug --output-on-failure -R "clipboard_demand_liveness|remote_input_session"`.
-- Two-machine check after both sides rebuild with `.\build.ps1`:
+- Procedure written with the fix:
   1. Copy text on the Controller. The Host log shows `event=offer_received`, and then `event=port offer_installed`.
   2. Focus a Host text field, take input control, and press Ctrl+V, right Ctrl+V, and Shift+Insert. The text appears on the Host. The Host log shows `event=paste_inject ... result=ok`.
   3. Use Host right-click paste. The text appears, or the app returns within 15 s.
   4. Any failure is shown in the Controller file/clipboard panel with a reason.
-- Rollback: revert this pull request, or redeploy the previous Debug binaries on both machines. The wire messages are unchanged, so mixed old and new builds still connect. Shortcut paste needs the new Host build. With an old Host it still fails as before, but a new Controller times out and shows the failure.
+- Rollback: revert `c8ec2a2`, or redeploy the previous Debug binaries on both machines. The wire messages are unchanged, so mixed old and new builds still connect. Shortcut paste needs the new Host build. With an old Host it still fails as before, but a new Controller times out and shows the failure.
 
 ## Mainline
 
 - PR #4 (`eca4b31`) is merged: root `SPEC.md`, `PROGRESS.md`, `DECISIONS.md`, and the root `AGENTS.md` onboarding gate.
 
-- `main` @ `40b80cc` is the merge of PR #1, "Remove the Connection overlay log and clean logs on startup" (https://github.com/70565912/RedClawDesktop/pull/1). Author Ryan Chen. Merged 2026-11-05 14:46 UTC (2026-11-05 22:46 Asia/Shanghai).
+- `40b80cc` is the merge of PR #1, "Remove the Connection overlay log and clean logs on startup" (https://github.com/70565912/RedClawDesktop/pull/1). Author Ryan Chen. Merged 2026-11-05 14:46 UTC (2026-11-05 22:46 Asia/Shanghai).
 - The floating Connection panel no longer shows the scrolling runtime log. Progress, pairing, handshake, live link, path and picture status, and reconnect/disconnect stay. The connection page keeps its own log. Diagnostics stay in capacity-limited files. The same behavior is described in [README.md](README.md) and the 2026-11-05 section of [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 - PR #1 checks that completed before merge: `docs-guard` success, `hint` success, `build-and-test` success (Actions run `42042846320`). The PR body says the authoring environment had no VS2022 toolchain. No new dual-machine visual acceptance for this merge is written in the tree.
-- The published package is still the v0.1.11 Developer Preview ([release notes](docs/releases/v0.1.11.md)). `main` is ahead of that tag with later UI work, including the dark workspace, the connection overlay, and this log removal. [MODULE_KANBAN.md](docs/runtime/MODULE_KANBAN.md) (Updated 2026-11-05) was not edited for this snapshot, so its narrative can lag the root files.
+- The last published package is the v0.1.11 Developer Preview ([release notes](docs/releases/v0.1.11.md)). Version metadata and [v0.1.12 release notes](docs/releases/v0.1.12.md) are prepared. `main` since that tag includes the dark workspace, the connection overlay, overlay-log removal (PR #1, `40b80cc`), the root status files (PR #4, `eca4b31`), and the clipboard paste repair (`c8ec2a2`).
 - The Android spike is not on `main`. Searches for `android-controller-spike` and `M11-S0` found nothing. Kanban `M11-T01` remains `planned`.
 - On `main`, the Host selects H.264 in `src/main.cpp` at the startup/resize profile (`preferred_codec`), the bridge request (`codec`), and the adaptive profile (`preferred_codec`), all `EncoderCodec::kH264`. `EncoderCodec::kHevc` mapping exists. A search of `src/` found no `video_decode` capability field. That matches the "Host sends H.264" and "no decoder capability" claims in PR #3. The rest of that PR's risk table was not re-measured here.
 
@@ -78,10 +78,11 @@ Treat `RC7TST01` as optional context for a future LAN resume, not as a current `
 
 ## Next steps
 
-These are the actions that follow from the survey. They are not started here.
+Items 1–5 remain open. Item 6 is the publish step after this preparation is on `main`.
 
 1. Leave PR #2 draft and sealed. Do not merge, rebase, or continue Android connect, decode, or input work until Ryan asks for a same-LAN or other free-P2P resume.
 2. Leave PR #3 open for review. If Ryan accepts the recommendation, the first implementation step is still that PR's P0: separate H.264 and HEVC capability probes, forced IDR on each HEVC backend, and HEVC tests, with no default change. Do not start that implementation until asked.
 3. Keep the Windows product on direct-first P2P. TURN stays optional and user-provided. Do not add a product-owned relay to paper over the cellular ICE failure.
 4. The next phase named in [README.md](README.md) — wider cross-site and TURN coverage, unattended install and upgrade, code signing, and lower GUI / Agent scheduling cost — stays backlog. It is not the next edit unless Ryan assigns it.
 5. Ryan confirms the open questions in [SPEC.md](SPEC.md): Flutter companion versus the sealed spike, the HEVC product goal, and whether `RC7TST01` is still relevant.
+6. From a clean Windows checkout of `main`, run `scripts/release/publish-github-release.ps1 -Version 0.1.12`. That step creates the tag and the GitHub Pre-release. This preparation does not run it.
