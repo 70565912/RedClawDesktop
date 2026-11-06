@@ -952,6 +952,20 @@ bool RemoteInputSession::paste_verified_clipboard(std::uint64_t expected_revisio
         if (error) *error = "clipboard_input_revoked";
         return false;
     }
+    return inject_fixed_paste(error);
+}
+bool RemoteInputSession::paste_shortcut_clipboard(std::uint64_t expected_revision, std::string* error) {
+    if (transfer_blocked_) {
+        if (error) *error = "workspace_transfer_busy";
+        return false;
+    }
+    if (expected_revision != eligibility_revision_ || !clipboard_paste_eligible()) {
+        if (error) *error = "clipboard_input_revoked";
+        return false;
+    }
+    return inject_fixed_paste(error);
+}
+bool RemoteInputSession::inject_fixed_paste(std::string* error) {
     ++eligibility_revision_; // the same authorization snapshot cannot submit twice
     release_all(); queue_.clear();
     InputEvent control_down, v_down;

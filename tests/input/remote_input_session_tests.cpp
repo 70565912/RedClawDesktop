@@ -413,6 +413,24 @@ TEST(RemoteInputSessionTests, VerifiedClipboardPasteIsFixedAndCannotReopenOrRepl
     EXPECT_EQ(session.pause_reason(), RemoteInputPauseReason::kGeometryChanged);
 }
 
+TEST(RemoteInputSessionTests, ShortcutClipboardPasteNeedsNoTransferGateButStaysRevisionBound) {
+    using namespace redclaw::input;
+    InputPolicyGate gate; InMemoryInputInjectorBackend backend; RemoteInputSession session(gate, backend);
+    session.set_authorized(true); ASSERT_TRUE(session.request_active(1000));
+    const auto revision = session.eligibility_revision();
+    std::string error;
+    ASSERT_TRUE(session.paste_shortcut_clipboard(revision, &error)) << error;
+    ASSERT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_EQ(backend.injected_events()[0].key_code, 0x11); EXPECT_EQ(backend.injected_events()[1].key_code, 0x56);
+    EXPECT_FALSE(session.paste_shortcut_clipboard(revision, &error)); EXPECT_EQ(error, "clipboard_input_revoked");
+    session.set_transfer_blocked(true, 1100);
+    EXPECT_FALSE(session.paste_shortcut_clipboard(session.eligibility_revision(), &error)); EXPECT_EQ(error, "workspace_transfer_busy");
+    session.set_transfer_blocked(false, 1200);
+    session.pause(RemoteInputPauseReason::kGeometryChanged);
+    EXPECT_FALSE(session.paste_shortcut_clipboard(session.eligibility_revision(), &error));
+    EXPECT_EQ(backend.injected_events().size(), 4U);
+}
+
 TEST(RemoteInputSessionTests, TransferCompletionCannotClearOtherPauseReasonsOrReviveExpiredConsent) {
     using namespace redclaw::input;
     for (const auto reason : {RemoteInputPauseReason::kNoVideo, RemoteInputPauseReason::kGeometryChanged,
