@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-11-06 — HEVC migration assessment (M02-T03, documentation only)
+
+- A static audit of `main` (`40b80cc`) found that the HEVC encode, wire codec byte (`2`), shared-memory format and decode branches already exist. The Host hardcodes H.264 in three `src/main.cpp` call sites, and stream control has no video decoder capability field.
+- Decision: no-go for HEVC by default. Recommended path: an optional decoder capability report, then optional HEVC with H.264 as the default and fallback, plus a codec-aware bitrate budget (the current budget is codec-agnostic, so switching alone would not reduce bitrate).
+- No code, protocol or runtime behavior changed, and no HEVC measurements were run. See the [assessment](../architecture/hevc-migration-assessment.md).
+
 ## 2026-11-05 — Remove the Connection overlay log and bound startup log files
 
 - The floating Connection panel no longer reparents or displays the scrolling runtime log. Pairing, handshake, live-link, process, path and picture status stay in the panel, with reconnect and disconnect. The connection page still keeps its own bounded log view, and every GUI log line is still written through the existing process file logger.
