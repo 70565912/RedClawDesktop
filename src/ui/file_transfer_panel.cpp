@@ -339,17 +339,23 @@ void FileTransferPanel::set_busy_callback(std::function<void(bool)> callback) { 
 bool FileTransferPanel::busy() const { return impl_->runtime_busy || (impl_->requested && impl_->clipboard_mode != 6); }
 void FileTransferPanel::set_activity_callback(std::function<void()> callback) { impl_->show_activity = std::move(callback); }
 void FileTransferPanel::request_clipboard_paste(std::uint32_t sequence) {
-    if (impl_->busy()) return;
+    // The shortcut was already consumed by the remote view, so every early
+    // return must leave a visible reason instead of a silent no-op.
+    const auto refuse = [this](const QString& text) {
+        impl_->result_visible = true; impl_->status->setText(text);
+        if (impl_->show_activity) impl_->show_activity();
+    };
+    if (impl_->busy()) { refuse(QString::fromUtf8("粘贴未执行：另一项传送仍在进行，请等待完成或取消后重试。")); return; }
     impl_->result_visible = true;
     if (!impl_->clipboard_available || !sequence) {
-        impl_->status->setText(QString::fromUtf8("无法传送剪贴板：对端尚不支持此能力，或本机剪贴板不可用。")); return;
+        refuse(QString::fromUtf8("无法传送剪贴板：对端尚不支持此能力，或本机剪贴板不可用。")); return;
     }
     if (impl_->clipboard_version >= 5) {
         auto request = control(Action::kClipboardShortcut, identity());
         request.workspace->purpose = Purpose::kClipboard; request.workspace->clipboard_mode = 6;
         request.workspace->clipboard_token = "local-shortcut"; request.workspace->clipboard_sequence = sequence;
         QString error;
-        if (!impl_->send(request, &error)) impl_->status->setText(error);
+        if (!impl_->send(request, &error)) refuse(QString::fromUtf8("粘贴未执行：") + error);
         return;
     }
     const auto clipboard = impl_->clipboard_probe();
@@ -508,8 +514,20 @@ void FileTransferPanel::receive(const Control& message) {
             : details.error_code == "clipboard_source_changed" ? QString::fromUtf8("源文件已变化，源文件保留；请重新复制后粘贴。")
             : details.error_code == "clipboard_native_name_too_long" ? QString::fromUtf8("所选内容包含目标应用无法处理的过长路径；未开始传输。")
             : details.error_code == "clipboard_description_too_large" ? QString::fromUtf8("所选文件数量或路径信息过多，请分批粘贴；源文件保留。")
+            : details.error_code == "clipboard_native_unavailable" ? QString::fromUtf8("剪贴板服务暂不可用，正在自动恢复；请稍后重试粘贴。")
+            : details.error_code == "clipboard_peer_timeout" ? QString::fromUtf8("对端未响应粘贴请求，已取消；请重试。")
+            : details.error_code == "clipboard_shortcut_timeout" ? QString::fromUtf8("读取本机剪贴板超时，粘贴未执行；请重试。")
+            : details.error_code == "clipboard_capture_failed" ? QString::fromUtf8("本机剪贴板暂时无法读取，粘贴未执行；请重新复制后重试。")
+            : details.error_code == "workspace_transfer_busy" ? QString::fromUtf8("粘贴未执行：另一项传送仍在进行，请等待完成后重试。")
+            : details.error_code == "workspace_peer_unavailable" ? QString::fromUtf8("粘贴未执行：对端未连接或尚不支持剪贴板。")
+            : details.error_code == "clipboard_input_revoked" ? QString::fromUtf8("对端窗口焦点或输入授权已变化，粘贴未执行。")
+            : details.error_code == "clipboard_busy" ? QString::fromUtf8("对端剪贴板被其他程序占用，粘贴未执行；请重试。")
             : details.clipboard_move ? QString::fromUtf8("部分完成：未确认全部粘贴成功，源文件保留。 ") + qtext(details.error_code)
             : QString::fromUtf8("目标应用未确认全部粘贴，部分内容可能已保存。 ") + qtext(details.error_code));
+        if (impl_->clipboard_mode == 6 && !details.error_code.empty() && details.error_code != "transfer_cancelled") {
+            impl_->status->setToolTip(qtext(details.error_code));
+            if (impl_->show_activity) impl_->show_activity();
+        }
         if (impl_->purpose == Purpose::kClipboardCleanup || impl_->purpose == Purpose::kClipboardOpenCopy)
             impl_->status->setText(!details.error_code.empty() ? QString::fromUtf8("副本操作已结束：") + qtext(details.error_code)
                 : impl_->purpose == Purpose::kClipboardCleanup ? QString::fromUtf8("剪贴板副本清理完成。") : QString::fromUtf8("已在对端打开副本目录。"));

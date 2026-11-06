@@ -2542,7 +2542,8 @@ bool launch_gui_shell(
 #endif
     refresh_remote_control_ui();
   });
-  remote_input_capture->set_clipboard_paste_callback([file_transfer_panel](std::uint32_t sequence) {
+  remote_input_capture->set_clipboard_paste_callback([&, file_transfer_panel](std::uint32_t sequence) {
+    append_log(session_log, QString("Clipboard shortcut intercepted clipboard_sequence=%1").arg(sequence));
     file_transfer_panel->request_clipboard_paste(sequence);
   });
   remote_input_capture->set_paused_callback([&](const QString& reason) {
