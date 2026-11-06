@@ -67,6 +67,11 @@
 
 ## 项目执行状态
 
+操作者与专用 Agent 的章程（目标、2026-11-06 进度、决策）在仓库根目录，不替代下面的长日志和模块账本：
+
+- [SPEC.md](../SPEC.md)
+- [PROGRESS.md](../PROGRESS.md)
+- [DECISIONS.md](../DECISIONS.md)
 - [当前状态](runtime/PROJECT_STATE.md)
 - [任务看板](runtime/MODULE_KANBAN.md)
 - [Agent 执行协议](runtime/AGENT_EXECUTION_PROTOCOL.md)
