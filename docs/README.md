@@ -10,6 +10,8 @@
 - [CMake Tools 故障排查](setup/cmake-tools-api-failure-troubleshooting.md)
 - [vcpkg 与 FFmpeg 本地化故障排查](setup/vcpkg-ffmpeg-locale-troubleshooting.md)
 - [PowerShell 脚本签名与 lint](setup/powershell-script-signing-and-linting.md)
+- [v0.1.12 Release notes](releases/v0.1.12.md)
+- [v0.1.11 Release notes](releases/v0.1.11.md)
 - [v0.1.10 Release notes](releases/v0.1.10.md)
 - [v0.1.9 Release notes](releases/v0.1.9.md)
 - [v0.1.8 Release notes](releases/v0.1.8.md)
@@ -25,7 +27,7 @@
 发布 Windows x64 便携包使用 PowerShell 7：
 
 ```powershell
-.\scripts\release\publish-github-release.ps1 -Version 0.1.11 -PackageOnly
+.\scripts\release\publish-github-release.ps1 -Version 0.1.12 -PackageOnly
 ```
 
 脚本对最终 ZIP 自动执行哈希、提取文件与命令启动检查，结果保存在 `build/reports/`。去掉 `-PackageOnly` 后，脚本会先校验干净的公开 `main`，包检查成功后才创建注释标签并上传同一个已验证 ZIP 为 GitHub Pre-release。构建/CTest 自动集合遵循 [无人值守验收矩阵](testing/test-matrix.md)；需要人工的评估不作为发布条件。
@@ -78,6 +80,7 @@
 - [Agent 执行协议](runtime/AGENT_EXECUTION_PROTOCOL.md)
 - [模块规格](modules/module-specs.md)
 - [阶段日志](logs/DEVLOG.md)
+- [v0.1.12 发布说明](releases/v0.1.12.md)
 - [v0.1.11 发布说明](releases/v0.1.11.md)
 - [v0.1.10 发布说明](releases/v0.1.10.md)
 - [v0.1.9 发布说明](releases/v0.1.9.md)

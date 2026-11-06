@@ -27,7 +27,7 @@ Sources: [README.md](README.md), [solution architecture](docs/architecture/solut
 
 ## In scope on current main
 
-The published package is the v0.1.11 Windows x64 Developer Preview. `main` has moved since that tag; see [PROGRESS.md](PROGRESS.md). The user-facing capability list is the table in [README.md](README.md). The acceptance-critical subset is:
+Product version metadata is 0.1.12. The last published package remains the v0.1.11 Windows x64 Developer Preview until the Windows publish script runs. See [PROGRESS.md](PROGRESS.md) and the [v0.1.12 release notes](docs/releases/v0.1.12.md). The user-facing capability list is the table in [README.md](README.md). The acceptance-critical subset is:
 
 1. Windows x64 Host and Controller in one desktop GUI: local machine code, peer machine code, connection password, wait/connect, and a playback area.
 2. Connection password required. Passwordless v0.1.3 and earlier builds are rejected. See [connection password](docs/architecture/connection-password-v1.md).
@@ -35,7 +35,7 @@ The published package is the v0.1.11 Windows x64 Developer Preview. `main` has m
 4. Real desktop capture (Windows Graphics Capture / Desktop Duplication) and a real encode, transport, decode, and present path. On `main`, the Host assigns H.264 (`EncoderCodec::kH264`) for `preferred_codec`, `bridge_request.codec`, and the adaptive profile in `src/main.cpp`. HEVC types and decoder mapping exist in tree; they are not what the Host sends. See [DECISIONS.md](DECISIONS.md).
 5. Authorized keyboard and mouse. Missing capability, lease, or lifecycle channel fails closed. Secure-desktop ambiguity refuses or pauses input. See [ordinary desktop input](docs/architecture/ordinary-desktop-remote-input-v1.md).
 6. Control, Media, and Agent channels. Codex and Cursor providers run on the Host inside registered projects. See [remote Agent bridge](docs/architecture/remote-development-agent-bridge-v1.md).
-7. Capabilities already described for v0.1.11, enabled only by the common negotiated set: paste-time clipboard, confirmed file transfer, remote system audio, embedded terminal, directory upgrade, and Host update-restart protection. A paste-time clipboard request either completes or ends with a visible error; it never waits silently ([D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly)).
+7. Capabilities already described for v0.1.12, enabled only by the common negotiated set: paste-time clipboard, confirmed file transfer, remote system audio, embedded terminal, directory upgrade, and Host update-restart protection. A paste-time clipboard request either completes or ends with a visible error; it never waits silently ([D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly)).
 8. Cross-version interoperability. DHT, session, media, control, Agent, and Debug Bridge protocols are versioned. Still-supported releases connect through the common capability set. The same Git commit, product version, or binary is not a connection requirement. See root [AGENTS.md](AGENTS.md) and the protocol contract in the solution architecture.
 
 ## Acceptance already defined in the repo

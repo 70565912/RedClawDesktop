@@ -54,7 +54,7 @@ This approval adds the gate to the open pull request. It is not a merge. Merge s
 
 ## D7 — Capability-5 clipboard requests always end visibly
 
-Made 2026-11-06 for the Controller-to-Host paste fix (branch `cursor/fix-controller-host-clipboard-paste-0a34`).
+Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as `c8ec2a2` (PR #5).
 
 - Shortcut paste is input the user just typed in the authorized remote view. It does not need a transfer gate. It still needs the unchanged eligibility revision: same input lease, focus, and ordinary desktop. It is refused while a transfer gate is held. `paste_verified_clipboard` keeps its gate requirement for the older paste-after-transfer modes.
 - A side that cannot serve a demand or an invoke replies with `kCancel` and an error code. Silence is not allowed. Examples are a stale token, a busy slot, or no native port.

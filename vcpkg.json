@@ -1,6 +1,6 @@
 {
   "name": "redclawdesktop",
-  "version-string": "0.1.11",
+  "version-string": "0.1.12",
   "dependencies": [
     "openssl",
     "boost-json",
