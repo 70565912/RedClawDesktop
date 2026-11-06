@@ -135,6 +135,8 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 下一阶段重点是扩大异地网络与 TURN 覆盖、完善无人值守安装和升级、补充代码签名，并继续降低 GUI 与 Agent 大输出下的调度开销。当前执行状态见 [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md)。
 
+操作者与专用 Agent 的目标、进度、决策和 Agent 门禁见根目录 [SPEC.md](SPEC.md)、[PROGRESS.md](PROGRESS.md)、[DECISIONS.md](DECISIONS.md)、[AGENTS.md](AGENTS.md)。这些文件引用既有文档，不改变运行行为。
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。开始前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [开发文档索引](docs/README.md)。安全问题请按 [SECURITY.md](SECURITY.md) 的私密报告方式处理。
@@ -143,7 +145,7 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 唯一必读入口：`README.md`
 
-AI coding Agent 应先阅读本文件，再按任务需要读取根目录 [AGENTS.md](AGENTS.md)、[项目状态](docs/runtime/PROJECT_STATE.md)、[任务看板](docs/runtime/MODULE_KANBAN.md) 和相应子目录规则。
+AI coding Agent 应先阅读本文件，再读根目录 [AGENTS.md](AGENTS.md)。按其中的门禁，在任何代码或流程改动之前读完 [SPEC.md](SPEC.md)、[PROGRESS.md](PROGRESS.md)、[DECISIONS.md](DECISIONS.md)，再按任务阅读 [项目状态](docs/runtime/PROJECT_STATE.md)、[任务看板](docs/runtime/MODULE_KANBAN.md) 和相应子目录规则。
 
 ## 许可证
 

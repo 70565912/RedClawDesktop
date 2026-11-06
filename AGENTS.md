@@ -1,6 +1,28 @@
 # RedClawDesktop Agent Guide
 
-本文件是本仓库的 AI agent 规则入口。子目录下的 `AGENTS.md` 会在对应目录内补充更具体的规则；遇到冲突时，以更深层目录规则为准，但不得违反本文件的全局安全和流程约束。
+## 动手前必读（2026-11-06）
+
+任何 Agent（包括 Codex 和按需评审）在修改代码或流程之前，必须先读完并遵守这三份事实来源：
+
+- [SPEC.md](SPEC.md) — 目标与验收
+- [PROGRESS.md](PROGRESS.md) — 当前进度与下一步
+- [DECISIONS.md](DECISIONS.md) — 已做决定
+
+没读完这三份，不得改代码，也不得改流程。事实变了就回写这三份。不要另写平行的状态文档。`README.md` 仍是唯一入门入口。下文是既有工程约束；与这三份冲突时，以这三份为准。
+
+1. **单一常驻负责人。** RedClawDesktop 的常驻负责人是本 Agent（小龙虾 · RedClawDesktop）。其他人是按需请来的新评审，不共享开发上下文。
+2. **评审按需。** 评审不是常驻、共享上下文的队友。需要时再请；对方只看 diff 和上述文件。
+3. **三份根文件是事实来源。** 更新 `SPEC.md`、`PROGRESS.md`、`DECISIONS.md`。不要另起状态文档。
+4. **验收尽量可脚本化、可复现。** 能写成命令或测试的就写成。没跑过的检查不算通过。
+5. **分支加 PR。** 在分支上工作并开 Pull Request。优先能回滚的改动。没有 Ryan 明确同意合并，不要直接推到 `main`。
+6. **范围外。** `WCT` 和 `image_linux_rfevm` 不在本仓库、本 Agent 的工作范围内。
+7. **优先免费真 P2P。** 先走同一 Wi-Fi 或同一虚拟局域网的直连。TURN 只作回退，且由用户自行提供。
+
+子目录 `AGENTS.md` 只补充该目录的规则，不得违反本节和本文件的安全约束。
+
+## 既有工程约束
+
+本文件其余部分是仓库已有的实现、构建和安全约束。
 
 ## AGENTS.md Structure
 
@@ -33,7 +55,7 @@ RedClawDesktop 是面向开发者远程接入自己开发机的 Windows-first �
 
 - Direct-first: 优先 P2P 直连，中心化服务只作为可选路径或正式在线 rendezvous 信令路径。
 - Security-by-default: 默认最小暴露面，高风险能力必须显式开启并 fail closed。
-- Docs-as-runtime: 文档是执行协议，任务状态以运行时文档为准。
+- Docs-as-runtime: 文档是执行协议。事实来源是根目录 `SPEC.md`、`PROGRESS.md`、`DECISIONS.md`。`docs/runtime/` 是长日志和模块账本，不另写平行状态。
 - E2E-before-polish: 先拿到真实可运行链路，再补细节、清理和硬化。
 - Performance-and-simplicity: 性能与简洁设计是全项目持续约束，不是 hardening 阶段才处理的收尾项。
 
@@ -51,14 +73,15 @@ RedClawDesktop 是面向开发者远程接入自己开发机的 Windows-first �
 ## Mandatory Startup Flow
 
 1. 先读 `README.md`，它是唯一强制入口。
-2. 按任务需要读取：
+2. 在任何代码或流程改动之前，必须读完并遵守根目录 `SPEC.md`、`PROGRESS.md`、`DECISIONS.md`。见上文「动手前必读」。
+3. 按任务需要再读：
    - `docs/runtime/PROJECT_STATE.md`
    - `docs/runtime/MODULE_KANBAN.md`
    - `docs/runtime/MODULE_PLAYBOOKS/<module>.md`
    - `docs/runtime/AGENT_EXECUTION_PROTOCOL.md`
    - `docs/setup/coding-conventions.md`
-3. 优先执行 `docs/runtime/PROJECT_STATE.md` 中的双机桌面画面闭环优先队列。只有当用户明确给出 `module: Mxx`，才按模块任务选择。
-4. 不要回滚用户已有改动。开始编辑前检查工作区状态，编辑范围必须和任务相关。
+4. 工作选择以这三份文件为准。`PROJECT_STATE.md` 里的优先队列只在与它们不冲突时使用。只有当用户明确给出 `module: Mxx`，才按模块任务选择。
+5. 不要回滚用户已有改动。开始编辑前检查工作区状态，编辑范围必须和任务相关。
 
 ## Remote Agent Result Contract
 
@@ -167,6 +190,7 @@ For stream work, record both normal smoke evidence and strict capture evidence w
 
 - Announce GitHub-connected operations such as `git fetch`, `git pull`, `git push`, `gh`, or repository sync, then proceed within the authorized task scope without asking for per-operation confirmation.
 - Do not create, rewrite, or force-push branches unless the user asked for that exact operation.
+- 没有 Ryan 明确同意合并，不要直接推到 `main`。先走分支和 Pull Request。见上文「动手前必读」。
 - CI workflow edits must preserve the Windows/unit-test baseline unless the task explicitly changes the release gate.
 
 ## Completion Response Contract

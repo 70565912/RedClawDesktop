@@ -127,6 +127,8 @@ The standard entry point builds the project and stages a runnable tree under `re
 
 The next phase expands cross-site and TURN coverage, hardens unattended install and upgrade, adds code signing, and continues reducing GUI scheduling cost during large Agent output. See [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 
+Operator and dedicated-agent intent, progress, decisions, and the agent gate: [SPEC.md](SPEC.md), [PROGRESS.md](PROGRESS.md), [DECISIONS.md](DECISIONS.md), and [AGENTS.md](AGENTS.md). Those files cite existing docs and do not change runtime behavior. Before any code or process change, read the three status files named in `AGENTS.md`.
+
 ## Contributing and license
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer documentation index](docs/README.md). Report security issues privately according to [SECURITY.md](SECURITY.md).
