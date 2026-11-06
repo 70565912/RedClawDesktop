@@ -11,6 +11,7 @@ This file is the product-intent source for that pair. It cites documents already
 - Product intent and acceptance: this file.
 - Dated progress and next actions: [PROGRESS.md](PROGRESS.md).
 - Decisions that constrain the agent: [DECISIONS.md](DECISIONS.md).
+- Agent onboarding gate: [AGENTS.md](AGENTS.md). Read this file, PROGRESS, and DECISIONS before any code or process change.
 - Shipped description for users: [README.md](README.md) and [README.en.md](README.en.md).
 - Long-form stage log and module ledger: [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md) and [MODULE_KANBAN.md](docs/runtime/MODULE_KANBAN.md).
 

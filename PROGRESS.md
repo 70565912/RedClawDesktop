@@ -4,7 +4,11 @@ As of 2026-11-06 (Asia/Shanghai).
 
 Surveyed local `main` at `40b80ccbea9e6a14b8fffddcfc1d793b449a5af2` after `git fetch origin main`. `HEAD` and `origin/main` match. Open pull requests were read from GitHub and were not modified. This snapshot does not start the next steps below.
 
-Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md).
+Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
+
+## This branch, not merged
+
+Root `AGENTS.md` now opens with the onboarding gate Ryan approved on 2026-11-06 (via 小程). It is on PR #4. Merge waits for Ryan's explicit yes. The build, security, and protocol rules already in that file stay below the gate.
 
 ## Mainline
 
