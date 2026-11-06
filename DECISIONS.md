@@ -63,6 +63,34 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
 
+## D8 — Reader-specific agent rules and on-demand Codex CLI reviews
+
+On 2026-11-06 Ryan decided, via 小程 · 工程专家, that collaboration rules are split by reader. This refines the later reader-specific part of [D5](#d5--root-charter-branch-and-pull-request-scriptable-acceptance-fresh-reviewers) and [D6](#d6--root-agentsmd-is-the-agent-onboarding-gate): who the lead is, and how a review is invited. D6 remains the historical record that Ryan approved an onboarding gate at the top of root [AGENTS.md](AGENTS.md). That gate landed on `main` through PR #4 as `eca4b31`.
+
+Checked on `main` at `3eec53b4` (tag `v0.1.12`): the repository root has [AGENTS.md](AGENTS.md). `AGENTS.codex.md` and `AGENTS.grok.md` are not in that tree. This branch does not add them. What follows is how Ryan wants each reader instructed.
+
+Where each reader is instructed:
+
+- `AGENTS.codex.md` is for Codex and Cursor.
+- `AGENTS.grok.md` is for Grok Bot.
+- [AGENTS.md](AGENTS.md) keeps only pointers and the shared engineering constraints.
+
+Codex and Cursor:
+
+- A Codex or Cursor session has only its own current session. It must not seek, wait for, or hand work to 小龙虾, and it must not apply Grok Bot teammate or handoff rules.
+- When Ryan names Codex or Cursor as lead, that session's reader is the current lead.
+
+Grok Bot:
+
+- The default resident lead remains 小龙虾 · RedClawDesktop.
+- When the reader is Grok Bot, development and scriptable acceptance stay with 小龙虾 unless Ryan named someone else.
+
+Every reader:
+
+- Only one lead at a time.
+- There are no standing review bots and no standing test bots. A milestone review, a pull-request review, or a review after acceptance goes to Codex CLI in a session separate from development. The reviewer only finds issues and must not change code. Development and scriptable acceptance stay with the current lead.
+- The Codex CLI invocation already known for those reviews is `D:\DevTools\npm-global\codex.cmd`, model `gpt-6.1-sol`. The lead supplies a branch or a commit, plus the acceptance criteria in [SPEC.md](SPEC.md). 小程 may run the review.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).
