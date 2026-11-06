@@ -2,6 +2,7 @@
 #include "redclaw/workspace/clipboard_paste_guard.h"
 #include "redclaw/workspace/clipboard_payload.h"
 #include <functional>
+#include <string_view>
 
 namespace redclaw::workspace {
 class ClipboardDemandPort;
@@ -19,6 +20,10 @@ struct ClipboardHostActions {
     std::function<std::uint32_t()> sequence = clipboard_sequence_number;
     bool native_demand = false;
     std::shared_ptr<ClipboardDemandPort> demand_port;
+    // Capability-5 Host shortcut paste. Falls back to submit_paste when unset.
+    std::function<bool(std::uint64_t expected_revision, std::string* error)> submit_shortcut_paste;
+    // One line per clipboard state change. Never receives payload contents.
+    std::function<void(std::string_view)> diagnostic;
 };
 // Runtime-owner component. Expensive disk reads/allocation have already finished
 // on TransferWorker; final policy, focus and fixed input submission share the

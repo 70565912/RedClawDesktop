@@ -10,7 +10,8 @@ struct ClipboardDemandOffer {
     std::uint32_t formats = 0, sequence = 0;
     bool move = false;
 };
-enum class ClipboardDemandEventKind { kOffer, kShortcutReady, kDescribe, kDemand, kRead, kNativeResult, kInstalled, kMoveReceipt, kUnavailable };
+// kDiagnostic carries a port health line in `error`; it never changes state.
+enum class ClipboardDemandEventKind { kOffer, kShortcutReady, kDescribe, kDemand, kRead, kNativeResult, kInstalled, kMoveReceipt, kUnavailable, kDiagnostic };
 struct ClipboardDemandEvent {
     ClipboardDemandEventKind kind = ClipboardDemandEventKind::kOffer;
     std::string operation;
@@ -37,6 +38,9 @@ public:
     virtual void finished(std::string, bool) {}
     virtual void commit_source(std::string operation, std::string token,
         std::shared_ptr<ClipboardDescription> description) = 0;
+    // After kUnavailable: start a fresh native owner. Returns false while the
+    // old owner has not exited yet; the caller retries later.
+    virtual bool restart() { return false; }
 };
 std::shared_ptr<ClipboardDemandPort> make_native_clipboard_demand_port();
 bool clipboard_is_remote_offer();

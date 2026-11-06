@@ -37,7 +37,8 @@ private:
         protocol::TransferDirectionV1 direction = protocol::TransferDirectionV1::kToHost;
         bool demanded = false, asked = false, confirmed = false, read_requested = false, started = false, bulk_done = false;
         bool native_received = false, native_complete = false, committing = false;
-        bool move_requested = false;
+        bool move_requested = false, peer_seen = false;
+        std::uint64_t since = 0;
         std::uint32_t effect = 0;
         std::string native_error;
         std::shared_ptr<ClipboardDescription> description;
@@ -54,9 +55,15 @@ private:
     void native(ClipboardDemandEvent event);
     void local_state(Action action, std::string status = {});
     bool matches(const Control& message) const;
-    bool host_, enabled_ = false, native_failed_ = false;
+    void reject(const std::string& operation, const ClipboardDemandOffer& offer,
+        protocol::TransferDirectionV1 direction, const char* error);
+    void reject_gui(const std::string& operation, std::string error);
+    void publish_offer();
+    void log(std::string line) const;
+    bool host_, enabled_ = false, native_failed_ = false, offer_unsent_ = false;
     std::string epoch_, peer_epoch_;
     std::string shortcut_waiting_;
+    std::uint64_t now_ = 0, shortcut_since_ = 0, restart_at_ = 0, restart_delay_ = 0;
     std::filesystem::path spool_;
     std::shared_ptr<ClipboardDemandPort> port_;
     ClipboardHostActions actions_;

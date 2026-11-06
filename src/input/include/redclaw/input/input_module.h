@@ -279,6 +279,11 @@ public:
     // Trusted clipboard coordinator only: one fixed Ctrl+V during its transfer
     // gate. This neither opens general input nor drains queued remote events.
     [[nodiscard]] bool paste_verified_clipboard(std::uint64_t expected_revision, std::string* error = nullptr);
+    // Capability-5 shortcut paste: the same fixed Ctrl+V, submitted before any
+    // bulk transfer exists. It carries no more authority than the Controller's
+    // own forwarded Ctrl+V, so it needs ordinary input eligibility and must not
+    // run while a transfer gate is holding input.
+    [[nodiscard]] bool paste_shortcut_clipboard(std::uint64_t expected_revision, std::string* error = nullptr);
 	[[nodiscard]] bool request_active(std::uint64_t now_ms, std::string* error = nullptr);
 	[[nodiscard]] bool enqueue_batch(
 		std::uint64_t sequence,
@@ -311,6 +316,7 @@ private:
 	[[nodiscard]] static std::uint32_t button_mask(MouseButton button);
 	[[nodiscard]] std::vector<InputEvent> build_release_events() const;
 	void fail_closed(RemoteInputPauseReason reason);
+	[[nodiscard]] bool inject_fixed_paste(std::string* error);
 
 	InputPolicyGate& policy_gate_;
 	InputInjectionAdapter adapter_;
