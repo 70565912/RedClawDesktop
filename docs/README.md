@@ -37,6 +37,7 @@
 - [可靠连接协商](architecture/reliable-fast-connection-negotiation-v2.md)
 - [压缩 Protobuf 线格式](architecture/compressed-protobuf-wire-v1.md)
 - [自适应桌面流控制](architecture/adaptive-desktop-stream-control-v1.md)
+- [H.265/HEVC 迁移评估](architecture/hevc-migration-assessment.md)
 - [远程系统音频](architecture/remote-system-audio-v1.md)
 - [DirectX 采集兼容性](architecture/directx-capture-compatibility-design.md)
 - [采集恢复与 Host 光标](architecture/capture-recovery-and-cursor.md)

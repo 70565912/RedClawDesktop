@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -25,8 +25,11 @@ FFmpeg source-CI compatibility (2026-10-18): use the public pixel-format capabil
 
 ## M02 Codec
 
-- `M02-T01` H.264/HEVC encode/decode pipeline with hardware selection — done.
+Updated: 2026-11-06
+
+- `M02-T01` H.264/HEVC encode/decode pipeline with hardware selection — done. The runtime always selects H.264; HEVC branches exist but are not selectable or covered by tests.
 - `M02-T02` Broader hardware/driver compatibility matrix — in-progress.
+- `M02-T03` Optional HEVC with decoder capability negotiation — planned (assessment only; no-go for HEVC-by-default). See the [HEVC migration assessment](../architecture/hevc-migration-assessment.md).
 
 ## M03 Security
 
