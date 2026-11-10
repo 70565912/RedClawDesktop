@@ -4,6 +4,12 @@
 
 - Remove the UI log card, its copy and clear actions, the remote log display and the unused text renderer. Keep the diagnostic writer, connection status and Debug snapshot access. The isolated application run verifies the connection pages and a GUI diagnostic in the file log. See [validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
 
+## 2026-11-06 — Prepare v0.1.12 release metadata
+
+- Prepare v0.1.12 so `scripts/release/publish-github-release.ps1 -Version 0.1.12` can run later from a clean Windows `main` checkout. Set the CMake and vcpkg product version, both README download entry points, and [release notes](../releases/v0.1.12.md). This preparation does not create a tag or a GitHub Release.
+- The notes' primary change is the capability-5 Controller-to-Host paste repair already on main as `c8ec2a2` (PR #5). PR #5 CI jobs `build-and-test`, `hint`, and `docs-guard` passed. Ryan confirmed bidirectional clipboard paste on live two-machine Debug builds of `ce0990fd`. The Windows Release portable package and `scripts/release/test-portable-package.ps1` smoke belong to the later publish step.
+- The same notes record the Controller workspace changes already on main since tag v0.1.11, including overlay-log removal (`40b80cc`), and the root `SPEC.md` / `PROGRESS.md` / `DECISIONS.md` / `AGENTS.md` gate (`eca4b31`). No new CTest sweep or package-file count is claimed.
+
 ## 2026-11-06 — Capability-5 Controller-to-Host clipboard paste liveness
 
 - Root cause: the Host injected the shortcut paste through `RemoteInputSession::paste_verified_clipboard`, which requires a held transfer gate. A capability-5 shortcut paste runs before any transfer, so every Host Ctrl+V or Shift+Insert failed with `clipboard_input_revoked`. The Controller showed the failure only in the hidden file panel.

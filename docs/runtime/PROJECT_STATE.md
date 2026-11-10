@@ -1,6 +1,18 @@
 # Project State
 
-Updated: 2026-11-05
+Updated: 2026-11-06
+
+## v0.1.12 release preparation
+
+Product version metadata in `CMakeLists.txt` and `vcpkg.json`, both README download
+entry points, and [release notes](../releases/v0.1.12.md) target v0.1.12. The
+capability-5 shortcut-paste repair is on main as `c8ec2a2`. PR #5 CI jobs
+`build-and-test`, `hint`, and `docs-guard` passed. Ryan confirmed bidirectional
+clipboard paste on live two-machine Debug builds of `ce0990fd`. The Windows
+Release portable package, git tag, and GitHub Pre-release are the later publish
+step. File-paste waits stay unbounded. The package remains unsigned. Shortcut
+paste needs the new Host; mixed builds still connect. See the
+[development log](../logs/DEVLOG.md).
 
 ## Connection overlay no longer shows the runtime log
 
