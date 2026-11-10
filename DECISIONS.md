@@ -63,6 +63,10 @@ Made 2026-11-06 for the Controller-to-Host paste fix (branch `cursor/fix-control
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
 
+## D9 — Show connection status and write runtime logs to files
+
+On 2026-11-10 Ryan asked to remove the runtime log display. Connection pages and the workspace show connection progress, actionable errors, and controls. The existing file logger records diagnostics and applies its usual redaction and rotation. Explicit Debug log requests remain available to diagnostic tools.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).

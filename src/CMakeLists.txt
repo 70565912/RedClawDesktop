@@ -105,7 +105,6 @@ if (REDCLAW_QT_GUI_ENABLED)
 
   add_library(redclaw_ui_connection_flow STATIC
     ui/desktop_workspace_theme.cpp
-    ui/runtime_log_view.cpp
     ui/gui_diagnostic_writer.cpp
     ui/agent_conversation_panel.cpp
     ui/agent_conversation_viewport.cpp

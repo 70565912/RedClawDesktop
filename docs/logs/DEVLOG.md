@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-10 — Write runtime diagnostics to files (M10-T02)
+
+- Remove the UI log card, its copy and clear actions, the remote log display and the unused text renderer. Keep the diagnostic writer, connection status and Debug snapshot access. The isolated application run verifies the connection pages and a GUI diagnostic in the file log. See [validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
+
 ## 2026-11-06 — Capability-5 Controller-to-Host clipboard paste liveness
 
 - Root cause: the Host injected the shortcut paste through `RemoteInputSession::paste_verified_clipboard`, which requires a held transfer gate. A capability-5 shortcut paste runs before any transfer, so every Host Ctrl+V or Shift+Insert failed with `clipboard_input_revoked`. The Controller showed the failure only in the hidden file panel.

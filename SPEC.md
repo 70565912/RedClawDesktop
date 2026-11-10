@@ -29,7 +29,7 @@ Sources: [README.md](README.md), [solution architecture](docs/architecture/solut
 
 The published package is the v0.1.11 Windows x64 Developer Preview. `main` has moved since that tag; see [PROGRESS.md](PROGRESS.md). The user-facing capability list is the table in [README.md](README.md). The acceptance-critical subset is:
 
-1. Windows x64 Host and Controller in one desktop GUI: local machine code, peer machine code, connection password, wait/connect, and a playback area.
+1. Windows x64 Host and Controller in one desktop GUI: local machine code, peer machine code, connection password, wait/connect, and a playback area. The GUI shows connection progress and errors. Runtime diagnostics are written to local log files.
 2. Connection password required. Passwordless v0.1.3 and earlier builds are rejected. See [connection password](docs/architecture/connection-password-v1.md).
 3. Public-DHT rendezvous and ICE/STUN direct connect. TURN can be configured by the user. It is not a product dependency. See the ICE section of [README.md](README.md) and [network exit selection](docs/architecture/network-exit-selection-analysis.md).
 4. Real desktop capture (Windows Graphics Capture / Desktop Duplication) and a real encode, transport, decode, and present path. On `main`, the Host assigns H.264 (`EncoderCodec::kH264`) for `preferred_codec`, `bridge_request.codec`, and the adaptive profile in `src/main.cpp`. HEVC types and decoder mapping exist in tree; they are not what the Host sends. See [DECISIONS.md](DECISIONS.md).

@@ -391,9 +391,6 @@ public:
                 if (name == QStringLiteral("agentReplyText")) {
                     paint_owner = GuiStage::kAgentPaint; break;
                 }
-                if (name == QStringLiteral("runtimeSessionLog") || name == QStringLiteral("runtimeSessionLogMirror")) {
-                    paint_owner = GuiStage::kLogPaint; break;
-                }
             }
         }
         // notify may delete the receiver. Copy only static class metadata first.

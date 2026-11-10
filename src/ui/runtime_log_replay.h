@@ -9,7 +9,7 @@
 namespace redclaw::ui {
 
 // Explicit local Debug fixture. Idle until requested, bounded to one 90 s run.
-// The same payload/rate is used with either log renderer and the normal sink.
+// Sends the fixed replay payload through the ordinary diagnostic sink.
 class RuntimeLogReplay final : public QObject {
 public:
     RuntimeLogReplay(QObject* parent, std::function<void(const QString&)> append)

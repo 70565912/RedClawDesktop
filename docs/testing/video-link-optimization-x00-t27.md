@@ -35,10 +35,9 @@ independently by main-app hash12 `47087D9C0484`.
 ### P1 source-derived benefit
 
 Before `a8ec6e4`, the GUI calls `QPlainTextEdit::appendPlainText` for every incoming
-record and the mirror shares the same document. The current
-[buffer/view implementation](../../src/ui/runtime_log_view.cpp) stores text once;
-[GUI integration](../../src/ui/gui_shell.cpp) shares the buffer rather than the
-document. `schedule_refresh` arms one single-shot 100 ms timer only for visible
+record and the mirror shares the same document. The implementation at the audited
+revision `58002bb` stores text once and shares the buffer across separate GUI
+documents. `schedule_refresh` arms one single-shot 100 ms timer only for visible
 views; `hideEvent` stops it and `flush_pending` returns before document work when
 hidden. The 4096-line/4 MiB cache and 64-line/32 KiB batch also bound input retention
 and one refresh's insertion work. File logging remains independent.
@@ -206,6 +205,9 @@ deltas over each recorded interval. GUI and Host traces retain their own monoton
 boundaries. Never subtract uncalibrated timestamps from different machines.
 
 ## P1 local comparison
+
+These steps document the historical GUI log view at `58002bb`. Current builds
+write runtime diagnostics to files.
 
 The developer-selected `RuntimeLogView.DiagnosticPaintReplay` is excluded from
 ordinary CTest. `REDCLAW_QA_LOG_PAINT_SOURCE` selects redacted fixed text;
