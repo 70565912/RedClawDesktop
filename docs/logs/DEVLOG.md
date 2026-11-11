@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-11-11 — HEVC live-test follow-ups: pacing floor, probed capability log, trace tolerance (M02-T03)
+
+- Live test of the first HEVC build (Ryan, two machines): negotiation, fallbacks, reconnect, reverse direction and mixed versions passed. On the GTX 1660S Host the HEVC send pacing cap sat at the sent rate (about 1.3 Mbps) while the encoder target was 2.7 Mbps, so frames waited about 65 ms each in the send budget (H.264: cap above target, about 24 ms).
+- Root cause found in code, not measured on a device. A raise of the cap only happens through a probe, and a probe needs a non-application-limited delivery sample, which needs two consecutive packets of one frame. HEVC frames at this bitrate mostly fit in one packet, so feedback is almost always application-limited. After any drain the cap therefore stays down, and nothing tied it back to the encoder target after the first seed. The unit test `ApplicationLimitedBackpressureCollapsesCapWithoutFloor` reproduces the stuck cap.
+- Interface changes:
+  - `MediaCongestionSample::pacing_floor_kbps` (0 = off) and `resolve_media_pacing_floor_kbps(target, max)`: max(encoder max, 125% of target). The Host sets it from the encoder budget, so it is codec-agnostic.
+  - `MediaCongestionDecision::pacing_floor_kbps` and `cap_reason` (why the cap last moved: `bootstrap_seed`, `measured_congestion_drain`, `local_backpressure_floor_hold`, `demand_floor_restored`, `measured_headroom_probe`, `media_probe_confirmed`).
+  - Capture: `probe_hevc_hardware_encoders` / `HevcHardwareEncoderProbe` open a small real HEVC encoder per hardware backend.
+- Behavior: local buffer pressure alone cannot drain the cap below the floor (that buffer limit is itself sized from the cap). Queue, loss or RTT evidence still drains below it. After such a drain the cap returns to the floor once pressure has cleared and 2 s have passed. The floor's 125% headroom is a planning value, not measured. It does not change burst sizing or keyframe handling.
+- Logs: `Runtime video encode capabilities` now prints `compiled_hevc_*` (FFmpeg has the name; drives selection, unchanged) and `probed_hevc_*` plus `probed_hevc_hardware_any` and `probe_detail`. The adaptation decision and stats lines print `pacing_cap_reason` and `pacing_floor_kbps`.
+- `analyze-video-link-baseline.py` skips leading frames whose capture time is 0 (captured before the trace window opened), reports `skipped_leading_zero_capture_frames`, and still rejects a zero after real capture times.
+- Checks (Linux scratch builds, not MSVC): `redclaw_adaptive_media_sender_tests` 17/17 including 5 new, `redclaw_net_video_frame_transport_tests` and `stream_adaptation_regression_tests` pass, capture bridge tests pass including the probe case (both GPU opens fail cleanly there), analysis tests 6/6, comparator tests 3/3. `src/main.cpp` relies on Windows CI. Not yet rerun on Ryan's machines.
+
 ## 2026-11-11 — HEVC preferred with negotiated H.264 fallback (M02-T03, D10)
 
 - Ryan's decision: move to HEVC to save bitrate, with H.264 as fallback ([D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)). Default `auto`. The Host picks HEVC only when it has an HEVC hardware encoder and the Controller reports hardware HEVC decode. Every decision is logged as `Runtime video codec negotiated ... codec= reason=`.

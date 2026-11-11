@@ -59,7 +59,9 @@ Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardwar
   - `redclaw_ffmpeg_roundtrip_integration_tests` portable set, including the new libx265 IDR case: 5 passed.
   - `test-compare-video-codec-baseline.py`: 3 passed.
   - `src/main.cpp`, the GUI, and the Windows D3D11 probe were not compiled there; Windows CI on the pull request is the build check.
-- Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md).
+- Live two-machine test of the first build (Ryan): negotiation, fallbacks, reconnect, reverse direction and mixed versions passed. It found the HEVC send pacing cap stuck at the sent rate (about 1.3 Mbps against a 2.7 Mbps encoder target). Cause from code reading: probes need non-application-limited samples, which low-bitrate HEVC frames rarely produce. Fix on this branch: a demand floor on the cap (125% of target, or the encoder max), drained below only by queue, loss or RTT evidence and restored after a 2 s hold. Not yet rerun on Ryan's machines, so the live effect is unmeasured.
+- Same follow-up: the Host encoder capability log now separates `compiled_hevc_*` from `probed_hevc_*` (real encoder open), and the baseline analysis skips leading zero-capture-time frames with a count. Details in [DEVLOG](docs/logs/DEVLOG.md).
+- Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md). Rerun the Dynamic HEVC scene and compare `pacing_cap_reason`, cap versus target and send-budget wait with the H.264 run.
 
 ## Mainline
 

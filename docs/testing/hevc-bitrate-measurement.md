@@ -56,3 +56,10 @@ Keep generated reports local; they contain endpoint data. Record the summary (ra
   ```
 
 - `scripts/capture/test-compare-video-codec-baseline.py`: offline checks for the comparator.
+- `redclaw_adaptive_media_sender_tests` (`AdaptiveController.*Floor*`, `ApplicationLimited*`): the pacing cap cannot collapse below the encoder-derived floor on local buffer pressure, still drains below it on queue/loss/RTT evidence, and returns to it after the hold.
+- `scripts/capture/test-analyze-video-link-baseline.py`: includes leading zero-capture-time frames, which are skipped and counted.
+
+## Reading the Host logs
+
+- `Runtime video encode capabilities`: `compiled_hevc_*` means FFmpeg has that encoder name (this drives selection); `probed_hevc_*` is `ok`, `failed` or `skipped` from really opening a small encoder on this machine. A `compiled=true probed=failed` pair means the GPU or driver cannot run it.
+- `Runtime stream adaptation stats` and `... decision`: `pacing_floor_kbps` is the lower bound derived from the encoder budget; `pacing_cap_reason` is why the cap last moved. A healthy HEVC run should show `pacing_bitrate_kbps` at or above `pacing_floor_kbps` except briefly after `measured_congestion_drain`.
