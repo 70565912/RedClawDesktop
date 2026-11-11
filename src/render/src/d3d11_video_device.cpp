@@ -97,7 +97,7 @@ SelectedGpuAdapter select_gpu_adapter_for_monitor(void* target_monitor) {
     return {candidates[*choice.index], choice.reason};
 }
 
-ID3D11Device* create_d3d11_video_device(std::uint64_t adapter_luid, std::string* error_detail) {
+ID3D11Device* create_d3d11_video_device(std::uint64_t adapter_luid, std::string* error_detail, bool debug_layer) {
     const auto adapter = find_adapter(adapter_luid);
     if (adapter_luid != 0 && !adapter) {
         if (error_detail) *error_detail = "requested D3D11 adapter LUID is no longer present";
@@ -108,13 +108,15 @@ ID3D11Device* create_d3d11_video_device(std::uint64_t adapter_luid, std::string*
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     D3D_FEATURE_LEVEL level{};
+    const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT
+        | (debug_layer ? static_cast<UINT>(D3D11_CREATE_DEVICE_DEBUG) : 0U);
     HRESULT hr = D3D11CreateDevice(adapter.Get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
-        nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+        nullptr, flags,
         kFeatureLevels, static_cast<UINT>(std::size(kFeatureLevels)), D3D11_SDK_VERSION,
         &device, &level, &context);
     if (hr == E_INVALIDARG) {
         hr = D3D11CreateDevice(adapter.Get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
-            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+            nullptr, flags,
             kFeatureLevels + 1, static_cast<UINT>(std::size(kFeatureLevels) - 1), D3D11_SDK_VERSION,
             &device, &level, &context);
     }

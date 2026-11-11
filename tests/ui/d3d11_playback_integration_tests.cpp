@@ -347,7 +347,7 @@ TEST(D3D11Playback, NewFramesDuringDeferredGeometryUseTheActualOutputResource) {
     std::unique_ptr<QWidget> owner(renderer.widget);
     owner->resize(640, 360); owner->show(); QCoreApplication::processEvents();
     QString error;
-    auto* device = renderer.canvas->d3d11_decode_device(&error);
+    auto* device = renderer.canvas->d3d11_presentation_device(&error);
     ASSERT_NE(device, nullptr) << error.toStdString();
     D3D11_TEXTURE2D_DESC description{};
     description.Width = 640; description.Height = 368; description.ArraySize = 2;
@@ -421,7 +421,7 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     window.show();
     QCoreApplication::processEvents();
     QString error;
-    auto* decoder_device = renderer.canvas->d3d11_decode_device(&error);
+    auto* decoder_device = renderer.canvas->d3d11_presentation_device(&error);
     ASSERT_NE(decoder_device, nullptr) << error.toStdString();
     D3D11_TEXTURE2D_DESC description{};
     description.Width = 640;
@@ -459,7 +459,7 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
                                        : renderer.canvas->present_image(image, &error);
         ASSERT_NE(outcome, redclaw::ui::PresentOutcome::kFailed) << error.toStdString();
         EXPECT_TRUE(renderer.canvas->diagnostic_snapshot()["output_window_matches_canvas"].toBool());
-        EXPECT_EQ(renderer.canvas->d3d11_decode_device(&error), decoder_device);
+        EXPECT_EQ(renderer.canvas->d3d11_presentation_device(&error), decoder_device);
     }
 }
 

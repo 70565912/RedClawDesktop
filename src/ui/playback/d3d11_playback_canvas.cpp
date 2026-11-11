@@ -3,6 +3,8 @@
 #define NOMINMAX
 #endif
 #include "playback_backends.h"
+#include "redclaw/render/d3d11_video_device.h"
+#include "redclaw/render/playback_flow_control.h"
 #include "ui/gui_latency_probe.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QDateTime>
@@ -11,7 +13,10 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstring>
+#include <functional>
 #include <vector>
 #include <d3d11.h>
 #include <d3d11_4.h>
@@ -29,6 +34,15 @@ PresentOutcome classify_dxgi_present_result(std::int32_t result) {
 }
 namespace {
 using Microsoft::WRL::ComPtr;
+
+// GUID_CONSOLE_DISPLAY_STATE; a local copy avoids INITGUID/uuid.lib.
+constexpr GUID kConsoleDisplayStateGuid =
+    {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}};
+
+std::uint64_t steady_now_ms() {
+  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 using D3DCompileProc = HRESULT(WINAPI*)(
     LPCVOID,
     SIZE_T,
@@ -67,6 +81,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   }
+  ~D3D11PlaybackWidget() override {
+    unregister_display_power_notification();
+  }
 
   QPaintEngine* paintEngine() const override {
     return nullptr;
@@ -92,7 +109,24 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       {"texture_width", int(description.Width)}, {"texture_height", int(description.Height)},
       {"texture_format", int(description.Format)}, {"texture_array_size", int(description.ArraySize)},
       {"output_buffer_width", swap_chain_phys_size_.width()}, {"output_buffer_height", swap_chain_phys_size_.height()},
-      {"geometry_transaction_active", geometry_transaction_active_}, {"resize_count", qint64(swap_chain_resize_count_)}};
+      {"geometry_transaction_active", geometry_transaction_active_}, {"resize_count", qint64(swap_chain_resize_count_)},
+      {"presenter_adapter", QString::fromStdString(adapter_description_)},
+      {"presentation_state", QString::fromLatin1(presentation_gate_.state_name().data(),
+          static_cast<int>(presentation_gate_.state_name().size()))},
+      {"presentation_skipped", qint64(presentation_gate_.skipped())},
+      {"slow_d3d_calls", qint64(slow_calls_.slow_calls())},
+      {"slow_d3d_call_max_us", qint64(slow_calls_.max_elapsed_us())}};
+  }
+
+  void set_diagnostic_log(std::function<void(const QString&)> sink) override {
+    diagnostic_log_ = std::move(sink);
+    if (diagnostic_log_ && !adapter_description_.empty()) log_adapter_choice();
+  }
+
+  bool d3d11_presentation_adapter(std::uint64_t* luid, QString* error_detail) override {
+    if (!ensure_device(error_detail)) return false;
+    if (luid != nullptr) *luid = redclaw::render::d3d11_device_adapter_luid(device_.Get());
+    return true;
   }
 
   void clear_frame() override {
@@ -128,7 +162,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return swap_chain_resize_count_;
   }
 
-  ID3D11Device* d3d11_decode_device(QString* error_detail) override {
+  ID3D11Device* d3d11_presentation_device(QString* error_detail) override {
     if (!ensure_device(error_detail)) {
       return nullptr;
     }
@@ -143,6 +177,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   PresentOutcome present_frame(const DirectFrameData& frame, QString* error_detail) override {
+    if (!presentation_allowed()) {
+      if (error_detail != nullptr) error_detail->clear();
+      return PresentOutcome::kBusyDrop;
+    }
     GuiLatencyScope phase(frame_has_presented_ ? GuiStage::kPresentSteady : GuiStage::kPresentInitialize);
     GuiLatencyScope preparation(GuiStage::kPresentPrepare);
     if (frame.d3d11_surface != nullptr) {
@@ -185,6 +223,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       return PresentOutcome::kFailed;
     }
 
+    D3DCallTimer update_timer(this, "UpdateSubresource");
     context_->UpdateSubresource(
         frame_texture_.Get(),
         0,
@@ -194,6 +233,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
             + static_cast<std::size_t>(content_x) * 4U,
         frame.row_pitch,
         0);
+    update_timer.finish();
     latest_frame_is_surface_ = false;
     preparation.finish();
     const auto outcome = render(error_detail);
@@ -224,6 +264,19 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
  protected:
   bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override {
     const auto* native = static_cast<MSG*>(message);
+    if (native->message == WM_POWERBROADCAST && native->wParam == PBT_POWERSETTINGCHANGE && native->lParam != 0) {
+      const auto* setting = reinterpret_cast<const POWERBROADCAST_SETTING*>(native->lParam);
+      if (IsEqualGUID(setting->PowerSetting, kConsoleDisplayStateGuid) && setting->DataLength >= sizeof(DWORD)) {
+        DWORD state = 0;
+        std::memcpy(&state, setting->Data, sizeof(state));
+        const bool on = state != 0;  // 0 off, 1 on, 2 dimmed
+        if (on != presentation_gate_.display_on()) {
+          presentation_gate_.set_display_on(on);
+          log_diagnostic(QString("D3D11 presenter display power state=%1; presentation %2 while decode continues")
+              .arg(QString::fromLatin1(on ? "on" : "off"), QString::fromLatin1(on ? "resumed" : "paused")));
+        }
+      }
+    }
     if (native->message == WM_ERASEBKGND && !frame_texture_ && !latest_frame_is_surface_) {
       fill_native_background(reinterpret_cast<HDC>(native->wParam));
       *result = 1;
@@ -241,6 +294,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       swap_chain_.Reset();
       swap_chain_phys_size_ = {};
       context_->Flush();
+    }
+    if (event->type() == QEvent::WinIdChange) {
+      unregister_display_power_notification();
+      register_display_power_notification();
     }
     return QWidget::event(event);
   }
@@ -270,6 +327,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
   void showEvent(QShowEvent* event) override {
     QWidget::showEvent(event);
+    register_display_power_notification();
     // Qt can clear a native child's implicit hidden state in showChildren()
     // without invalidating its parent's cached empty layout item. Recalculate
     // that layout before sizing the swap chain or publishing the viewport.
@@ -288,6 +346,84 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  private:
+  // Times one D3D/DXGI call on the GUI thread; anything above 50 ms is logged
+  // with the call name (rate limited) so stalls can be attributed.
+  class D3DCallTimer {
+   public:
+    D3DCallTimer(D3D11PlaybackWidget* owner, const char* call)
+        : owner_(owner), call_(call), started_(std::chrono::steady_clock::now()) {}
+    ~D3DCallTimer() { finish(); }
+    D3DCallTimer(const D3DCallTimer&) = delete;
+    D3DCallTimer& operator=(const D3DCallTimer&) = delete;
+    void finish() {
+      if (owner_ == nullptr) return;
+      const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - started_).count();
+      owner_->observe_d3d_call(call_, static_cast<std::uint64_t>(elapsed));
+      owner_ = nullptr;
+    }
+   private:
+    D3D11PlaybackWidget* owner_;
+    const char* call_;
+    std::chrono::steady_clock::time_point started_;
+  };
+
+  void observe_d3d_call(const char* call, std::uint64_t elapsed_us) {
+    const auto report = slow_calls_.observe(call, elapsed_us, steady_now_ms());
+    if (!report) return;
+    log_diagnostic(QString("D3D11 presenter slow call call=%1 elapsed_ms=%2 threshold_ms=%3 suppressed_since_last=%4 presentation_state=%5")
+        .arg(QString::fromLatin1(report->call.data(), static_cast<int>(report->call.size())))
+        .arg(static_cast<double>(report->elapsed_us) / 1000.0, 0, 'f', 1)
+        .arg(slow_calls_.threshold_us() / 1000)
+        .arg(report->suppressed)
+        .arg(QString::fromLatin1(presentation_gate_.state_name().data(),
+            static_cast<int>(presentation_gate_.state_name().size()))));
+  }
+
+  void log_diagnostic(const QString& line) {
+    if (diagnostic_log_) diagnostic_log_(line);
+  }
+
+  void log_adapter_choice() {
+    log_diagnostic(QString("D3D11 presenter adapter %1 reason=%2")
+        .arg(QString::fromStdString(adapter_description_), QString::fromStdString(adapter_reason_)));
+  }
+
+  void register_display_power_notification() {
+    if (display_power_notification_ != nullptr) return;
+    display_power_notification_ = RegisterPowerSettingNotification(
+        reinterpret_cast<HWND>(winId()), &kConsoleDisplayStateGuid, DEVICE_NOTIFY_WINDOW_HANDLE);
+  }
+
+  void unregister_display_power_notification() {
+    if (display_power_notification_ == nullptr) return;
+    UnregisterPowerSettingNotification(display_power_notification_);
+    display_power_notification_ = nullptr;
+  }
+
+  // Hidden, minimized or display-off windows skip every D3D call. Occluded
+  // swap chains are probed with DXGI_PRESENT_TEST at a low rate.
+  bool presentation_allowed() {
+    const QWidget* top = window();
+    presentation_gate_.set_hidden(!isVisible() || (top != nullptr && top->isMinimized()));
+    const auto now = steady_now_ms();
+    switch (presentation_gate_.decide(now)) {
+    case redclaw::render::PresentationGate::Decision::kPresent:
+      return true;
+    case redclaw::render::PresentationGate::Decision::kSkip:
+      return false;
+    case redclaw::render::PresentationGate::Decision::kTestOcclusion:
+      break;
+    }
+    if (!swap_chain_) return true;
+    D3DCallTimer timer(this, "Present(TEST)");
+    const HRESULT hr = swap_chain_->Present(0, DXGI_PRESENT_TEST);
+    timer.finish();
+    const bool occluded = hr == DXGI_STATUS_OCCLUDED;
+    presentation_gate_.on_present_result(occluded, now);
+    return !occluded;
+  }
+
   void fill_native_background(HDC dc) {
     RECT area{}; GetClientRect(reinterpret_cast<HWND>(winId()), &area);
     const auto brush = CreateSolidBrush(RGB(qRed(desktop_theme::kCanvas), qGreen(desktop_theme::kCanvas), qBlue(desktop_theme::kCanvas)));
@@ -329,43 +465,28 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (device_) {
       return true;
     }
-
-    constexpr D3D_FEATURE_LEVEL kFeatureLevels[] = {
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_10_0,
-    };
-    D3D_FEATURE_LEVEL created_level = D3D_FEATURE_LEVEL_11_0;
-    const HRESULT hr = D3D11CreateDevice(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT
-            | (qEnvironmentVariableIsSet("REDCLAW_D3D11_DEBUG") ? D3D11_CREATE_DEVICE_DEBUG : 0),
-        kFeatureLevels,
-        static_cast<UINT>(sizeof(kFeatureLevels) / sizeof(kFeatureLevels[0])),
-        D3D11_SDK_VERSION,
-        &device_,
-        &created_level,
-        &context_);
-    if (FAILED(hr) || !device_ || !context_) {
+    // Present from the adapter that drives this window's monitor. On Optimus
+    // laptops the output-less dGPU may be the default adapter; rendering
+    // there would add a cross-adapter copy on every present.
+    const auto selected = redclaw::render::select_gpu_adapter_for_monitor(
+        MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST));
+    adapter_reason_ = std::string(selected.reason);
+    std::string create_error;
+    D3DCallTimer timer(this, "D3D11CreateDevice");
+    device_.Attach(redclaw::render::create_d3d11_video_device(
+        selected.adapter ? selected.adapter->luid : 0, &create_error,
+        qEnvironmentVariableIsSet("REDCLAW_D3D11_DEBUG")));
+    timer.finish();
+    if (!device_) {
       if (error_detail != nullptr) {
-        *error_detail = QString("D3D11CreateDevice failed: 0x%1").arg(static_cast<qulonglong>(hr), 0, 16);
+        *error_detail = QString::fromStdString(create_error);
       }
       return false;
     }
-
-    ComPtr<ID3D11Multithread> multithread;
-    if (FAILED(context_.As(&multithread)) || !multithread) {
-      if (error_detail != nullptr) {
-        *error_detail = "D3D11 multithread protection is unavailable.";
-      }
-      device_.Reset();
-      context_.Reset();
-      return false;
-    }
-    multithread->SetMultithreadProtected(TRUE);
+    device_->GetImmediateContext(&context_);
+    adapter_description_ = selected.adapter ? redclaw::render::describe_gpu_adapter(*selected.adapter)
+                                            : std::string("system_default");
+    log_adapter_choice();
     return true;
   }
 
@@ -412,6 +533,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       desc1.Scaling = DXGI_SCALING_STRETCH;
 
       ComPtr<IDXGISwapChain1> swap_chain1;
+      D3DCallTimer timer(this, "CreateSwapChainForHwnd");
       const HRESULT flip_hr = factory2->CreateSwapChainForHwnd(
           device_.Get(),
           reinterpret_cast<HWND>(winId()),
@@ -443,7 +565,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       desc.Windowed = TRUE;
       desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
+      D3DCallTimer timer(this, "CreateSwapChain");
       const HRESULT hr = factory->CreateSwapChain(device_.Get(), &desc, &swap_chain_);
+      timer.finish();
       if (FAILED(hr) || !swap_chain_) {
         if (error_detail != nullptr) {
           *error_detail = QString("CreateSwapChain failed: 0x%1").arg(static_cast<qulonglong>(hr), 0, 16);
@@ -458,14 +582,18 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   bool create_render_target(QString* error_detail) {
     render_target_.Reset();
     ComPtr<ID3D11Texture2D> back_buffer;
+    D3DCallTimer buffer_timer(this, "GetBuffer");
     const HRESULT buffer_hr = swap_chain_->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(back_buffer.GetAddressOf()));
+    buffer_timer.finish();
     if (FAILED(buffer_hr) || !back_buffer) {
       if (error_detail != nullptr) {
         *error_detail = QString("GetBuffer failed: 0x%1").arg(static_cast<qulonglong>(buffer_hr), 0, 16);
       }
       return false;
     }
+    D3DCallTimer target_timer(this, "CreateRenderTargetView");
     const HRESULT target_hr = device_->CreateRenderTargetView(back_buffer.Get(), nullptr, &render_target_);
+    target_timer.finish();
     if (FAILED(target_hr) || !render_target_) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateRenderTargetView failed: 0x%1").arg(static_cast<qulonglong>(target_hr), 0, 16);
@@ -615,6 +743,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     video_output_views_.clear();
     video_input_views_.clear();
     video_input_texture_.Reset();
+    clear_shared_input_views();
 
     if (!video_device_ && (FAILED(device_.As(&video_device_)) || !video_device_)) {
       if (error_detail != nullptr) {
@@ -641,8 +770,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     content_desc.OutputHeight = static_cast<UINT>(output_size.height());
     content_desc.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
 
+    D3DCallTimer enumerator_timer(this, "CreateVideoProcessorEnumerator");
     HRESULT hr = video_device_->CreateVideoProcessorEnumerator(
         &content_desc, &video_processor_enumerator_);
+    enumerator_timer.finish();
     if (FAILED(hr) || !video_processor_enumerator_) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateVideoProcessorEnumerator failed: 0x%1")
@@ -650,7 +781,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       }
       return false;
     }
+    D3DCallTimer processor_timer(this, "CreateVideoProcessor");
     hr = video_device_->CreateVideoProcessor(video_processor_enumerator_.Get(), 0, &video_processor_);
+    processor_timer.finish();
     if (FAILED(hr) || !video_processor_) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateVideoProcessor failed: 0x%1")
@@ -679,12 +812,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       swap_chain_.As(&swap_chain3_);
     }
     DXGI_SWAP_CHAIN_DESC swap_desc{};
+    D3DCallTimer index_timer(this, "GetDesc/GetCurrentBackBufferIndex");
     if (swap_chain3_ && SUCCEEDED(swap_chain_->GetDesc(&swap_desc))
         && (swap_desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD
             || swap_desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)) {
       buffer_index = swap_chain3_->GetCurrentBackBufferIndex();
       buffer_count = (std::max)(1U, swap_desc.BufferCount);
     }
+    index_timer.finish();
     if (video_output_views_.size() != buffer_count) {
       video_output_views_.clear();
       video_output_views_.resize(buffer_count);
@@ -701,10 +836,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       return output_view.Get();
     }
     ComPtr<ID3D11Texture2D> back_buffer;
+    D3DCallTimer buffer_timer(this, "GetBuffer(video output)");
     HRESULT hr = swap_chain_->GetBuffer(
         buffer_index,
         __uuidof(ID3D11Texture2D),
         reinterpret_cast<void**>(back_buffer.GetAddressOf()));
+    buffer_timer.finish();
     if (FAILED(hr) || !back_buffer) {
       if (error_detail != nullptr) {
         *error_detail = QString("GetBuffer for video output failed: 0x%1")
@@ -719,8 +856,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output_desc{};
     output_desc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
     output_desc.Texture2D.MipSlice = 0;
+    D3DCallTimer view_timer(this, "CreateVideoProcessorOutputView");
     hr = video_device_->CreateVideoProcessorOutputView(
         back_buffer.Get(), video_processor_enumerator_.Get(), &output_desc, &output_view);
+    view_timer.finish();
     if (FAILED(hr) || !output_view) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateVideoProcessorOutputView failed: 0x%1")
@@ -755,8 +894,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       input_desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
       input_desc.Texture2D.MipSlice = 0;
       input_desc.Texture2D.ArraySlice = surface.array_slice;
+      D3DCallTimer view_timer(this, "CreateVideoProcessorInputView");
       const HRESULT hr = video_device_->CreateVideoProcessorInputView(
           surface.texture, video_processor_enumerator_.Get(), &input_desc, &input_view);
+      view_timer.finish();
       if (FAILED(hr) || !input_view) {
         if (error_detail != nullptr) {
           *error_detail = QString("CreateVideoProcessorInputView failed: 0x%1")
@@ -768,10 +909,69 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return input_view.Get();
   }
 
+  struct SharedInputSlot {
+    void* handle = nullptr;
+    ComPtr<ID3D11Texture2D> texture;
+    ComPtr<IDXGIKeyedMutex> mutex;
+    ComPtr<ID3D11VideoProcessorInputView> view;
+  };
+
+  void clear_shared_input_views() {
+    for (auto& slot : shared_input_slots_) slot.view.Reset();
+  }
+
+  // Opens (once per bridge generation and slot) the decode device's shared
+  // texture on this device.
+  SharedInputSlot* shared_input_slot(const redclaw::render::D3D11DecodedSurface& surface, QString* error_detail) {
+    if (surface.shared_slot >= shared_input_slots_.size()) {
+      if (error_detail != nullptr) *error_detail = "D3D11 shared surface slot is out of range.";
+      return nullptr;
+    }
+    if (surface.shared_generation != shared_input_generation_) {
+      shared_input_slots_ = {};
+      shared_input_generation_ = surface.shared_generation;
+    }
+    auto& slot = shared_input_slots_[surface.shared_slot];
+    if (slot.handle != surface.shared_handle || !slot.texture) {
+      slot = {};
+      D3DCallTimer open_timer(this, "OpenSharedResource");
+      HRESULT hr = device_->OpenSharedResource(static_cast<HANDLE>(surface.shared_handle), __uuidof(ID3D11Texture2D),
+          reinterpret_cast<void**>(slot.texture.GetAddressOf()));
+      open_timer.finish();
+      if (SUCCEEDED(hr)) hr = slot.texture.As(&slot.mutex);
+      if (FAILED(hr) || !slot.texture || !slot.mutex) {
+        slot = {};
+        if (error_detail != nullptr) {
+          *error_detail = QString("OpenSharedResource for decoded surface failed: 0x%1")
+                              .arg(quint32(hr), 8, 16, QLatin1Char('0'));
+        }
+        return nullptr;
+      }
+      slot.handle = surface.shared_handle;
+    }
+    if (!slot.view) {
+      D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_desc{};
+      input_desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+      D3DCallTimer view_timer(this, "CreateVideoProcessorInputView(shared)");
+      const HRESULT hr = video_device_->CreateVideoProcessorInputView(
+          slot.texture.Get(), video_processor_enumerator_.Get(), &input_desc, &slot.view);
+      view_timer.finish();
+      if (FAILED(hr) || !slot.view) {
+        if (error_detail != nullptr) {
+          *error_detail = QString("CreateVideoProcessorInputView(shared) failed: 0x%1")
+                              .arg(quint32(hr), 8, 16, QLatin1Char('0'));
+        }
+        return nullptr;
+      }
+    }
+    return &slot;
+  }
+
   PresentOutcome present_d3d11_surface(const DirectFrameData& frame, QString* error_detail) {
     GuiLatencyScope preparation(GuiStage::kPresentPrepare);
     const auto& surface = frame.d3d11_surface;
-    if (!surface || surface->device != device_.Get() || surface->texture == nullptr) {
+    const bool shared = surface && surface->shared_handle != nullptr;
+    if (!surface || (!shared && (surface->device != device_.Get() || surface->texture == nullptr))) {
       if (error_detail != nullptr) {
         *error_detail = "D3D11 decoded surface belongs to a different or invalid device.";
       }
@@ -784,7 +984,13 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (output_view == nullptr) {
       return PresentOutcome::kFailed;
     }
-    ID3D11VideoProcessorInputView* input_view = video_input_view(*surface, error_detail);
+    SharedInputSlot* shared_slot = shared ? shared_input_slot(*surface, error_detail) : nullptr;
+    if (shared && shared_slot == nullptr) {
+      return PresentOutcome::kFailed;
+    }
+    ID3D11Texture2D* input_texture = shared ? shared_slot->texture.Get() : surface->texture;
+    ID3D11VideoProcessorInputView* input_view =
+        shared ? shared_slot->view.Get() : video_input_view(*surface, error_detail);
     if (input_view == nullptr) {
       return PresentOutcome::kFailed;
     }
@@ -813,21 +1019,44 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         destination_y + destination_height};
     const RECT output_rect{0, 0, output_width, output_height};
 
+    D3DCallTimer rect_timer(this, "VideoProcessorSetRects");
     video_context_->VideoProcessorSetOutputTargetRect(video_processor_.Get(), TRUE, &output_rect);
     video_context_->VideoProcessorSetStreamSourceRect(video_processor_.Get(), 0, TRUE, &source_rect);
     video_context_->VideoProcessorSetStreamDestRect(video_processor_.Get(), 0, TRUE, &destination_rect);
+    rect_timer.finish();
 
     D3D11_VIDEO_PROCESSOR_STREAM stream{};
     stream.Enable = TRUE;
     stream.pInputSurface = input_view;
+    if (shared) {
+      // The decode thread holds a slot only while queuing its copy; never
+      // wait for it on the GUI thread.
+      D3DCallTimer acquire_timer(this, "IDXGIKeyedMutex::AcquireSync");
+      const HRESULT acquire_hr = shared_slot->mutex->AcquireSync(0, 0);
+      acquire_timer.finish();
+      if (acquire_hr == static_cast<HRESULT>(WAIT_TIMEOUT)) {
+        if (error_detail != nullptr) error_detail->clear();
+        return PresentOutcome::kBusyDrop;
+      }
+      if (acquire_hr != S_OK) {
+        if (error_detail != nullptr) {
+          *error_detail = QString("IDXGIKeyedMutex::AcquireSync(present) failed: 0x%1")
+                              .arg(quint32(acquire_hr), 8, 16, QLatin1Char('0'));
+        }
+        return PresentOutcome::kFailed;
+      }
+    }
     preparation.finish();
     GuiLatencyScope blit_timing(GuiStage::kVideoBlt);
+    D3DCallTimer blit_timer(this, "VideoProcessorBlt");
     const HRESULT blit_hr = video_context_->VideoProcessorBlt(
         video_processor_.Get(), output_view, 0, 1, &stream);
+    blit_timer.finish();
     blit_timing.finish();
+    if (shared) (void)shared_slot->mutex->ReleaseSync(0);
     if (FAILED(blit_hr)) {
       D3D11_TEXTURE2D_DESC input_desc{};
-      surface->texture->GetDesc(&input_desc);
+      input_texture->GetDesc(&input_desc);
       UINT input_support = 0, output_support = 0;
       const HRESULT input_check = video_processor_enumerator_->CheckVideoProcessorFormat(input_desc.Format, &input_support);
       const HRESULT output_check = video_processor_enumerator_->CheckVideoProcessorFormat(DXGI_FORMAT_B8G8R8A8_UNORM, &output_support);
@@ -866,7 +1095,16 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
   PresentOutcome present_swap_chain(UINT flags, QString* error_detail, bool redraw) {
     GuiLatencyScope present_timing(GuiStage::kPresent);
+    D3DCallTimer present_timer(this, "Present");
     const HRESULT present_hr = swap_chain_->Present(0, flags);
+    present_timer.finish();
+    const bool occluded = present_hr == DXGI_STATUS_OCCLUDED;
+    if (occluded != presentation_gate_.occluded()) {
+      log_diagnostic(QString("D3D11 presenter swap chain %1; presentation %2 while decode continues")
+          .arg(QString::fromLatin1(occluded ? "occluded" : "visible"),
+               QString::fromLatin1(occluded ? "throttled" : "resumed")));
+    }
+    presentation_gate_.on_present_result(occluded, steady_now_ms());
     const auto outcome = classify_dxgi_present_result(present_hr);
     if (outcome == PresentOutcome::kBusyDrop) {
       if (error_detail != nullptr) {
@@ -938,6 +1176,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     video_output_views_.clear();
     video_input_views_.clear();
     video_input_texture_.Reset();
+    clear_shared_input_views();
     video_output_size_ = {};
   }
 
@@ -953,12 +1192,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
     release_output_resources();
 
+    D3DCallTimer resize_timer(this, "ResizeBuffers");
     const HRESULT resize_hr = swap_chain_->ResizeBuffers(
         0,
         static_cast<UINT>(phys.width()),
         static_cast<UINT>(phys.height()),
         DXGI_FORMAT_UNKNOWN,
         0);
+    resize_timer.finish();
     // ResizeBuffers can fail while an outstanding back-buffer reference exists.
     // Restore the old buffer's target so subsequent CPU frames remain usable.
     if (create_render_target(error_detail)) {
@@ -1038,7 +1279,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     context_->PSSetShader(pixel_shader_.Get(), nullptr, 0);
     context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
     context_->PSSetShaderResources(0, 1, frame_srv_.GetAddressOf());
+    D3DCallTimer draw_timer(this, "Draw");
     context_->Draw(6, 0);
+    draw_timer.finish();
 
     ID3D11ShaderResourceView* null_srv = nullptr;
     context_->PSSetShaderResources(0, 1, &null_srv);
@@ -1077,6 +1320,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   std::uint64_t swap_chain_resize_count_ = 0;
   QSize last_phys_size_;
   QSize swap_chain_phys_size_;
+  std::array<SharedInputSlot, redclaw::render::D3D11SharedSurfaceBridge::kSlotCount> shared_input_slots_;
+  std::uint64_t shared_input_generation_ = 0;
+  redclaw::render::PresentationGate presentation_gate_;
+  redclaw::render::SlowCallReporter slow_calls_;
+  std::function<void(const QString&)> diagnostic_log_;
+  std::string adapter_description_;
+  std::string adapter_reason_;
+  HPOWERNOTIFY display_power_notification_ = nullptr;
 };
 
 // Quick probe: create a D3D11 hardware device and immediately release it.

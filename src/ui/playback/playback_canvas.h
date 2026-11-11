@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QWidget>
 #include <cstdint>
+#include <functional>
 
 #if defined(_WIN32)
 struct ID3D11Device;
@@ -26,8 +27,19 @@ class PlaybackCanvas {
   virtual void set_geometry_transaction_active(bool) {}
   virtual void commit_geometry(std::uint64_t) {}
   [[nodiscard]] virtual std::uint64_t swap_chain_resize_count() const { return 0; }
+  // Warnings the backend wants in the session log (adapter choice, slow
+  // D3D calls). Invoked on the GUI thread.
+  virtual void set_diagnostic_log(std::function<void(const QString&)>) {}
 #if defined(_WIN32)
-  virtual ID3D11Device* d3d11_decode_device(QString*) { return nullptr; }
+  // The presenter's own device. Decode never shares it; tests use it to
+  // build same-device surfaces.
+  virtual ID3D11Device* d3d11_presentation_device(QString*) { return nullptr; }
+  // LUID of the adapter the presenter renders on, so decode can run on the
+  // same adapter without a cross-adapter copy.
+  virtual bool d3d11_presentation_adapter(std::uint64_t*, QString* detail) {
+    if (detail != nullptr) *detail = "non-D3D11 playback backend";
+    return false;
+  }
 #endif
 };
 

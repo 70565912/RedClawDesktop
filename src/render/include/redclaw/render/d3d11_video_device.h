@@ -29,7 +29,8 @@ struct SelectedGpuAdapter {
 // Hardware D3D11 device with BGRA and video support on the adapter with
 // `adapter_luid` (0 = system default), multithread protected. The caller owns
 // the returned reference.
-[[nodiscard]] ID3D11Device* create_d3d11_video_device(std::uint64_t adapter_luid, std::string* error_detail);
+[[nodiscard]] ID3D11Device* create_d3d11_video_device(
+    std::uint64_t adapter_luid, std::string* error_detail, bool debug_layer = false);
 [[nodiscard]] std::uint64_t d3d11_device_adapter_luid(ID3D11Device* device);
 
 // Hands decoded frames from the decode device to a presenter on another

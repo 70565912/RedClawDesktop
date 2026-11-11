@@ -4,6 +4,8 @@
 #endif
 #include "direct_frame_receiver.h"
 #include "redclaw/helper/direct_frame_shared_memory.h"
+#include "redclaw/render/d3d11_video_device.h"
+#include "redclaw/render/playback_flow_control.h"
 #include <QByteArray>
 #include <algorithm>
 #include <atomic>
@@ -14,8 +16,17 @@
 #include "ui/gui_latency_probe.h"
 #include <thread>
 #include <Windows.h>
+#include <d3d11.h>
+#include <wrl/client.h>
 
 namespace redclaw::ui {
+namespace {
+std::uint64_t steady_now_ms() {
+  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}  // namespace
+
 class DirectFramePipeServer::Impl final {
  public:
   ~Impl() {
@@ -116,6 +127,10 @@ class DirectFramePipeServer::Impl final {
     observed_sequence_ = 0;
     consecutive_decode_failures_ = 0;
     decoded_encoded_frames_ = 0;
+    {
+      std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+      keyframe_limiter_.reset();
+    }
     running_.store(true);
     worker_ = std::thread([this]() {
       run();
@@ -123,11 +138,31 @@ class DirectFramePipeServer::Impl final {
     return true;
   }
 
-  void configure_d3d11_surface_output(ID3D11Device* device) {
+  bool configure_d3d11_decode_adapter(std::uint64_t adapter_luid, QString* detail) {
+    disable_d3d11_surface_output();
+    std::string error;
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    device.Attach(redclaw::render::create_d3d11_video_device(adapter_luid, &error));
+    if (!device) {
+      if (detail != nullptr) *detail = QString::fromStdString(error);
+      return false;
+    }
+    decode_device_ = device;
+    surface_bridge_ = std::make_unique<redclaw::render::D3D11SharedSurfaceBridge>(device.Get());
+    prefer_d3d11_surface_output_ = true;
+    decoder_.configure_d3d11_surface_output(device.Get());
+    decode_adapter_luid_.store(redclaw::render::d3d11_device_adapter_luid(device.Get()));
+    return true;
+  }
+
+  void disable_d3d11_surface_output() {
     cpu_decode_fallback_requested_.store(false);
-    prefer_d3d11_surface_output_ = device != nullptr;
+    prefer_d3d11_surface_output_ = false;
     decoded_cpu_output_observed_ = false;
-    decoder_.configure_d3d11_surface_output(device);
+    decoder_.configure_d3d11_surface_output(nullptr);
+    surface_bridge_.reset();
+    decode_device_.Reset();
+    decode_adapter_luid_.store(0);
   }
 
   void request_cpu_decode_fallback() {
@@ -216,15 +251,40 @@ class DirectFramePipeServer::Impl final {
     on_keyframe_request_ = std::move(fn);
   }
 
+  // Every dependent frame after a gap asks for a keyframe; the limiter turns
+  // that burst into one request now and at most one per interval after.
   void request_keyframe(const QString& reason) {
     std::function<void(QString)> notify;
     {
       std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+      if (!keyframe_limiter_.request(steady_now_ms())) {
+        pending_keyframe_reason_ = reason;
+        return;
+      }
       notify = on_keyframe_request_;
     }
     if (notify) {
       notify(reason);
     }
+  }
+
+  void poll_coalesced_keyframe_request() {
+    std::function<void(QString)> notify;
+    QString reason;
+    {
+      std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+      if (!keyframe_limiter_.poll(steady_now_ms())) return;
+      notify = on_keyframe_request_;
+      reason = pending_keyframe_reason_;
+    }
+    if (notify) {
+      notify(reason);
+    }
+  }
+
+  void keyframe_request_satisfied() {
+    std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+    keyframe_limiter_.satisfied();
   }
 
   bool take_latest_frame(DirectFrameData* frame, quint64* frame_count) {
@@ -294,6 +354,12 @@ class DirectFramePipeServer::Impl final {
       snapshot.writer_busy_drops = static_cast<quint64>(redclaw::helper::direct_frame_atomic_load_i64(&shared_header->writer_busy_drop_count));
     }
     snapshot.buffer_pool = frame_buffer_pool_.telemetry();
+    snapshot.decode_adapter_luid = decode_adapter_luid_.load();
+    {
+      std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+      snapshot.keyframe_requests_sent = keyframe_limiter_.sent();
+      snapshot.keyframe_requests_suppressed = keyframe_limiter_.suppressed();
+    }
     return snapshot;
   }
 
@@ -349,6 +415,7 @@ class DirectFramePipeServer::Impl final {
 
       const auto before_consume = observed_sequence_;
       consume_latest_frame();
+      poll_coalesced_keyframe_request();
       if (pending && observed_sequence_ == before_consume) {
         // A writer may still be committing the inspected header. Do not spin
         // on an unreadable slot when no progress was possible.
@@ -360,8 +427,8 @@ class DirectFramePipeServer::Impl final {
   }
 
   void consume_latest_frame() {
-    // At most the existing two retained frames per turn, not an unbounded
-    // catch-up queue. Unconsumed work is revisited by the bounded wait loop.
+    // At most the retained ring slots per turn, not an unbounded catch-up
+    // queue. Unconsumed work is revisited by the bounded wait loop.
     for (std::uint32_t consumed = 0;
          running_.load() && consumed < redclaw::helper::kDirectFrameSharedMemorySlotCount;
          ++consumed) {
@@ -659,9 +726,41 @@ class DirectFramePipeServer::Impl final {
     decoded.content_rect_width = header.content_rect_width;
     decoded.content_rect_height = header.content_rect_height;
 
+    if (keyframe) keyframe_request_satisfied();
     decoder_resync_needed_.store(false);
+    const bool displayable = hand_over_d3d11_surface(&decoded);
     *frame = std::move(decoded);
-    return true;
+    return displayable;
+  }
+
+  // Copies a decoder pool surface into a shared slot and releases the pool
+  // slice. Returns false when the frame is dropped for display only.
+  bool hand_over_d3d11_surface(DirectFrameData* decoded) {
+    auto& surface = decoded->d3d11_surface;
+    if (decoded->output_path != redclaw::render::DecodedVideoFramePath::kD3D11DecodeSurface
+        || surface == nullptr || surface->shared_handle != nullptr) {
+      return true;
+    }
+    auto shared = std::make_shared<redclaw::render::D3D11DecodedSurface>();
+    std::string error = "decode device has no shared-surface bridge";
+    const auto status = surface_bridge_
+        ? surface_bridge_->publish(surface->texture, surface->array_slice, shared.get(), &error)
+        : redclaw::render::D3D11SharedSurfaceBridge::PublishStatus::kFailed;
+    surface.reset();
+    if (status == redclaw::render::D3D11SharedSurfaceBridge::PublishStatus::kPublished) {
+      surface = std::move(shared);
+      return true;
+    }
+    decoded->output_path = redclaw::render::DecodedVideoFramePath::kUnknown;
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    if (status == redclaw::render::D3D11SharedSurfaceBridge::PublishStatus::kAllSlotsBusy) {
+      ++stats_.surface_bridge_busy_drops;
+      return false;
+    }
+    ++stats_.surface_bridge_failures;
+    stats_.last_surface_bridge_error = QString::fromStdString(error);
+    if (!cpu_decode_fallback_requested_.exchange(true)) ++stats_.d3d11_surface_fallbacks;
+    return false;
   }
 
   void publish_latest_frame(DirectFrameData frame, quint64 sequence) {
@@ -742,8 +841,10 @@ class DirectFramePipeServer::Impl final {
 
   std::mutex notify_mutex_;
   std::function<void()> on_frame_notify_;
-  std::mutex keyframe_request_mutex_;
+  mutable std::mutex keyframe_request_mutex_;
   std::function<void(QString)> on_keyframe_request_;
+  redclaw::render::KeyframeRequestLimiter keyframe_limiter_{500};
+  QString pending_keyframe_reason_;
 
   mutable std::mutex stats_mutex_;
   DirectFrameTransportStats stats_;
@@ -758,11 +859,15 @@ class DirectFramePipeServer::Impl final {
   // In-process decoder for encoded frame pipe protocol (H264/HEVC).
   // Only used from the worker thread; no external synchronization needed.
   redclaw::render::FfmpegVideoFrameDecoder decoder_;
+  Microsoft::WRL::ComPtr<ID3D11Device> decode_device_;
+  std::unique_ptr<redclaw::render::D3D11SharedSurfaceBridge> surface_bridge_;
+  std::atomic<std::uint64_t> decode_adapter_luid_{0};
 };
 DirectFramePipeServer::DirectFramePipeServer() : impl_(std::make_unique<Impl>()) {}
 DirectFramePipeServer::~DirectFramePipeServer() = default;
 bool DirectFramePipeServer::start(const QString& name, QString* error) { return impl_->start(name, error); }
-void DirectFramePipeServer::configure_d3d11_surface_output(ID3D11Device* device) { impl_->configure_d3d11_surface_output(device); }
+bool DirectFramePipeServer::configure_d3d11_decode_adapter(std::uint64_t luid, QString* detail) { return impl_->configure_d3d11_decode_adapter(luid, detail); }
+void DirectFramePipeServer::disable_d3d11_surface_output() { impl_->disable_d3d11_surface_output(); }
 void DirectFramePipeServer::request_cpu_decode_fallback() { impl_->request_cpu_decode_fallback(); }
 void DirectFramePipeServer::stop() { impl_->stop(); }
 bool DirectFramePipeServer::is_running() const { return impl_->is_running(); }

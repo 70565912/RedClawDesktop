@@ -1,6 +1,7 @@
 #pragma once
 #if defined(_WIN32)
 #include "playback_canvas.h"
+#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -36,6 +37,14 @@ struct DirectFrameTransportStats {
   quint64 shared_dependency_catchups = 0;
   quint64 shared_independent_skips = 0;
   quint64 shared_dependency_gaps = 0;
+  quint64 keyframe_requests_sent = 0;
+  quint64 keyframe_requests_suppressed = 0;
+  // Decoded frames dropped for display only; decode and references continued.
+  quint64 surface_bridge_busy_drops = 0;
+  quint64 surface_bridge_failures = 0;
+  // 0 when decoding to CPU frames instead of the shared-surface bridge.
+  quint64 decode_adapter_luid = 0;
+  QString last_surface_bridge_error;
   QString decoder_backend = "unopened";
   QString last_decode_error;
   QString hardware_decode_fallback_from_backend;
@@ -43,8 +52,10 @@ struct DirectFrameTransportStats {
   redclaw::render::DecodedFrameBufferPoolTelemetry buffer_pool;
 };
 
-// Sole owner of mapping, event, decoder, worker and latest decoded frame.
-// Destruction joins the worker before removing callbacks; no new queue/thread.
+// Sole owner of mapping, event, decoder, decode device, worker and latest
+// decoded frame. Destruction joins the worker before removing callbacks.
+// Decode runs on its own D3D11 device; frames reach the presenter through
+// keyed-mutex shared textures, so a stalled presenter never blocks decode.
 class DirectFramePipeServer final {
 public:
     DirectFramePipeServer();
@@ -52,7 +63,11 @@ public:
     DirectFramePipeServer(const DirectFramePipeServer&) = delete;
     DirectFramePipeServer& operator=(const DirectFramePipeServer&) = delete;
     bool start(const QString& pipe_name, QString* error_detail);
-    void configure_d3d11_surface_output(ID3D11Device* device);
+    // Creates the decode device on the presenter's adapter (LUID 0 = default
+    // adapter). On failure decode falls back to CPU-transfer frames and the
+    // reason is written to `detail`. Call before start().
+    bool configure_d3d11_decode_adapter(std::uint64_t adapter_luid, QString* detail);
+    void disable_d3d11_surface_output();
     void request_cpu_decode_fallback();
     void stop();
     bool is_running() const;

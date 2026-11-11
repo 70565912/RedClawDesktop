@@ -4093,6 +4093,30 @@ bool launch_gui_shell(
                 static_cast<double>(direct_frame_handler_max_us) / 1000.0,
                 'f',
                 2)));
+    log_line.append(
+        QString(" keyframe_requests_sent_delta=%1 keyframe_requests_coalesced_delta=%2 surface_bridge_busy_drops_delta=%3 surface_bridge_failures_total=%4 decode_adapter_luid=0x%5")
+            .arg(QString::number(delta(transport.keyframe_requests_sent, direct_frame_last_transport_stats.keyframe_requests_sent)))
+            .arg(QString::number(delta(transport.keyframe_requests_suppressed, direct_frame_last_transport_stats.keyframe_requests_suppressed)))
+            .arg(QString::number(delta(transport.surface_bridge_busy_drops, direct_frame_last_transport_stats.surface_bridge_busy_drops)))
+            .arg(QString::number(transport.surface_bridge_failures))
+            .arg(transport.decode_adapter_luid, 16, 16, QLatin1Char('0')));
+    {
+      const QJsonObject canvas = playback_window_canvas->diagnostic_snapshot();
+      if (canvas.contains("presentation_state")) {
+        log_line.append(QString(" presentation_state=%1 presentation_skipped_total=%2 slow_d3d_calls_total=%3 slow_d3d_call_max_ms=%4")
+            .arg(canvas.value("presentation_state").toString())
+            .arg(canvas.value("presentation_skipped").toVariant().toULongLong())
+            .arg(canvas.value("slow_d3d_calls").toVariant().toULongLong())
+            .arg(QString::number(canvas.value("slow_d3d_call_max_us").toDouble() / 1000.0, 'f', 1)));
+      }
+    }
+    if (!transport.last_surface_bridge_error.isEmpty()) {
+      QString safe_bridge_error = transport.last_surface_bridge_error;
+      safe_bridge_error.replace(' ', '_');
+      safe_bridge_error.replace('\n', '_');
+      safe_bridge_error.replace('\r', '_');
+      log_line.append(QString(" last_surface_bridge_error=%1").arg(safe_bridge_error));
+    }
     if (!transport.last_decode_error.isEmpty()) {
       QString safe_decode_error = QString::fromStdString(
           redclaw::diag::redact_log_text(transport.last_decode_error.toStdString()));
@@ -5182,11 +5206,16 @@ bool launch_gui_shell(
       const QString pipe_name = make_direct_frame_channel_name();
       QString pipe_error;
       QString decode_device_error;
-      ID3D11Device* decode_device = playback_window_canvas->d3d11_decode_device(&decode_device_error);
-      direct_frame_pipe_server.configure_d3d11_surface_output(decode_device);
-      if (decode_device != nullptr) {
-        append_log("D3D11 decoded-surface output enabled on the playback device.");
+      playback_window_canvas->set_diagnostic_log(&append_log);
+      std::uint64_t presenter_adapter_luid = 0;
+      if (playback_window_canvas->d3d11_presentation_adapter(&presenter_adapter_luid, &decode_device_error)
+          && direct_frame_pipe_server.configure_d3d11_decode_adapter(presenter_adapter_luid, &decode_device_error)) {
+        append_log(QString("D3D11 decode device enabled on the presenter adapter luid=0x%1:%2; "
+                           "decoded frames reach the presenter through keyed-mutex shared textures.")
+                       .arg(static_cast<quint32>(presenter_adapter_luid >> 32U), 8, 16, QLatin1Char('0'))
+                       .arg(static_cast<quint32>(presenter_adapter_luid & 0xffffffffU), 8, 16, QLatin1Char('0')));
       } else {
+        direct_frame_pipe_server.disable_d3d11_surface_output();
         append_log(
             QString("D3D11 decoded-surface output unavailable; CPU frame fallback remains enabled: %1")
                 .arg(decode_device_error.isEmpty() ? "non-D3D11 playback backend" : decode_device_error));
