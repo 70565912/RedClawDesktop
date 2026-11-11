@@ -3352,18 +3352,33 @@ int run_runtime_mode(
                   << " probe_detail=" << (probe.detail.empty() ? std::string("n/a") : probe.detail) << '\n';
     } else if (options.role == RuntimeRole::kHost) {
         redclaw::capture::EncoderBackendCapabilities encoder_capabilities;
+        redclaw::capture::HevcHardwareEncoderProbe hevc_probe;
         if (redclaw::capture::detect_encoder_backend_capabilities(&encoder_capabilities)) {
             host_video_encode.hevc_hardware_encoder_available = encoder_capabilities.hevc_nvenc_available
                 || encoder_capabilities.hevc_quicksync_available
                 || encoder_capabilities.hevc_amf_available;
             host_video_encode.hevc_software_encoder_available = encoder_capabilities.hevc_software_available;
+            (void)redclaw::capture::probe_hevc_hardware_encoders(encoder_capabilities, &hevc_probe);
         }
+        // compiled_* only says FFmpeg was built with the encoder name and drives
+        // selection; probed_* says whether this GPU/driver really opened it.
+        const auto describe_probe = [](const redclaw::capture::EncoderOpenProbe& result) {
+            return std::string(!result.attempted ? "skipped" : (result.available ? "ok" : "failed"));
+        };
+        const auto compiled = [](bool value) { return value ? "true" : "false"; };
         std::cout << "Runtime video encode capabilities role=" << role_name
                   << " preference=" << redclaw::protocol::to_string(options.stream_video_codec)
-                  << " hevc_nvenc=" << (encoder_capabilities.hevc_nvenc_available ? "true" : "false")
-                  << " hevc_qsv=" << (encoder_capabilities.hevc_quicksync_available ? "true" : "false")
-                  << " hevc_amf=" << (encoder_capabilities.hevc_amf_available ? "true" : "false")
-                  << " hevc_software=" << (encoder_capabilities.hevc_software_available ? "true" : "false")
+                  << " compiled_hevc_nvenc=" << compiled(encoder_capabilities.hevc_nvenc_available)
+                  << " compiled_hevc_qsv=" << compiled(encoder_capabilities.hevc_quicksync_available)
+                  << " compiled_hevc_amf=" << compiled(encoder_capabilities.hevc_amf_available)
+                  << " compiled_hevc_software=" << compiled(encoder_capabilities.hevc_software_available)
+                  << " probed_hevc_nvenc=" << describe_probe(hevc_probe.nvenc)
+                  << " probed_hevc_qsv=" << describe_probe(hevc_probe.quicksync)
+                  << " probed_hevc_amf=" << describe_probe(hevc_probe.amf)
+                  << " probed_hevc_hardware_any=" << compiled(hevc_probe.any_available())
+                  << " probe_detail=nvenc:" << hevc_probe.nvenc.detail
+                  << ";qsv:" << hevc_probe.quicksync.detail
+                  << ";amf:" << hevc_probe.amf.detail
                   << " hevc_bitrate_percent_of_h264=" << redclaw::capture::kHevcBitratePercentOfH264 << '\n';
     }
 
@@ -8869,6 +8884,9 @@ int run_runtime_mode(
                 congestion_sample.encoder_target_bitrate_kbps =
                     encoder_transport_budget_kbps == 0
                         ? kDesktopStreamAdaptiveBitrateFloorKbps : encoder_transport_budget_kbps;
+                congestion_sample.pacing_floor_kbps = redclaw::net::resolve_media_pacing_floor_kbps(
+                    congestion_sample.encoder_target_bitrate_kbps,
+                    resolve_stream_target_max_bitrate_kbps(adaptive_control));
                 congestion_sample.smoothed_rtt_ms = rtt_telemetry.smoothed_rtt_ms;
                 congestion_sample.rtt_queue_delay_ms = rtt_signal.queue_delay_ms;
                 congestion_sample.rtt_sample_id = rtt_telemetry.ping_ack_count;
@@ -9008,7 +9026,9 @@ int run_runtime_mode(
                               << " capacity_mature=" << receiver_decode_capacity.valid
                               << " capacity_pressure=" << receiver_decode_capacity.pressure
                               << " recovery_healthy=" << receiver_decode_network_stable
-                              << " pacing_kbps=" << congestion_decision.pacing_bitrate_kbps << '\n';
+                              << " pacing_kbps=" << congestion_decision.pacing_bitrate_kbps
+                              << " pacing_floor_kbps=" << congestion_decision.pacing_floor_kbps
+                              << " pacing_cap_reason=" << congestion_decision.cap_reason << '\n';
                 }
                 const std::uint32_t applied_bitrate_kbps =
                     adaptive_control.applied_bitrate_kbps != 0
@@ -11534,6 +11554,8 @@ int run_runtime_mode(
                           << " feedback_interval_us=" << transport_estimate.feedback_interval_us
                           << " feedback_jitter_us=" << transport_estimate.feedback_jitter_us
                           << " controller_reason=" << congestion_decision.reason
+                          << " pacing_cap_reason=" << congestion_decision.cap_reason
+                          << " pacing_floor_kbps=" << congestion_decision.pacing_floor_kbps
                           << " pacing_bitrate_kbps="
                           << pacer_telemetry.pacing_bitrate_kbps
                           << " transport_loss_per_mille="

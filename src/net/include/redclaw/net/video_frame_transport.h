@@ -375,6 +375,11 @@ struct MediaSendDemand {
 struct MediaCongestionSample {
     std::uint64_t now_steady_ms = 0;
     std::uint32_t encoder_target_bitrate_kbps = 0;
+    // Demand-derived lower bound for the pacing cap (see
+    // resolve_media_pacing_floor_kbps). 0 disables the floor. Only network
+    // evidence (queue, loss, RTT) may drain the cap below it, and it is
+    // restored after a hold once that pressure has cleared.
+    std::uint32_t pacing_floor_kbps = 0;
     std::uint32_t smoothed_rtt_ms = 0;
     std::uint32_t rtt_queue_delay_ms = 0;
     std::uint64_t rtt_sample_id = 0;
@@ -412,8 +417,21 @@ struct MediaCongestionDecision {
     std::uint64_t queue_allowance_us = 0;
     std::uint64_t receiver_frame_period_us = 0;
     bool delivery_rate_valid = false;
+    std::uint32_t pacing_floor_kbps = 0;
+    // Why the pacing cap last moved (persists until the next change):
+    // bootstrap_seed, measured_congestion_drain,
+    // local_backpressure_floor_hold, demand_floor_restored,
+    // measured_headroom_probe, media_probe_confirmed.
+    std::string cap_reason;
     std::string reason;
 };
+
+// Pacing floor for an encoder target/max. Codec-agnostic: the encoder budget
+// already carries any per-codec scaling. Headroom lets motion bursts and
+// keyframes exceed the average encoder rate without waiting on the token bucket.
+inline constexpr std::uint32_t kMediaPacingFloorHeadroomPercent = 125;
+[[nodiscard]] std::uint32_t resolve_media_pacing_floor_kbps(
+    std::uint32_t encoder_target_kbps, std::uint32_t encoder_max_kbps);
 
 class MediaCongestionController final {
 public:
@@ -446,6 +464,7 @@ private:
     std::uint64_t recovery_probe_started_ms_ = 0;
     std::uint32_t recovery_probe_original_rate_ = 0;
     std::uint64_t last_backoff_sample_ms_ = 0;
+    std::uint64_t last_network_drain_ms_ = 0;
     bool pressure_backoff_latched_ = false;
 };
 
