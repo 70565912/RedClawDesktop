@@ -101,7 +101,6 @@ if(TARGET redclaw_ui_connection_flow)
     ui/gui_latency_probe_tests.cpp
     ui/gui_diagnostic_writer_tests.cpp
     ui/runtime_control_queue_tests.cpp
-    ui/runtime_log_view_tests.cpp
     ui/qa_input_probe_tests.cpp
     ui/agent_settings_dialog_tests.cpp
     ui/agent_conversation_panel_tests.cpp
@@ -162,6 +161,6 @@ if(TARGET redclaw_ui_connection_flow)
   add_test(
     NAME redclaw_ui_connection_flow_tests
     COMMAND redclaw_ui_connection_flow_tests
-      --gtest_filter=-RuntimeLogView.DiagnosticPaintReplay:ControllerRemoteInputCapture.ClipboardCallbackWithholdsPasteAndRepeatUntilKeyUp
+      --gtest_filter=-ControllerRemoteInputCapture.ClipboardCallbackWithholdsPasteAndRepeatUntilKeyUp
   )
 endif()

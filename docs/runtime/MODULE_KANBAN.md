@@ -110,7 +110,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-06
+Updated: 2026-11-10
+
+Runtime log display removal (2026-11-10, M10-T02) — remove the remaining connection-page and diagnostic log displays. Keep connection status, error messages, and file logging. See [local validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
 
 Controller-to-Host clipboard paste liveness (2026-11-06, M10-T03) — on main as `c8ec2a2` (PR #5). Ryan confirmed bidirectional clipboard paste on live two-machine Debug builds of `ce0990fd`. PR #5 CI `build-and-test`, `hint`, and `docs-guard` passed. Root cause: the capability-5 Host shortcut paste went through the transfer-gated `paste_verified_clipboard`, so every Host Ctrl+V failed with `clipboard_input_revoked`. It now uses the revision-bound `paste_shortcut_clipboard`. Stale or unserviceable demands and invokes are cancelled. An unanswered text/image reservation is released after 15 s, and a shortcut wait after 5 s. The native port retries capture, install and listener registration, and restarts with backoff after it stops. The Controller UI shows every refusal. Clipboard diagnostics carry no payload. `redclaw_clipboard_demand_liveness_tests` (11 cases) and one `RemoteInputSessionTests` case were added. All pass on Linux with a capability shim. The v0.1.12 Windows Release package is produced by the later publish step. Decision D7 in root `DECISIONS.md`. See [v0.1.12 release notes](../releases/v0.1.12.md).
 

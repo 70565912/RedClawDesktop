@@ -23,7 +23,6 @@
 #include "ui/host_update_restart_guard.h"
 #include "ui/runtime_stdio_reader.h"
 #include "ui/runtime_control_writer.h"
-#include "ui/runtime_log_view.h"
 #include "ui/runtime_log_replay.h"
 #include "ui/qa_input_probe.h"
 #include "ui/input_diagnostic_target.h"
@@ -56,7 +55,6 @@
 #include <QStandardItemModel>
 #include <QDateTime>
 #include <QCheckBox>
-#include <QClipboard>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -79,7 +77,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QFileInfo>
-#include <QListWidget>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QMainWindow>
@@ -109,7 +106,6 @@
 #include <QStyle>
 #include <QStringList>
 #include <QTabBar>
-#include <QTabWidget>
 #include <QThread>
 #include <QTextDocument>
 #include <QTimer>
@@ -274,18 +270,8 @@ void write_gui_log_sink(const QString& formatted) {
   if (g_diagnostic_writer) g_diagnostic_writer->post_log({"gui", formatted.toUtf8(), false});
 }
 
-void append_log(QPlainTextEdit* output, const QString& line) {
-  const QString formatted = format_gui_log_line(line);
-  GuiLatencyScope timing(GuiStage::kLogWidget);
-  output->appendPlainText(formatted);
-  timing.finish();
-  write_gui_log_sink(formatted);
-}
-
-void append_log(RuntimeLogView* output, const QString& line) {
-  const QString formatted = format_gui_log_line(line);
-  write_gui_log_sink(formatted);
-  output->appendPlainText(formatted);
+void append_log(const QString& line) {
+  write_gui_log_sink(format_gui_log_line(line));
 }
 
 struct NetworkExitChoice {
@@ -2201,54 +2187,14 @@ bool launch_gui_shell(
   });
   sealed_exchange_toggle->setVisible(false);
 
-  auto* session_log_box = new QGroupBox(shell);
-  session_log_box->setObjectName("primaryCard");
-  session_log_box->setProperty("persistent", true);
-  session_log_box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-  session_log_box->setMinimumHeight(160);
-  auto* session_log_layout = new QVBoxLayout(session_log_box);
-  session_log_layout->setContentsMargins(12, 6, 12, 10);
-  session_log_layout->setSpacing(6);
-  auto* session_log_toolbar = new QHBoxLayout();
-  auto* session_log_title = new QLabel(QString::fromUtf8("运行日志"), session_log_box);
-  session_log_title->setObjectName("connectionSectionTitle");
-  session_log_toolbar->addWidget(session_log_title);
-  session_log_toolbar->addStretch();
-  auto* session_log_hint = new QLabel("Pairing, ICE, DHT, and stream events appear here during a session.", session_log_box);
-  session_log_hint->setWordWrap(true);
-  session_log_hint->setObjectName("pageIntro");
-  session_log_hint->hide();
-  auto* copy_session_log_button = new QPushButton(QString::fromUtf8("复制日志"), session_log_box);
-  copy_session_log_button->setObjectName("secondaryAction");
-  copy_session_log_button->setToolTip("Copy the full runtime log to the clipboard");
-  auto* clear_session_log_button = new QPushButton(QString::fromUtf8("清空显示"), session_log_box);
-  clear_session_log_button->setObjectName("secondaryAction");
-  clear_session_log_button->setToolTip("Clear the on-screen log view");
-  auto* session_log_copy_feedback = new QLabel(session_log_box);
-  session_log_copy_feedback->setObjectName("statusCardTitle");
-  session_log_toolbar->addWidget(copy_session_log_button);
-  session_log_toolbar->addWidget(clear_session_log_button);
-  session_log_toolbar->addWidget(session_log_copy_feedback);
-  auto* session_log = new RuntimeLogView(session_log_box);
-  session_log->setObjectName("runtimeSessionLog");
-  session_log->setPlaceholderText("Runtime and pairing events appear here...");
-  session_log->setMinimumHeight(84);
-  auto* log_replay = new RuntimeLogReplay(session_page, [session_log](const QString& line) {
-    append_log(session_log, line);
-  });
-  session_log_layout->addWidget(session_log_hint);
-  session_log_layout->addLayout(session_log_toolbar);
-  session_log_layout->addWidget(session_log, 1);
+  auto* log_replay = new RuntimeLogReplay(session_page, append_log);
 
   auto* session_scroll = new QScrollArea(tabs);
   session_scroll->setWidgetResizable(true);
   session_scroll->setFrameShape(QFrame::NoFrame);
   session_scroll->setWidget(session_page);
-  session_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  session_scroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   session_scroll->setMinimumSize(0, 0);
 
-  tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   tabs->setMinimumHeight(0);
 
   tabs->addWidget(session_scroll);
@@ -2256,44 +2202,7 @@ bool launch_gui_shell(
   auto* waiting_page = new ConnectionProgressPage(ConnectionFlowRole::kHost, tabs);
   tabs->addWidget(connecting_page);
   tabs->addWidget(waiting_page);
-  shell_layout->addWidget(tabs, 0);
-  shell_layout->addWidget(session_log_box, 1);
-  auto sync_connection_view_height = [
-      shell,
-      shell_layout,
-      tabs,
-      session_page,
-      session_scroll,
-      connection_entry_page]() {
-    if (tabs->currentWidget() == session_scroll) {
-      connection_entry_page->layout()->activate();
-      session_page->layout()->activate();
-      tabs->setMaximumHeight(session_page->sizeHint().height());
-    } else {
-      tabs->setMaximumHeight(QWIDGETSIZE_MAX);
-    }
-    tabs->updateGeometry();
-    shell_layout->invalidate();
-    shell->updateGeometry();
-  };
-  QObject::connect(
-      connection_entry_page->network_settings_toggle(),
-      &QToolButton::toggled,
-      session_log_box,
-      [session_scroll, session_log_box, sync_connection_view_height](bool expanded) {
-        session_scroll->setVerticalScrollBarPolicy(
-            expanded ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
-        QTimer::singleShot(0, session_log_box, [session_log_box, sync_connection_view_height]() {
-          sync_connection_view_height();
-          session_log_box->show();
-          session_log_box->raise();
-          session_log_box->update();
-        });
-      });
-  QObject::connect(tabs, &QStackedWidget::currentChanged, tabs, [sync_connection_view_height](int) {
-    sync_connection_view_height();
-  });
-  QTimer::singleShot(0, tabs, sync_connection_view_height);
+  shell_layout->addWidget(tabs, 1);
 
   session_workspace = new UnifiedSessionWorkspace(&window, shell, ui_settings);
   auto refresh_connection_flow_page = [&]() {
@@ -2543,14 +2452,14 @@ bool launch_gui_shell(
     refresh_remote_control_ui();
   });
   remote_input_capture->set_clipboard_paste_callback([&, file_transfer_panel](std::uint32_t sequence) {
-    append_log(session_log, QString("Clipboard shortcut intercepted clipboard_sequence=%1").arg(sequence));
+    append_log(QString("Clipboard shortcut intercepted clipboard_sequence=%1").arg(sequence));
     file_transfer_panel->request_clipboard_paste(sequence);
   });
   remote_input_capture->set_paused_callback([&](const QString& reason) {
     file_transfer_panel->cancel_clipboard_paste();
     remote_input_request_pending = false;
     playback_control_hint->hide_hint();
-    append_log(session_log, QString("Remote input capture paused: %1").arg(reason));
+    append_log(QString("Remote input capture paused: %1").arg(reason));
     refresh_remote_control_ui();
   });
   remote_input_capture->set_forwarding_changed_callback([&]() {
@@ -2573,7 +2482,7 @@ bool launch_gui_shell(
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
       remote_input_request_pending = false;
-      append_log(session_log, QString("Remote input control request failed: %1").arg(send_error));
+      append_log(QString("Remote input control request failed: %1").arg(send_error));
       refresh_remote_control_ui();
       return false;
     }
@@ -2602,7 +2511,7 @@ bool launch_gui_shell(
     request.audio_playback_requested = active;
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
-      append_log(session_log, QString("Remote audio request failed: %1").arg(send_error));
+      append_log(QString("Remote audio request failed: %1").arg(send_error));
       return false;
     }
     return true;
@@ -2632,7 +2541,7 @@ bool launch_gui_shell(
     request.payload = "user_capture_retry";
     QString error;
     if (!controller.send_control_message(request, &error)) {
-      append_log(session_log, QString("Capture retry failed: %1").arg(error));
+      append_log(QString("Capture retry failed: %1").arg(error));
     }
   });
   auto* playback_geometry_controller = new PlaybackWindowGeometryController(
@@ -2661,12 +2570,10 @@ bool launch_gui_shell(
         QString send_error;
         if (!controller.send_control_message(viewport, &send_error)) {
           append_log(
-              session_log,
               QString("Viewport request queued until runtime is available: %1").arg(send_error));
           return;
         }
         append_log(
-            session_log,
             QString("GUI playback geometry commit transaction_id=%1 viewport_width=%2 viewport_height=%3 geometry_preview_total=%4 geometry_commit_total=%5 viewport_request_total=%6 swapchain_resize_total=%7 transitions_disabled=%8")
                 .arg(QString::number(transaction_id))
                 .arg(QString::number(physical_canvas_size.width()))
@@ -2730,9 +2637,7 @@ bool launch_gui_shell(
     session_workspace->connection_overlay()->set_handshake_ready(ready);
   };
 
-  HostUpdateRestartGuard update_restart_guard(window, [session_log](const QString& message) {
-    append_log(session_log, message);
-  });
+  HostUpdateRestartGuard update_restart_guard(window, append_log);
   auto set_live_link_state = [&](bool connected) {
     if (!connected) update_restart_guard.stop();
     session_workspace->connection_overlay()->set_link_live(connected);
@@ -2776,33 +2681,6 @@ bool launch_gui_shell(
     refresh_connection_flow_page();
   });
 
-  auto* runtime_detail_tabs = new QTabWidget(runtime_page);
-  runtime_detail_tabs->setDocumentMode(true);
-
-  auto* timeline_list = new QListWidget(runtime_page);
-  timeline_list->setMinimumHeight(140);
-  runtime_detail_tabs->addTab(timeline_list, "Timeline");
-
-
-  auto* remote_log_page = new QWidget(runtime_page);
-  auto* remote_log_layout = new QVBoxLayout(remote_log_page);
-  remote_log_layout->setContentsMargins(0, 0, 0, 0);
-  auto* remote_log_actions = new QHBoxLayout();
-  auto* remote_log_snapshot_button = new QPushButton("Request snapshot", remote_log_page);
-  auto* remote_log_follow_button = new QPushButton("Start follow", remote_log_page);
-  auto* remote_log_stop_button = new QPushButton("Stop follow", remote_log_page);
-  remote_log_actions->addWidget(remote_log_snapshot_button);
-  remote_log_actions->addWidget(remote_log_follow_button);
-  remote_log_actions->addWidget(remote_log_stop_button);
-  remote_log_actions->addStretch(1);
-  auto* remote_log = new QPlainTextEdit(remote_log_page);
-  remote_log->setReadOnly(true);
-  remote_log->setPlaceholderText("Redacted peer logs will appear here on request.");
-  remote_log_layout->addLayout(remote_log_actions);
-  remote_log_layout->addWidget(remote_log, 1);
-  runtime_detail_tabs->addTab(remote_log_page, "Remote Log");
-  QString remote_log_follow_request_id;
-  std::uint64_t remote_log_cursor = 0;
   DebugRemoteLogSnapshot debug_remote_log_snapshot;
 
   std::uint64_t gui_agent_message_id = 0;
@@ -2837,11 +2715,11 @@ bool launch_gui_shell(
         [&](redclaw::protocol::AgentMessageEnvelopeV1 message, QString* send_error) {
           return dispatch_agent_command(std::move(message), send_error);
         },
-        [&](const QString& line) { append_log(session_log, line); },
+        [&](const QString& line) { append_log(line); },
         &window);
     QString agent_control_error;
     if (!agent_control_server->start(&agent_control_error)) {
-      append_log(session_log, agent_control_error + "; desktop remains available");
+      append_log(agent_control_error + "; desktop remains available");
     }
   }
 
@@ -2901,8 +2779,7 @@ bool launch_gui_shell(
         task_workspace->set_enabled(role != "host");
       });
 
-  auto send_remote_log_request = [&](
-      redclaw::protocol::RemoteLogModeV1 mode,
+  auto send_remote_log_snapshot = [&](
       QString* peer_request_id,
       QString* error_detail) {
     const auto assign_send_error = [&](const QString& detail) {
@@ -2912,7 +2789,7 @@ bool launch_gui_shell(
     };
     if (role_combo->currentText() != "controller") {
       const QString detail = "Remote log requests are initiated from the Controller endpoint.";
-      append_log(session_log, detail);
+      append_log(detail);
       assign_send_error(detail);
       return false;
     }
@@ -2921,82 +2798,26 @@ bool launch_gui_shell(
     request.session_epoch = "local";
     request.message_id = ++gui_control_message_id;
     request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
-    request.log_mode = mode;
-    if (mode == redclaw::protocol::RemoteLogModeV1::kSnapshot) {
-      request.request_id = QString("snapshot-%1").arg(QString::number(request.sent_at_ms)).toStdString();
-      request.log_cursor = 0;
-    } else {
-      if (remote_log_follow_request_id.isEmpty()) {
-        remote_log_follow_request_id = QString("follow-%1").arg(QString::number(request.sent_at_ms));
-      }
-      request.request_id = remote_log_follow_request_id.toStdString();
-      request.log_cursor = remote_log_cursor;
-    }
+    request.log_mode = redclaw::protocol::RemoteLogModeV1::kSnapshot;
+    request.request_id = QString("snapshot-%1").arg(QString::number(request.sent_at_ms)).toStdString();
+    request.log_cursor = 0;
     const QString request_id = QString::fromStdString(request.request_id);
     if (peer_request_id != nullptr) {
       *peer_request_id = request_id;
     }
-    if (mode == redclaw::protocol::RemoteLogModeV1::kSnapshot) {
-      debug_remote_log_snapshot.begin(request_id);
-    }
+    debug_remote_log_snapshot.begin(request_id);
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
-      append_log(session_log, QString("Remote log request failed: %1").arg(send_error));
-      if (mode == redclaw::protocol::RemoteLogModeV1::kSnapshot) {
-        debug_remote_log_snapshot.fail(request_id, send_error);
-      }
+      append_log(QString("Remote log request failed: %1").arg(send_error));
+      debug_remote_log_snapshot.fail(request_id, send_error);
       assign_send_error(send_error);
       return false;
     }
-    if (mode == redclaw::protocol::RemoteLogModeV1::kSnapshot) {
-      remote_log->appendPlainText("--- requested remote log snapshot ---");
-    } else if (mode == redclaw::protocol::RemoteLogModeV1::kFollow) {
-      remote_log->appendPlainText("--- remote log follow started ---");
-    } else {
-      remote_log->appendPlainText("--- remote log follow stopped ---");
-      remote_log_follow_request_id.clear();
-    }
-    runtime_detail_tabs->setVisible(true);
-    runtime_detail_tabs->setCurrentWidget(remote_log_page);
     if (error_detail != nullptr) {
       error_detail->clear();
     }
     return true;
   };
-
-  QObject::connect(remote_log_snapshot_button, &QPushButton::clicked, [&]() {
-    (void)send_remote_log_request(redclaw::protocol::RemoteLogModeV1::kSnapshot, nullptr, nullptr);
-  });
-  QObject::connect(remote_log_follow_button, &QPushButton::clicked, [&]() {
-    (void)send_remote_log_request(redclaw::protocol::RemoteLogModeV1::kFollow, nullptr, nullptr);
-  });
-  QObject::connect(remote_log_stop_button, &QPushButton::clicked, [&]() {
-    (void)send_remote_log_request(redclaw::protocol::RemoteLogModeV1::kStop, nullptr, nullptr);
-  });
-  runtime_detail_tabs->setVisible(false);
-
-  QObject::connect(copy_session_log_button, &QPushButton::clicked, [&]() {
-    const QString combined = session_log->cached_text();
-    if (combined.isEmpty()) {
-      session_log_copy_feedback->setText("Log is empty");
-      set_link_status("Log is empty; nothing to copy yet.", "warn");
-      return;
-    }
-    QGuiApplication::clipboard()->setText(combined);
-    session_log_copy_feedback->setText("Copied to clipboard");
-    set_link_status("Runtime log copied to clipboard.", "good");
-    QTimer::singleShot(2500, session_log_copy_feedback, [session_log_copy_feedback]() {
-      session_log_copy_feedback->clear();
-    });
-  });
-
-  QObject::connect(clear_session_log_button, &QPushButton::clicked, [&]() {
-    session_log->clear_cached();
-    session_log_copy_feedback->setText("Log cleared");
-    QTimer::singleShot(2000, session_log_copy_feedback, [session_log_copy_feedback]() {
-      session_log_copy_feedback->clear();
-    });
-  });
 
   redclaw::render::RuntimeStatusTimeline runtime_timeline;
   redclaw::render::RuntimeStatusTimelineUiModel runtime_timeline_ui_model;
@@ -3056,15 +2877,6 @@ bool launch_gui_shell(
   diag_metrics_grid->addWidget(last_failure_value, 7, 1);
 
   diag_layout->addWidget(diag_metrics);
-
-  auto* diag_notes_box = new QGroupBox("Diagnostic Notes", diag_page);
-  auto* diag_notes_layout = new QVBoxLayout(diag_notes_box);
-  auto* diag_text = new QPlainTextEdit(diag_notes_box);
-  diag_text->setReadOnly(true);
-  diag_text->setPlainText("- Service lifecycle panel: added\n- Elevated action UX: added\n- Installer runtime checks: pending\n");
-  diag_text->setMaximumHeight(120);
-  diag_notes_layout->addWidget(diag_text);
-  diag_layout->addWidget(diag_notes_box);
 
   auto* service_box = new QGroupBox("Service Management", diag_page);
   auto* service_form = new QFormLayout(service_box);
@@ -3168,30 +2980,9 @@ bool launch_gui_shell(
     }
   };
 
-  auto refresh_runtime_timeline_view = [&]() {
+  auto refresh_runtime_timeline = [&]() {
     runtime_timeline_ui_model.refresh();
     runtime_timeline_widget_component.refresh();
-
-    timeline_list->clear();
-    const auto& state = runtime_timeline_widget_component.state();
-    if (state.items.empty()) {
-      timeline_list->addItem("Timeline empty");
-      return;
-    }
-
-    for (const auto& item : state.items) {
-      const QString timestamp = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(item.timestamp_ms))
-                                    .toString("yyyy-MM-dd HH:mm:ss");
-      QString severity = "INFO";
-      if (item.severity == redclaw::render::RuntimeStatusSeverity::kWarning) {
-        severity = "WARN";
-      } else if (item.severity == redclaw::render::RuntimeStatusSeverity::kError) {
-        severity = "ERROR";
-      }
-
-      timeline_list->addItem(QString("%1 [%2] %3 - %4")
-                                 .arg(timestamp, severity, QString::fromStdString(item.title), QString::fromStdString(item.subtitle)));
-    }
   };
 
   auto append_runtime_event = [&](redclaw::render::RuntimeStatusSeverity severity,
@@ -3203,7 +2994,7 @@ bool launch_gui_shell(
     event.category = std::move(category);
     event.message = std::move(message);
     runtime_timeline.append(std::move(event));
-    refresh_runtime_timeline_view();
+    refresh_runtime_timeline();
   };
 
   QObject::connect(service_check_button, &QPushButton::clicked, [&]() {
@@ -3211,8 +3002,7 @@ bool launch_gui_shell(
     const QString summary = QString("readiness binary=%1 installed=%2 running=%3 summary=%4")
                                 .arg(service_binary_ready_value->text(), service_installed_value->text(), service_running_value->text(), service_readiness_summary->text());
     set_service_feedback(summary, false);
-    append_log(session_log, QString("Service readiness: %1").arg(summary));
-    append_log(diag_text, QString("Service readiness: %1").arg(summary));
+    append_log(QString("Service readiness: %1").arg(summary));
     append_runtime_event(redclaw::render::RuntimeStatusSeverity::kInfo, "service-readiness", summary.toStdString());
   });
 
@@ -3226,7 +3016,7 @@ bool launch_gui_shell(
     append_runtime_event(severity, "sealed-exchange", sealed_exchange_status->text().toStdString());
   };
 
-  refresh_runtime_timeline_view();
+  refresh_runtime_timeline();
 
   auto collect_env_overrides = [&]() {
     std::unordered_map<std::string, std::string> overrides;
@@ -3263,8 +3053,7 @@ bool launch_gui_shell(
     const QString message = QString("install=%1 detail=%2")
         .arg(service_lifecycle_error_to_text(result), QString::fromStdString(service_wrapper.last_error_detail()));
     set_service_feedback(message, result != redclaw::service::ServiceLifecycleError::kNone);
-    append_log(session_log, QString("Service install: %1").arg(message));
-    append_log(diag_text, QString("Service install: %1").arg(message));
+    append_log(QString("Service install: %1").arg(message));
   });
 
   QObject::connect(service_start_button, &QPushButton::clicked, [&]() {
@@ -3273,7 +3062,7 @@ bool launch_gui_shell(
     const QString message = QString("start=%1 detail=%2")
         .arg(service_lifecycle_error_to_text(result), QString::fromStdString(service_wrapper.last_error_detail()));
     set_service_feedback(message, result != redclaw::service::ServiceLifecycleError::kNone);
-    append_log(session_log, QString("Service start: %1").arg(message));
+    append_log(QString("Service start: %1").arg(message));
   });
 
   QObject::connect(service_stop_button, &QPushButton::clicked, [&]() {
@@ -3282,7 +3071,7 @@ bool launch_gui_shell(
     const QString message = QString("stop=%1 detail=%2")
         .arg(service_lifecycle_error_to_text(result), QString::fromStdString(service_wrapper.last_error_detail()));
     set_service_feedback(message, result != redclaw::service::ServiceLifecycleError::kNone);
-    append_log(session_log, QString("Service stop: %1").arg(message));
+    append_log(QString("Service stop: %1").arg(message));
   });
 
   QObject::connect(service_uninstall_button, &QPushButton::clicked, [&]() {
@@ -3291,7 +3080,7 @@ bool launch_gui_shell(
     const QString message = QString("uninstall=%1 detail=%2")
         .arg(service_lifecycle_error_to_text(result), QString::fromStdString(service_wrapper.last_error_detail()));
     set_service_feedback(message, result != redclaw::service::ServiceLifecycleError::kNone);
-    append_log(session_log, QString("Service uninstall: %1").arg(message));
+    append_log(QString("Service uninstall: %1").arg(message));
   });
 
   service_box->setVisible(false);
@@ -3322,7 +3111,7 @@ bool launch_gui_shell(
     session_code->setText(code);
     rendezvous_url->setText(rendezvous_url->text().trimmed());
     set_link_status("Your code is ready. Press Wait with This Code when this device should accept a connection.", "info");
-    append_log(session_log, QString("Generated local machine link code: %1").arg(code));
+    append_log(QString("Generated local machine link code: %1").arg(code));
     return true;
   };
 
@@ -3334,7 +3123,7 @@ bool launch_gui_shell(
     const QString peer_code_text = connection_entry_page->peer_code();
     if (peer_code_text.isEmpty()) {
       set_link_status("Paste the 8-character code from the other device first.", "bad");
-      append_log(session_log, "Peer machine link code rejected: missing input");
+      append_log("Peer machine link code rejected: missing input");
       peer_machine_code->setFocus();
       return false;
     }
@@ -3343,7 +3132,7 @@ bool launch_gui_shell(
     QString decode_error;
     if (!decode_machine_link_code(connection_entry_page->peer_code(), &peer, &decode_error)) {
       set_link_status("This code is not complete yet. Paste the full 8-character code and try again.", "bad");
-      append_log(session_log, QString("Peer machine link code rejected: %1").arg(decode_error));
+      append_log(QString("Peer machine link code rejected: %1").arg(decode_error));
       peer_machine_code->setFocus();
       return false;
     }
@@ -3351,7 +3140,7 @@ bool launch_gui_shell(
     connection_entry_page->set_peer_code(peer.session_code);
     session_code->setText(peer.session_code);
     set_link_status("Code accepted. Starting the connection.", "good");
-    append_log(session_log, QString("Decoded peer machine link code: %1").arg(peer.session_code));
+    append_log(QString("Decoded peer machine link code: %1").arg(peer.session_code));
     return true;
   };
 
@@ -3363,7 +3152,7 @@ bool launch_gui_shell(
     const QString message = QString("A session is already running. Stop it before %1.").arg(action_name);
     set_link_status(message, "bad");
     set_runtime_banner(message, "bad");
-    append_log(session_log, QString("Machine link workflow blocked: %1").arg(message));
+    append_log(QString("Machine link workflow blocked: %1").arg(message));
     tabs->setCurrentWidget(session_scroll);
     return false;
   };
@@ -3381,13 +3170,13 @@ bool launch_gui_shell(
       }
       if (!decode_machine_link_code(connection_entry_page->local_code(), &local, &decode_error)) {
         set_link_status("A fresh code could not be created. Please try again.", "bad");
-        append_log(session_log, QString("Local machine link code rejected: %1").arg(decode_error));
+        append_log(QString("Local machine link code rejected: %1").arg(decode_error));
         return;
       }
     } else {
       connection_entry_page->set_local_code(local.session_code);
       session_code->setText(local.session_code);
-      append_log(session_log, QString("Reusing local machine link code: %1").arg(local.session_code));
+      append_log(QString("Reusing local machine link code: %1").arg(local.session_code));
     }
 
     role_combo->setCurrentText("host");
@@ -3417,16 +3206,14 @@ bool launch_gui_shell(
     stream_require_capture->setChecked(true);
     sync_link_network_settings_to_session_form();
     set_link_status("Starting host waiting mode with the code shown above.", "warn");
-    append_log(session_log, QString("Machine link workflow: host waiting through DHT with code %1").arg(local.session_code));
+    append_log(QString("Machine link workflow: host waiting through DHT with code %1").arg(local.session_code));
     connection_flow_model.start(ConnectionFlowRole::kHost);
     waiting_page->set_connection_code(local.session_code);
     append_log(
-        session_log,
         host_wait_remote_input_authorized
             ? "Host wait authorization: ordinary desktop keyboard and mouse control allowed."
             : "Host wait authorization: view-only; remote input denied.");
     append_log(
-        session_log,
         host_wait_remote_agent_authorized
             ? "Host wait authorization: registered development Agent access allowed."
             : "Host wait authorization: development Agent access denied.");
@@ -3455,7 +3242,7 @@ bool launch_gui_shell(
     stream_require_capture->setChecked(false);
     sync_link_network_settings_to_session_form();
     set_link_status("Starting the connection. Make sure the other device is waiting with the code you entered.", "warn");
-    append_log(session_log, QString("Machine link workflow: connecting through DHT with peer code %1").arg(session_code->text().trimmed()));
+    append_log(QString("Machine link workflow: connecting through DHT with peer code %1").arg(session_code->text().trimmed()));
     connection_flow_model.start(ConnectionFlowRole::kController);
     connecting_page->set_connection_code(session_code->text().trimmed());
     refresh_connection_flow_page();
@@ -3524,7 +3311,7 @@ bool launch_gui_shell(
   QObject::connect(refresh_local_blob_button, &QPushButton::clicked, [&]() {
     refresh_local_sealed_blob();
     if (transport_combo->currentText() == "sealed-file") {
-      append_log(session_log, QString("Refreshed local sealed blob from: %1").arg(local_sealed_blob_path()));
+      append_log(QString("Refreshed local sealed blob from: %1").arg(local_sealed_blob_path()));
     }
   });
 
@@ -3558,7 +3345,7 @@ bool launch_gui_shell(
     remote_file.write(remote_blob.toUtf8());
     remote_file.close();
     set_sealed_exchange_state(SealedExchangeState::kReceived);
-    append_log(session_log, QString("Applied remote sealed blob to: %1").arg(path));
+    append_log(QString("Applied remote sealed blob to: %1").arg(path));
   });
 
   auto* sealed_refresh_timer = new QTimer(session_page);
@@ -3676,12 +3463,11 @@ bool launch_gui_shell(
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
       append_log(
-          session_log,
           QString("GUI keyframe request failed reason=%1 error=%2")
               .arg(reason, send_error));
       return;
     }
-    append_log(session_log, QString("GUI keyframe request sent reason=%1").arg(reason));
+    append_log(QString("GUI keyframe request sent reason=%1").arg(reason));
   };
 #endif
 
@@ -3710,7 +3496,7 @@ bool launch_gui_shell(
             request, revision, desktop_navigation_panel->capture_region_command_version());
         QString send_error;
         if (!controller.send_control_message(request, &send_error)) {
-          append_log(session_log, "Capture region request failed: " + send_error);
+          append_log("Capture region request failed: " + send_error);
           return false;
         }
         if (QString::fromStdString(display_id) != desktop_navigation_panel->confirmed_display_id())
@@ -4320,7 +4106,7 @@ bool launch_gui_shell(
     if (!direct_frame_last_present_error.isEmpty()) {
       log_line.append(QString(" last_present_error=%1").arg(direct_frame_last_present_error));
     }
-    append_log(session_log, log_line);
+    append_log(log_line);
 
     const bool presentation_recovered =
         direct_frame_presented_frames > direct_frame_last_presented_frames;
@@ -4377,11 +4163,6 @@ bool launch_gui_shell(
         "Waiting for the live desktop to appear.",
         true);
   });
-
-
-  auto queue_runtime_output_ui_log = [&](const QString& safe_line) {
-    append_log(session_log, safe_line);
-  };
 
 
   auto* agent_drain_timer = new QTimer(session_page);
@@ -4543,7 +4324,6 @@ bool launch_gui_shell(
               remote_input_capture->pause(false, "Host authorization was revoked.");
             }
             append_log(
-                session_log,
                 QString("Remote input capabilities supported=%1 authorized=%2 geometry_revision=%3")
                     .arg(remote_input_supported ? "true" : "false")
                     .arg(remote_input_authorized ? "true" : "false")
@@ -4583,7 +4363,6 @@ bool launch_gui_shell(
               QString activation_error;
               if (!remote_input_capture->activate(&activation_error)) {
                 append_log(
-                    session_log,
                     QString("Remote input capture could not start: %1").arg(activation_error));
                 (void)send_input_control_request(false);
               } else {
@@ -4597,7 +4376,6 @@ bool launch_gui_shell(
             if (status_changed
                 || static_cast<qint64>(ack_now_ms) - last_remote_input_metrics_log_ms >= 1000) {
               append_log(
-                  session_log,
                   QString("Remote input status state=%1 reason=%2 authorized=%3 last_applied_sequence=%4 ack_rtt_ms=%5 ack_p95_ms=%6 sent_batches=%7 merged_moves=%8 mouse_loopback_suppressed=%9")
                       .arg(input_state_text)
                       .arg(input_reason_text)
@@ -4615,30 +4393,20 @@ bool launch_gui_shell(
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kRemoteLogChunk) {
             const QString peer_request_id = QString::fromStdString(control.request_id);
-            if (control.gap) {
-              remote_log->appendPlainText("--- remote log gap: older lines were evicted ---");
-            }
-            remote_log_cursor = (std::max)(remote_log_cursor, control.log_cursor);
             const std::string safe_payload = redclaw::diag::redact_log_text(control.payload);
             const QString safe_payload_text = QString::fromUtf8(
                 safe_payload.data(), static_cast<qsizetype>(safe_payload.size()));
-            remote_log->appendPlainText(safe_payload_text);
             debug_remote_log_snapshot.append_chunk(peer_request_id, safe_payload_text, control.gap);
-            runtime_detail_tabs->setVisible(true);
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kRemoteLogComplete) {
-            remote_log_cursor = (std::max)(remote_log_cursor, control.log_cursor);
-            remote_log->appendPlainText("--- remote log snapshot complete ---");
             debug_remote_log_snapshot.complete(QString::fromStdString(control.request_id));
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kRemoteLogError) {
             const QString safe_error = QString::fromStdString(
                 redclaw::diag::redact_log_text(control.payload));
-            remote_log->appendPlainText(QString("--- remote log error: %1 ---").arg(safe_error));
             debug_remote_log_snapshot.fail(QString::fromStdString(control.request_id), safe_error);
-            runtime_detail_tabs->setVisible(true);
             return;
           }
           if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kStreamTargetApplied) {
@@ -4649,7 +4417,7 @@ bool launch_gui_shell(
                 .arg(QString::number(control.encoded_height))
                 .arg(QString::number(control.target_fps))
                 .arg(QString::number(control.target_bitrate_kbps));
-            append_log(session_log, applied);
+            append_log(applied);
             playback_window_status->setText(applied);
             return;
           }
@@ -4684,7 +4452,7 @@ bool launch_gui_shell(
   auto handle_runtime_diagnostic = [&](const QString& trimmed) {
         const QString safe_trimmed = QString::fromStdString(
             redclaw::diag::redact_log_text(trimmed.toStdString()));
-        queue_runtime_output_ui_log(safe_trimmed);
+        append_log(safe_trimmed);
 
         const std::string previous_phase = debug_status.phase;
         const bool debug_status_changed = redclaw::diag::update_debug_runtime_status_from_line(
@@ -5019,7 +4787,7 @@ bool launch_gui_shell(
         stop_button->setEnabled(false);
         start_button->setEnabled(true);
         set_link_workflow_running(false);
-        append_log(session_log, QString("Runtime process finished: %1").arg(status));
+        append_log(QString("Runtime process finished: %1").arg(status));
         append_runtime_event(
           clean_exit
             ? redclaw::render::RuntimeStatusSeverity::kInfo
@@ -5074,14 +4842,14 @@ bool launch_gui_shell(
         if (debug_reconnect) {
           set_runtime_banner("Restarting the current debug session.", "info");
           set_link_status("Restarting with the same validated configuration.", "info");
-          append_log(session_log, "Debug control: scheduling runtime reconnect with the current configuration.");
+          append_log("Debug control: scheduling runtime reconnect with the current configuration.");
           QTimer::singleShot(500, &window, [start_button]() {
             start_button->click();
           });
         } else if (host_persist_wait) {
           set_runtime_banner("Session ended. Restarting host wait with the same code.", "info");
           set_link_status("Session ended. Waiting again for the next connection.", "info");
-          append_log(session_log, "Host persist wait: scheduling automatic re-wait with the current code.");
+          append_log("Host persist wait: scheduling automatic re-wait with the current code.");
           const int restart_generation = automatic_restart_generation;
           QTimer::singleShot(1500, &window, [start_button, restart_generation, &automatic_restart_generation, &ice_udp_port_bind_prompt]() {
             if (restart_generation != automatic_restart_generation || !ice_udp_port_bind_prompt.isEmpty()) {
@@ -5104,7 +4872,7 @@ bool launch_gui_shell(
     desktop_navigation_panel->set_transport_available(false);
 #endif
     status_label->setText(status_text);
-    append_log(session_log, log_text);
+    append_log(log_text);
     set_process_state("failed");
     set_runtime_banner(visible_text, "bad");
     set_link_status(visible_text, "bad");
@@ -5407,10 +5175,9 @@ bool launch_gui_shell(
       ID3D11Device* decode_device = playback_window_canvas->d3d11_decode_device(&decode_device_error);
       direct_frame_pipe_server.configure_d3d11_surface_output(decode_device);
       if (decode_device != nullptr) {
-        append_log(session_log, "D3D11 decoded-surface output enabled on the playback device.");
+        append_log("D3D11 decoded-surface output enabled on the playback device.");
       } else {
         append_log(
-            session_log,
             QString("D3D11 decoded-surface output unavailable; CPU frame fallback remains enabled: %1")
                 .arg(decode_device_error.isEmpty() ? "non-D3D11 playback backend" : decode_device_error));
       }
@@ -5424,7 +5191,7 @@ bool launch_gui_shell(
       reset_direct_frame_stats();
       direct_frame_stream_enabled = true;
       args << "--stream-frame-pipe" << pipe_name;
-      append_log(session_log, QString("Direct frame shared-memory channel ready: %1").arg(pipe_name));
+      append_log(QString("Direct frame shared-memory channel ready: %1").arg(pipe_name));
 
       // Push-render: whenever the shared-memory worker deposits a new frame, invoke
       // handle_direct_frame on the main thread immediately via a queued event.
@@ -5461,7 +5228,6 @@ bool launch_gui_shell(
             schedule_navigation_frame_update();
           });
       append_log(
-          session_log,
           QString("Navigation thumbnail shared-memory channel ready: %1")
               .arg(navigation_pipe_name));
     }
@@ -5492,7 +5258,7 @@ bool launch_gui_shell(
       desktop_navigation_panel->set_transport_available(false);
 #endif
       status_label->setText("Start failed");
-      append_log(session_log, start_error);
+      append_log(start_error);
       set_process_state("failed");
       set_runtime_banner("The connection service could not start.", "bad");
       set_link_status("The connection service could not start. Please try again.", "bad");
@@ -5559,7 +5325,7 @@ bool launch_gui_shell(
         true,
         role == "host" ? "Session in Progress — Waiting" : "Session in Progress — Connecting");
     refresh_connection_flow_page();
-    append_log(session_log, QString("Runtime process started: %1 %2").arg(program, redacted_args));
+    append_log(QString("Runtime process started: %1 %2").arg(program, redacted_args));
     append_runtime_event(redclaw::render::RuntimeStatusSeverity::kInfo,
                          "process",
                QString("Runtime process started: %1 %2").arg(program, redacted_args).toStdString());
@@ -5591,7 +5357,7 @@ bool launch_gui_shell(
         "Your remote desktop will appear here",
         "Connection is closing.",
         true);
-    append_log(session_log, "Stop signal sent to runtime process.");
+    append_log("Stop signal sent to runtime process.");
     persist_debug_status(true);
   };
   session_workspace->set_request_stop(stop_runtime);
@@ -5720,7 +5486,6 @@ bool launch_gui_shell(
     }
 
     append_log(
-        session_log,
         QString("Debug control ready: name=%1 access=current-user").arg(gui_auto_start.debug_control_name));
     QObject::connect(&debug_control_server, &QLocalServer::newConnection, [&]() {
       while (QLocalSocket* socket = debug_control_server.nextPendingConnection()) {
@@ -5831,7 +5596,7 @@ bool launch_gui_shell(
               if (parsed.request.action == DebugControlAction::kLogReplayStart) log_replay->start();
               else log_replay->stop();
               result.insert("log_replay", log_replay->snapshot());
-              result.insert("log_visible", session_log->isVisible());
+              result.insert("log_visible", false);
               result.insert("mirror_visible", false);
 #else
               fail("debug_required", "Log replay is available only in a local Debug fixture.");
@@ -5847,10 +5612,9 @@ bool launch_gui_shell(
             }
             case DebugControlAction::kStatus: {
               result.insert("runtime_log", QJsonObject{
-                  {"visible", session_log->isVisible()}, {"mirror_visible", false},
-                  {"cached_lines", static_cast<qint64>(session_log->buffer()->line_count())},
-                  {"cached_bytes", static_cast<qint64>(session_log->buffer()->bytes())},
-                  {"refreshes", static_cast<qint64>(session_log->refresh_count())},
+                  {"visible", false}, {"mirror_visible", false},
+                  {"cached_lines", qint64(0)}, {"cached_bytes", qint64(0)},
+                  {"refreshes", qint64(0)},
                   {"mirror_refreshes", qint64(0)},
                   {"replay", log_replay->snapshot()}});
               const auto& flow = connection_flow_model.snapshot();
@@ -5950,8 +5714,7 @@ bool launch_gui_shell(
                 fail("channel_not_open", "the reliable control channel is not open");
               } else {
                 QString peer_request_id;
-                if (!send_remote_log_request(
-                        redclaw::protocol::RemoteLogModeV1::kSnapshot,
+                if (!send_remote_log_snapshot(
                         &peer_request_id,
                         &control_error)) {
                   error_code = "remote_log_request_failed";
@@ -6416,7 +6179,7 @@ bool launch_gui_shell(
       QString project_error;
       if (!agent_settings_dialog->replace_project_roots_for_automation(
               gui_auto_start.agent_project_roots, &project_error)) {
-        append_log(session_log, "GUI Agent project automation failed: " + project_error);
+        append_log("GUI Agent project automation failed: " + project_error);
         QCoreApplication::exit(2);
         return;
       }
@@ -6434,7 +6197,6 @@ bool launch_gui_shell(
           ? connection_entry_page->allow_remote_agent_checkbox()
           : connection_entry_page->allow_controller_agent_checkbox())->isChecked();
       append_log(
-          session_log,
           QString("GUI auto-start armed: role=%1 transport=%2 session_code=%3 signal_dir=%4")
               .arg(role_combo->currentText(),
                    transport_combo->currentText(),
@@ -6487,7 +6249,7 @@ bool launch_gui_shell(
     QTimer::singleShot(900, &window, [&]() {
       QDir snapshot_dir(ui_snapshot_dir);
       if (!snapshot_dir.mkpath(".")) {
-        append_log(session_log, QString("UI snapshot directory could not be created: %1").arg(ui_snapshot_dir));
+        append_log(QString("UI snapshot directory could not be created: %1").arg(ui_snapshot_dir));
         QCoreApplication::exit(2);
         return;
       }
@@ -6496,11 +6258,10 @@ bool launch_gui_shell(
         QApplication::processEvents();
         shell->layout()->activate();
         tabs->updateGeometry();
-        session_log_box->updateGeometry();
         QApplication::processEvents();
         const QString path = snapshot_dir.filePath(name);
         if (!window.grab().save(path, "PNG")) {
-          append_log(session_log, QString("UI snapshot could not be saved: %1").arg(path));
+          append_log(QString("UI snapshot could not be saved: %1").arg(path));
         }
       };
 
@@ -6508,10 +6269,7 @@ bool launch_gui_shell(
       connection_entry_page->set_peer_code("EF56GH78");
       window.resize(900, 680);
       refresh_connection_flow_page();
-      append_log(session_log, "UI snapshot check: the runtime log keeps multiple entries visible.");
-      append_log(session_log, "UI snapshot check: the middle connection view switches independently.");
-      append_log(session_log, "UI snapshot check: connection settings scroll without changing the network exit.");
-      append_log(session_log, "UI snapshot check: the log remains available on every connection view.");
+      append_log("UI snapshot check: connection diagnostics written to the file log.");
       save_snapshot("pre-900x680.png");
 
       connection_entry_page->peer_code_input()->setFocus(Qt::TabFocusReason);
