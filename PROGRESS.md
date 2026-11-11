@@ -1,6 +1,6 @@
 # Progress
 
-As of 2026-11-06 (Asia/Shanghai).
+As of 2026-11-11 (Asia/Shanghai). The clipboard and mainline sections were written 2026-11-06.
 
 `main` includes the clipboard paste fix at `c8ec2a2` (PR #5). Product version metadata is 0.1.12 so the Windows publish script can run after this preparation merges. That script has not been run. The published GitHub package remains v0.1.11, and there is no v0.1.12 tag.
 
@@ -34,6 +34,24 @@ Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md
   3. Use Host right-click paste. The text appears, or the app returns within 15 s.
   4. Any failure is shown in the Controller file/clipboard panel with a reason.
 - Rollback: revert `c8ec2a2`, or redeploy the previous Debug binaries on both machines. The wire messages are unchanged, so mixed old and new builds still connect. Shortcut paste needs the new Host build. With an old Host it still fails as before, but a new Controller times out and shows the failure.
+
+## HEVC preferred codec, on a branch
+
+Decision: [D8](DECISIONS.md#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (Ryan, 2026-11-11). Branch `cursor/hevc-preferred-codec-5649`, pull request against `main`, not merged. No HEVC run on Ryan's machines yet.
+
+- Wire: optional `StreamControlMessageV1` fields 92–94 (`video_codec_version`, `video_decode_codecs`, `video_hardware_decode_codecs`; bit 0 H.264, bit 1 HEVC). Missing fields mean an older peer, which gets H.264.
+- Controller: probes FFmpeg decoders and D3D11VA H.264/HEVC decode profiles at startup and advertises them on every Hello/Capabilities. Log: `Runtime video decode capabilities`.
+- Host: waits up to the existing 3 s viewport grace for the report, then selects the codec (`HostVideoCodecNegotiatorV1`, `src/protocol/src/video_codec_negotiation.cpp`). Log: `Runtime video codec negotiated ... codec= reason=`. If the HEVC hardware encoder fails to open, the Host falls back to H.264 for the rest of the process. If a reconnecting peer cannot decode HEVC, it rebuilds as H.264 (`Runtime video codec renegotiation`).
+- Encoder: automatic HEVC never opens libx265. HEVC target and floor = 70% of H.264 (unmeasured). Requested HEVC keyframes are forced to IDR; on x265 this needs `open-gop=0` too, otherwise x265 emits CRA. The new integration test caught that.
+- Rollback: `--stream-video-codec h264`, profile `stream_video_codec=h264`, or the GUI "Video codec" selector. Or redeploy the previous build on either side; mixed versions negotiate H.264.
+- Checks run in the Linux authoring environment, with scratch builds against Ubuntu FFmpeg 6.1 (not MSVC):
+  - `redclaw_video_codec_negotiation_tests`: 12 passed.
+  - `stream_control_protocol_tests`: 24 passed.
+  - Capture bridge and low-latency profile tests: passed.
+  - `redclaw_ffmpeg_roundtrip_integration_tests` portable set, including the new libx265 IDR case: 5 passed.
+  - `test-compare-video-codec-baseline.py`: 3 passed.
+  - `src/main.cpp`, the GUI, and the Windows D3D11 probe were not compiled there; Windows CI on the pull request is the build check.
+- Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md).
 
 ## Mainline
 
@@ -81,8 +99,8 @@ Treat `RC7TST01` as optional context for a future LAN resume, not as a current `
 Items 1–5 remain open. Item 6 is the publish step after this preparation is on `main`.
 
 1. Leave PR #2 draft and sealed. Do not merge, rebase, or continue Android connect, decode, or input work until Ryan asks for a same-LAN or other free-P2P resume.
-2. Leave PR #3 open for review. If Ryan accepts the recommendation, the first implementation step is still that PR's P0: separate H.264 and HEVC capability probes, forced IDR on each HEVC backend, and HEVC tests, with no default change. Do not start that implementation until asked.
+2. HEVC (D8): review the HEVC pull request and its Windows CI. Before merging, run its on-device checklist on Ryan's desktop and laptop, at least: hardware HEVC opens, forced IDR on recovery, mixed old/new versions in both directions, and the `h264` rollback. After that, run [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md) and record the result here. PR #3 (assessment document) can be merged or closed at Ryan's choice.
 3. Keep the Windows product on direct-first P2P. TURN stays optional and user-provided. Do not add a product-owned relay to paper over the cellular ICE failure.
 4. The next phase named in [README.md](README.md) — wider cross-site and TURN coverage, unattended install and upgrade, code signing, and lower GUI / Agent scheduling cost — stays backlog. It is not the next edit unless Ryan assigns it.
-5. Ryan confirms the open questions in [SPEC.md](SPEC.md): Flutter companion versus the sealed spike, the HEVC product goal, and whether `RC7TST01` is still relevant.
+5. Ryan confirms the open questions in [SPEC.md](SPEC.md): Flutter companion versus the sealed spike, and whether `RC7TST01` is still relevant.
 6. From a clean Windows checkout of `main`, run `scripts/release/publish-github-release.ps1 -Version 0.1.12`. That step creates the tag and the GitHub Pre-release. This preparation does not run it.

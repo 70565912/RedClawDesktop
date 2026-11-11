@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-11-11 — HEVC preferred with negotiated H.264 fallback (M02-T03, D8)
+
+- Ryan's decision: move to HEVC to save bitrate, with H.264 as fallback ([D8](../../DECISIONS.md#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)). Default `auto`. The Host picks HEVC only when it has an HEVC hardware encoder and the Controller reports hardware HEVC decode. Every decision is logged as `Runtime video codec negotiated ... codec= reason=`.
+- Interface changes:
+  - Wire (protocol): optional `StreamControlMessageV1` fields 92 `video_codec_version`, 93 `video_decode_codecs`, 94 `video_hardware_decode_codecs` (bit 0 H.264, bit 1 HEVC). The Controller sends them on every Hello/Capabilities. A missing field means an older peer, which gets H.264. Older Hosts ignore the fields.
+  - `redclaw/protocol/video_codec_negotiation.h` (new): `VideoCodecPreference`, `select_video_codec`, `HostVideoCodecNegotiatorV1`.
+  - Capture: `EncoderBackendBridgeRequest::allow_software_fallback` (default true; false for automatic HEVC). `EncoderBackendCapabilities` adds per-codec HEVC availability. `kHevcBitratePercentOfH264 = 70`, `scale_bitrate_for_codec`, and a codec argument on `resolve_interactive_desktop_bitrate_floor_kbps`. `EncoderExecutionDiagnostics::forced_idr_option_applied`.
+  - Render: `probe_local_video_decode_support()` (D3D11VA H.264/HEVC profile probe).
+  - Runtime: `--stream-video-codec auto|h264|hevc`, profile key `stream_video_codec`, GUI "Video codec" selector. `redclaw_runtime_options` now links `redclaw_protocol`.
+- Behavior: the Host waits for the peer report up to the existing 3 s viewport grace. If an HEVC hardware open fails, it falls back to H.264 for the rest of the process. If a reconnecting peer cannot decode HEVC, it rebuilds the encoder as H.264. Requested HEVC keyframes are forced to IDR; x265 also needs `open-gop=0`, otherwise it emits CRA (the new libx265 integration case found this).
+- Bitrate: HEVC target and floor are 70% of H.264, an unmeasured planning value. Procedure: [HEVC bitrate measurement](../testing/hevc-bitrate-measurement.md). `run-video-link-baseline.ps1` now also saves `host-video-codec.txt`; `compare-video-codec-baseline.py` compares an H.264 and an HEVC report and refuses mislabeled runs.
+- Checks: scratch Linux builds against Ubuntu FFmpeg 6.1. Negotiation 12/12, stream control protocol 24/24, capture bridge and low-latency profile tests, the FFmpeg roundtrip portable set 5/5 (including the libx265 IDR case), and the comparator unit tests 3/3 all pass. `src/main.cpp`, the GUI, and the Windows D3D11 probe rely on Windows CI. No run on Ryan's machines.
+
 ## 2026-11-06 — Prepare v0.1.12 release metadata
 
 - Prepare v0.1.12 so `scripts/release/publish-github-release.ps1 -Version 0.1.12` can run later from a clean Windows `main` checkout. Set the CMake and vcpkg product version, both README download entry points, and [release notes](../releases/v0.1.12.md). This preparation does not create a tag or a GitHub Release.

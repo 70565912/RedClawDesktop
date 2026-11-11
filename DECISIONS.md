@@ -24,6 +24,8 @@ This decision seals that native Controller spike. It does not, by itself, cancel
 
 ## D3 — HEVC is not the default until capability, forced IDR, and tests land in phases
 
+Superseded on 2026-11-11 by [D8](#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback). Kept for history.
+
 Do not switch the default codec to HEVC now. H.264 stays what the Host sends. Optional HEVC, if Ryan later accepts it, waits on a phased change: separate capability probes, a Controller decoder report before the Host may choose HEVC, forced IDR on every HEVC backend, and tests. A default of `auto` waits on measured LAN and remote results. The sealed Android spike is not the place to start that work.
 
 Source: Ryan's brief, and the recommendation in open PR #3 (https://github.com/70565912/RedClawDesktop/pull/3), which is documentation only and is not merged. On `main`, `src/main.cpp` assigns `EncoderCodec::kH264` in the three Host codec sites named in [PROGRESS.md](PROGRESS.md). Kanban `M02-T01` marked done means the code paths exist; it does not mean HEVC is selected or tested. PR #3's risk table beyond those two checks was not re-run for this record.
@@ -63,9 +65,27 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
 
+## D8 — HEVC is preferred when both peers have hardware HEVC; H.264 stays the fallback
+
+Ryan decided on 2026-11-11 that the PR #3 work is to be implemented and that the product should move to HEVC to save bitrate. His words: "#3需要实现，改用HEVC节约码率". The goal is lower bitrate at comparable picture quality, not higher quality at the same bitrate. This supersedes D3 and answers SPEC open question 2.
+
+What that means in the implementation:
+
+- Default `stream_video_codec=auto`. The Host picks HEVC only when its HEVC hardware encoder (NVENC, QSV, or AMF) is present and the Controller reports a hardware (D3D11VA) HEVC decoder. Otherwise it sends H.264. Every decision is logged as `Runtime video codec negotiated ... codec=... reason=...`.
+- The Controller reports decode capabilities in optional `StreamControlMessageV1` fields 92–94. A peer that omits them is an older build and gets H.264, so mixed versions keep connecting in both directions. An older Host ignores the fields and keeps sending H.264.
+- Automatic mode never uses software x265. Software x265 runs only with an explicit `hevc` preference, as a diagnostic. If an HEVC hardware encoder fails to open, the Host records that for the process and uses H.264.
+- If a reconnecting Controller cannot decode HEVC, the Host rebuilds its encoder as H.264.
+- Requested HEVC keyframes must be IDR pictures (forced IDR on NVENC, QSV, AMF, and x265).
+- HEVC bitrate targets and floors are 70% of the H.264 budget for the same pixels and FPS. 70% is an unmeasured planning value. [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md) is the procedure that confirms or adjusts it on Ryan's machines.
+- Rollback and diagnosis: `--stream-video-codec h264`, profile key `stream_video_codec=h264`, or the GUI "Video codec" selector forces H.264 on the side that sets it. A Controller set to `h264` stops advertising HEVC.
+
+Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The assessment it accepts is PR #3 (https://github.com/70565912/RedClawDesktop/pull/3).
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).
-- Whether to merge PR #3 after review, and the HEVC product questions PR #3 leaves open.
+- Whether to merge the PR #3 assessment document itself. The HEVC direction is decided in D8.
+- Whether the 70% HEVC budget stays, after the measurement in D8.
+- Licensing for shipping HEVC encode/decode in the Windows package (PR #3 risk R11). Hardware encoders and the OS decoder are used; software x265 is diagnostic only.
 - Whether machine code `RC7TST01` is still a debug Host to use if the spike resumes.
 - Starting the README next-phase backlog (cross-site coverage, unattended install, code signing, GUI / Agent scheduling).
