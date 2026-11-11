@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-10 — Write runtime diagnostics to files (M10-T02)
+
+- Remove the UI log card, its copy and clear actions, the remote log display and the unused text renderer. Keep the diagnostic writer, connection status and Debug snapshot access. The isolated application run verifies the connection pages and a GUI diagnostic in the file log. See [validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
+
 ## 2026-11-06 — Prepare v0.1.12 release metadata
 
 - Prepare v0.1.12 so `scripts/release/publish-github-release.ps1 -Version 0.1.12` can run later from a clean Windows `main` checkout. Set the CMake and vcpkg product version, both README download entry points, and [release notes](../releases/v0.1.12.md). This preparation does not create a tag or a GitHub Release.

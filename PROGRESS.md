@@ -6,6 +6,14 @@ As of 2026-11-06 (Asia/Shanghai).
 
 Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
 
+## 2026-11-10 — Runtime logs go to files (M10-T02)
+
+- Remove the runtime log card and its copy and clear actions from the connection pages. Remove the diagnostic log displays from the workspace. Connection progress and actionable errors remain visible. The existing diagnostic writer still records GUI and runtime messages in the rotating local files. See [D9](DECISIONS.md#d9--show-connection-status-and-write-runtime-logs-to-files).
+- The Debug application built through `build.ps1 -SkipConfigure -Target redclaw_desktop -NoPublish`. An isolated GUI run returned home and exited successfully. The home and Host waiting snapshots show the connection controls with no log card, and the GUI diagnostic marker appears in the file log. Evidence is under `build/reports/ui-file-log-20261110`.
+- With a workspace-local test temporary directory, all 42 focused connection, workspace, and diagnostic writer cases passed. The D3D11, file logger, and structured redaction CTest suites also passed. The broader UI run in the default environment hit filesystem and Windows credential or registry restrictions. The running Host was not replaced.
+
+- The independent Debug candidate passed a 345-file manifest check and a restricted-PATH startup probe. CIM could not verify the running Host from the build environment, so the maintenance worker did not take ownership. The existing Host continued DHT publication in standby.
+
 ## Clipboard paste fix, on main
 
 Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly). [Release notes](docs/releases/v0.1.12.md).
