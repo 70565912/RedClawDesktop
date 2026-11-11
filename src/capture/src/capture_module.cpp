@@ -1474,6 +1474,74 @@ bool detect_encoder_backend_capabilities(
     return true;
 }
 
+namespace {
+
+#if REDCLAW_CAPTURE_HAS_LIBAVCODEC
+EncoderOpenProbe probe_open_hevc_encoder(
+    const char* encoder_name,
+    EncoderBackendType backend,
+    bool compiled_in) {
+    EncoderOpenProbe result;
+    if (!compiled_in) {
+        result.detail = "not_in_ffmpeg_build_or_disabled";
+        return result;
+    }
+    result.attempted = true;
+    const AVCodec* codec = avcodec_find_encoder_by_name(encoder_name);
+    if (codec == nullptr) {
+        result.detail = "encoder_not_found";
+        return result;
+    }
+    AVCodecContext* context = avcodec_alloc_context3(codec);
+    if (context == nullptr) {
+        result.detail = "avcodec_alloc_context3_failed";
+        return result;
+    }
+    context->width = 640;
+    context->height = 360;
+    context->time_base = AVRational{1, 30};
+    context->framerate = AVRational{30, 1};
+    context->gop_size = 60;
+    context->max_b_frames = 0;
+    context->bit_rate = 2000LL * 1000LL;
+    context->thread_count = 1;
+    context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    context->pix_fmt = resolve_encoder_cpu_pixel_format(codec, backend);
+    const int open_result = avcodec_open2(context, codec, nullptr);
+    if (open_result < 0) {
+        result.detail = ffmpeg_error_to_string(open_result);
+    } else {
+        result.available = true;
+        result.detail = "ok";
+    }
+    avcodec_free_context(&context);
+    return result;
+}
+#endif
+
+}  // namespace
+
+bool probe_hevc_hardware_encoders(
+    const EncoderBackendCapabilities& capabilities,
+    HevcHardwareEncoderProbe* probe) {
+    if (probe == nullptr) {
+        return false;
+    }
+    *probe = HevcHardwareEncoderProbe{};
+#if REDCLAW_CAPTURE_HAS_LIBAVCODEC
+    probe->nvenc = probe_open_hevc_encoder(
+        "hevc_nvenc", EncoderBackendType::kNvenc, capabilities.hevc_nvenc_available);
+    probe->quicksync = probe_open_hevc_encoder(
+        "hevc_qsv", EncoderBackendType::kQuickSync, capabilities.hevc_quicksync_available);
+    probe->amf = probe_open_hevc_encoder(
+        "hevc_amf", EncoderBackendType::kAmf, capabilities.hevc_amf_available);
+#else
+    (void)capabilities;
+    probe->nvenc.detail = probe->quicksync.detail = probe->amf.detail = "libavcodec_unavailable";
+#endif
+    return true;
+}
+
 CaptureAdapterVendor detect_captured_frame_adapter_vendor(
     const CapturedFrame& frame,
     std::string* adapter_summary) {

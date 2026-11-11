@@ -340,6 +340,34 @@ bool detect_encoder_backend_capabilities(
 	EncoderBackendCapabilities* capabilities,
 	std::string* error_detail = nullptr);
 
+// Result of really opening one hardware HEVC encoder. `attempted` is false when
+// the encoder is not compiled in or is disabled, in which case `available` is
+// false and `detail` says why it was skipped.
+struct EncoderOpenProbe {
+	bool attempted = false;
+	bool available = false;
+	std::string detail;
+};
+
+struct HevcHardwareEncoderProbe {
+	EncoderOpenProbe nvenc;
+	EncoderOpenProbe quicksync;
+	EncoderOpenProbe amf;
+
+	[[nodiscard]] bool any_available() const noexcept {
+		return nvenc.available || quicksync.available || amf.available;
+	}
+};
+
+// Opens (and immediately closes) a small hardware HEVC encoder session for each
+// backend whose FFmpeg encoder name is present in `capabilities`. The name
+// check in detect_encoder_backend_capabilities proves only that FFmpeg was
+// built with the encoder, not that this GPU and driver can run it. Intended to
+// run once at Host startup; it does not change encoder selection.
+bool probe_hevc_hardware_encoders(
+	const EncoderBackendCapabilities& capabilities,
+	HevcHardwareEncoderProbe* probe);
+
 bool build_encoder_backend_bridge_plan(
 	const EncoderBackendBridgeRequest& request,
 	const EncoderBackendCapabilities& capabilities,
