@@ -385,6 +385,21 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             continue;
         }
 
+        if (arg == "--stream-video-codec") {
+            if (i + 1 >= args.size()) {
+                *error = "missing value for --stream-video-codec";
+                return false;
+            }
+            ++i;
+            const auto preference = redclaw::protocol::parse_video_codec_preference(args[i]);
+            if (!preference.has_value()) {
+                *error = "invalid --stream-video-codec value (auto|h264|hevc): " + args[i];
+                return false;
+            }
+            options->stream_video_codec = preference.value();
+            continue;
+        }
+
         if (arg == "--stream-frame-pipe") {
             if (i + 1 >= args.size()) {
                 *error = "missing value for --stream-frame-pipe";

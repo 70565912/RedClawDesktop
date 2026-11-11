@@ -1990,6 +1990,14 @@ bool launch_gui_shell(
   stream_video_max_width->setValue(0);
   stream_video_max_width->setToolTip("0 keeps native capture width; lower values are a manual weak-network diagnostic cap.");
 
+  auto* stream_video_codec = new QComboBox(session_form_box);
+  stream_video_codec->addItem("Auto (HEVC when both sides support it)", QStringLiteral("auto"));
+  stream_video_codec->addItem("H.264 only (rollback)", QStringLiteral("h264"));
+  stream_video_codec->addItem("HEVC (diagnostic, may use CPU encoder)", QStringLiteral("hevc"));
+  stream_video_codec->setToolTip(
+      "Auto prefers HEVC only when the Host has a hardware HEVC encoder and the Controller has hardware HEVC decode; "
+      "otherwise H.264. H.264 only forces the previous codec on this side.");
+
   session_form->addRow("Role", role_combo);
   session_form->addRow("Transport", transport_combo);
   session_form->addRow("Target host", target_host);
@@ -2013,6 +2021,7 @@ bool launch_gui_shell(
   session_form->addRow("Remote diagnostics", allow_remote_diagnostics);
   session_form->addRow("Preview width", stream_preview_width);
   session_form->addRow("Video max width", stream_video_max_width);
+  session_form->addRow("Video codec", stream_video_codec);
 
   auto* action_row = new QHBoxLayout();
   auto* start_button = new QPushButton("Start Runtime", session_form_box);
@@ -5385,6 +5394,7 @@ bool launch_gui_shell(
       }
       args << "--stream-preview-width" << QString::number(stream_preview_width->value());
       args << "--stream-video-max-width" << QString::number(stream_video_max_width->value());
+      args << "--stream-video-codec" << stream_video_codec->currentData().toString();
     }
 
     if (!gui_auto_start.log_dir.isEmpty()) {
@@ -6399,6 +6409,8 @@ bool launch_gui_shell(
     stream_require_capture->setChecked(gui_auto_start.stream_require_capture);
     stream_preview_width->setValue(static_cast<int>(gui_auto_start.stream_preview_width));
     stream_video_max_width->setValue(static_cast<int>(gui_auto_start.stream_video_max_width));
+    stream_video_codec->setCurrentIndex(std::max(0, stream_video_codec->findData(
+        QString::fromStdString(std::string(redclaw::protocol::to_string(gui_auto_start.stream_video_codec))))));
     enable_ice_tcp->setChecked(gui_auto_start.enable_ice_tcp);
     enable_port_mapping->setChecked(gui_auto_start.enable_port_mapping);
     QString configured_stun_preset = match_stun_server_preset(gui_auto_start.ice_servers);

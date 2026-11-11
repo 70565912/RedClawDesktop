@@ -118,6 +118,36 @@ TEST(RuntimeOptions, CliOverridesProfileRegardlessOfArgumentPosition) {
     EXPECT_TRUE(options.allow_remote_input);
 }
 
+TEST(RuntimeOptions, VideoCodecDefaultsToAutoAndCliForcesH264OverProfile) {
+    using redclaw::protocol::VideoCodecPreference;
+    RuntimeOptions defaults;
+    std::string error;
+    ASSERT_TRUE(parse({}, &defaults, &error)) << error;
+    EXPECT_EQ(defaults.stream_video_codec, VideoCodecPreference::kAuto);
+
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path()
+        / ("redclaw-runtime-codec-test-" + std::to_string(nonce) + ".conf");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    { std::ofstream file(path); file << "role=host\nstream_video_codec=hevc\n"; }
+    RuntimeOptions profile_only;
+    ASSERT_TRUE(parse({"--runtime-config", path.string()}, &profile_only, &error)) << error;
+    EXPECT_EQ(profile_only.stream_video_codec, VideoCodecPreference::kHevc);
+
+    RuntimeOptions forced;
+    ASSERT_TRUE(parse({"--stream-video-codec", "h264", "--runtime-config", path.string()}, &forced, &error)) << error;
+    EXPECT_EQ(forced.stream_video_codec, VideoCodecPreference::kH264);
+
+    RuntimeOptions invalid;
+    EXPECT_FALSE(parse({"--stream-video-codec", "h265"}, &invalid, &error));
+    EXPECT_NE(error.find("--stream-video-codec"), std::string::npos);
+    EXPECT_FALSE(parse({"--stream-video-codec"}, &invalid, &error));
+
+    { std::ofstream file(path); file << "role=host\nstream_video_codec=vp9\n"; }
+    EXPECT_FALSE(parse({"--runtime-config", path.string()}, &invalid, &error));
+    EXPECT_NE(error.find("stream_video_codec"), std::string::npos);
+}
+
 TEST(RuntimeOptions, HelpDoesNotStartOrValidateARuntime) {
     RuntimeOptions options;
     std::string error;

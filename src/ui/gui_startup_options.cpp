@@ -158,6 +158,20 @@ bool parse_gui_auto_start_options(
       }
       continue;
     }
+    if (arg == "--stream-video-codec") {
+      if (!require_value(&i, &value)) {
+        return false;
+      }
+      const auto preference = redclaw::protocol::parse_video_codec_preference(value.toStdString());
+      if (!preference.has_value()) {
+        if (error_detail != nullptr) {
+          *error_detail = QString("invalid --stream-video-codec value (auto|h264|hevc): %1").arg(value);
+        }
+        return false;
+      }
+      options->stream_video_codec = preference.value();
+      continue;
+    }
     if (arg == "--stream-smoke") {
       options->stream_smoke = true;
       continue;

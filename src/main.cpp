@@ -41,6 +41,7 @@
 #include "redclaw/protocol/stream_control_protocol.h"
 #include "redclaw/protocol/capture_region_control.h"
 #include "redclaw/protocol/agent_protocol.h"
+#include "redclaw/protocol/video_codec_negotiation.h"
 #include "redclaw/agent/agent_providers.h"
 #include "redclaw/agent/remote_agent_broker.h"
 #include "redclaw/agent/agent_peer_session.h"
@@ -3196,9 +3197,11 @@ int run_runtime_mode(
     std::uint32_t stream_source_height_snapshot = 0;
     std::uint32_t stream_encoded_width_snapshot = 0;
     std::uint32_t stream_encoded_height_snapshot = 0;
+    redclaw::capture::EncoderCodec stream_encoder_codec_snapshot = redclaw::capture::EncoderCodec::kH264;
     redclaw::capture::EncoderExecutionSession stream_encoder_session;
     std::mutex stream_encoder_mutex;
     bool stream_encoder_started = false;
+    redclaw::capture::EncoderCodec stream_encoder_codec = redclaw::capture::EncoderCodec::kH264;
     std::uint64_t stream_last_preserved_hardware_rate_revision = 0;
     std::uint64_t stream_last_preserved_hardware_geometry_transaction_id = 0;
     std::uint64_t stream_encoder_start_retry_after_ms = 0;
@@ -3331,12 +3334,54 @@ int run_runtime_mode(
         }
     });
 
+    redclaw::protocol::HostVideoCodecNegotiatorV1 video_codec_negotiator(options.stream_video_codec);
+    redclaw::protocol::HostVideoEncodeCapabilities host_video_encode;
+    redclaw::protocol::PeerVideoDecodeCapabilities local_video_decode;
+    if (options.role == RuntimeRole::kController) {
+        const auto probe = redclaw::render::probe_local_video_decode_support();
+        local_video_decode = redclaw::protocol::build_local_video_decode_capabilities(
+            {probe.h264_decoder, probe.hevc_decoder, probe.h264_hardware, probe.hevc_hardware},
+            options.stream_video_codec);
+        std::cout << "Runtime video decode capabilities role=" << role_name
+                  << " preference=" << redclaw::protocol::to_string(options.stream_video_codec)
+                  << " advertised_decode=" << redclaw::protocol::describe_video_codec_mask(local_video_decode.decode_mask)
+                  << " advertised_hardware_decode="
+                  << redclaw::protocol::describe_video_codec_mask(local_video_decode.hardware_decode_mask)
+                  << " probe_hevc_decoder=" << (probe.hevc_decoder ? "true" : "false")
+                  << " probe_hevc_hardware=" << (probe.hevc_hardware ? "true" : "false")
+                  << " probe_detail=" << (probe.detail.empty() ? std::string("n/a") : probe.detail) << '\n';
+    } else if (options.role == RuntimeRole::kHost) {
+        redclaw::capture::EncoderBackendCapabilities encoder_capabilities;
+        if (redclaw::capture::detect_encoder_backend_capabilities(&encoder_capabilities)) {
+            host_video_encode.hevc_hardware_encoder_available = encoder_capabilities.hevc_nvenc_available
+                || encoder_capabilities.hevc_quicksync_available
+                || encoder_capabilities.hevc_amf_available;
+            host_video_encode.hevc_software_encoder_available = encoder_capabilities.hevc_software_available;
+        }
+        std::cout << "Runtime video encode capabilities role=" << role_name
+                  << " preference=" << redclaw::protocol::to_string(options.stream_video_codec)
+                  << " hevc_nvenc=" << (encoder_capabilities.hevc_nvenc_available ? "true" : "false")
+                  << " hevc_qsv=" << (encoder_capabilities.hevc_quicksync_available ? "true" : "false")
+                  << " hevc_amf=" << (encoder_capabilities.hevc_amf_available ? "true" : "false")
+                  << " hevc_software=" << (encoder_capabilities.hevc_software_available ? "true" : "false")
+                  << " hevc_bitrate_percent_of_h264=" << redclaw::capture::kHevcBitratePercentOfH264 << '\n';
+    }
+
     std::mutex stream_control_envelope_mutex;
     auto stamp_control_message = [&](redclaw::protocol::StreamControlMessageV1* message) {
         std::lock_guard<std::mutex> lock(stream_control_envelope_mutex);
         message->session_epoch = stream_control_epoch;
         message->message_id = ++stream_control_message_id;
         message->sent_at_ms = now_unix_ms();
+        // Every Controller Hello/Capabilities, including GUI-forwarded ones,
+        // carries the decode report so the Host never mistakes it for an old peer.
+        if (options.role == RuntimeRole::kController
+            && (message->type == redclaw::protocol::StreamControlMessageTypeV1::kHello
+                || message->type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities)) {
+            message->video_codec_version = local_video_decode.version;
+            message->video_decode_codecs = local_video_decode.decode_mask;
+            message->video_hardware_decode_codecs = local_video_decode.hardware_decode_mask;
+        }
     };
     auto make_control_message = [&](redclaw::protocol::StreamControlMessageTypeV1 type) {
         redclaw::protocol::StreamControlMessageV1 message;
@@ -4691,6 +4736,24 @@ int run_runtime_mode(
                     control.audio_playback_requested,
                     options.role == RuntimeRole::kHost);
                 publish_peer_audio(control.audio_version);
+                // A Capabilities without the fields (e.g. an older GUI notice)
+                // must not erase a report already received this session.
+                if (options.role == RuntimeRole::kHost
+                    && (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello
+                        || control.video_codec_version >= 1
+                        || !video_codec_negotiator.snapshot().peer_report_received)
+                    && video_codec_negotiator.observe_peer(
+                        control.video_codec_version,
+                        control.video_decode_codecs,
+                        control.video_hardware_decode_codecs)) {
+                    const auto peer = video_codec_negotiator.snapshot().peer;
+                    std::cout << "Runtime video codec peer report role=" << role_name
+                              << " peer_version=" << peer.version
+                              << " peer_decode=" << redclaw::protocol::describe_video_codec_mask(peer.decode_mask)
+                              << " peer_hardware_decode="
+                              << redclaw::protocol::describe_video_codec_mask(peer.hardware_decode_mask) << '\n';
+                    stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
+                }
                 runtime_loop_wake.notify();
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kHello) {
@@ -6260,6 +6323,38 @@ int run_runtime_mode(
                 HostStreamWorkerStage::kWaitingForViewport);
             return;
         }
+        const auto codec_negotiation = video_codec_negotiator.snapshot();
+        if (redclaw::protocol::should_wait_for_peer_video_codec_report(
+                codec_negotiation.peer_report_received,
+                required_channels_ready_at_ms,
+                now_ms,
+                kDesktopStreamInitialViewportGraceMs)) {
+            set_stream_worker_stage(
+                &stream_encoder_worker_stage,
+                &stream_encoder_worker_stage_since_ms,
+                HostStreamWorkerStage::kWaitingForViewport);
+            return;
+        }
+        if (stream_encoder_started
+            && stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
+            && !redclaw::protocol::peer_accepts_video_codec(
+                codec_negotiation.peer, redclaw::protocol::NegotiatedVideoCodec::kHevc)) {
+            // A reconnect may bring a peer that cannot decode the preserved
+            // HEVC session. Correct output outranks keeping the driver session.
+            const std::string reason = codec_negotiation.peer_report_received
+                ? "peer_cannot_decode_hevc" : "peer_video_codec_report_timeout";
+            std::cout << "Runtime video codec renegotiation role=" << role_name
+                      << " from=hevc reason=" << reason << '\n';
+            {
+                std::lock_guard<std::mutex> lock(callback_mutex);
+                append_timeline(
+                    redclaw::render::RuntimeStatusSeverity::kInfo,
+                    "stream",
+                    "video codec renegotiation from=hevc reason=" + reason);
+            }
+            stream_encoder_session.stop();
+            stream_encoder_started = false;
+        }
         const std::uint32_t adaptive_target_fps = clamp_stream_target_fps(
             adaptive_control.target_fps == 0 ? kDesktopStreamTargetFps : adaptive_control.target_fps);
         const std::uint64_t encode_interval_ms = stream_frame_interval_ms(adaptive_target_fps);
@@ -6510,19 +6605,58 @@ int run_runtime_mode(
             stream_encoder_width = encode_width;
             stream_encoder_height = encode_height;
 
-            redclaw::capture::EncoderProfileRequest profile_request;
-            profile_request.width = encode_width;
-            profile_request.height = encode_height;
-            profile_request.fps = adaptive_target_fps;
-            profile_request.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
-            profile_request.preferred_codec = redclaw::capture::EncoderCodec::kH264;
+            const auto codec_selection = video_codec_negotiator.select(host_video_encode);
+            redclaw::capture::EncoderCodec selected_codec =
+                codec_selection.codec == redclaw::protocol::NegotiatedVideoCodec::kHevc
+                ? redclaw::capture::EncoderCodec::kHevc
+                : redclaw::capture::EncoderCodec::kH264;
+            std::string codec_reason(codec_selection.reason);
+            std::string hevc_open_error;
 
             redclaw::capture::EncoderConfigProfile encoder_profile;
+            redclaw::capture::EncoderBackendBridgePlan bridge_plan;
             std::string encoder_error;
-            if (!redclaw::capture::build_desktop_encoder_profile(
-                    profile_request,
-                    &encoder_profile,
-                    &encoder_error)) {
+            bool profile_failed = false;
+            const auto start_desktop_encoder = [&](redclaw::capture::EncoderCodec codec, bool allow_software) {
+                redclaw::capture::EncoderProfileRequest profile_request;
+                profile_request.width = encode_width;
+                profile_request.height = encode_height;
+                profile_request.fps = adaptive_target_fps;
+                profile_request.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
+                profile_request.preferred_codec = codec;
+                if (!redclaw::capture::build_desktop_encoder_profile(
+                        profile_request,
+                        &encoder_profile,
+                        &encoder_error)) {
+                    profile_failed = true;
+                    return false;
+                }
+                redclaw::capture::EncoderBackendBridgeRequest bridge_request;
+                bridge_request.codec = codec;
+                bridge_request.preferred_backend = redclaw::capture::EncoderBackendType::kAuto;
+                bridge_request.allow_hardware_fallback = true;
+                bridge_request.allow_software_fallback = allow_software;
+                bridge_request.allow_hardware_frame_input = true;
+                bridge_request.capture_adapter_vendor =
+                    redclaw::capture::detect_captured_frame_adapter_vendor(*captured_frame);
+                return redclaw::capture::start_encoder_execution_from_bridge(
+                    encoder_profile,
+                    bridge_request,
+                    &stream_encoder_session,
+                    &bridge_plan,
+                    &encoder_error);
+            };
+            bool encoder_start_ok = start_desktop_encoder(selected_codec, codec_selection.allow_software_encoder);
+            if (!encoder_start_ok && !profile_failed && selected_codec == redclaw::capture::EncoderCodec::kHevc) {
+                // HEVC presence in FFmpeg is not proof the GPU/driver can open
+                // it. Remember the failure for this process and use H.264.
+                video_codec_negotiator.record_hevc_encoder_open_failure();
+                hevc_open_error = encoder_error;
+                selected_codec = redclaw::capture::EncoderCodec::kH264;
+                codec_reason = "host_hevc_encoder_open_failed";
+                encoder_start_ok = start_desktop_encoder(selected_codec, true);
+            }
+            if (profile_failed) {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 ++stream_counters.encode_failures;
                 stream_counters.last_error = encoder_error;
@@ -6532,22 +6666,7 @@ int run_runtime_mode(
                     "desktop video encoder profile build failed: " + encoder_error);
                 return;
             }
-
-            redclaw::capture::EncoderBackendBridgeRequest bridge_request;
-            bridge_request.codec = redclaw::capture::EncoderCodec::kH264;
-            bridge_request.preferred_backend = redclaw::capture::EncoderBackendType::kAuto;
-            bridge_request.allow_hardware_fallback = true;
-            bridge_request.allow_hardware_frame_input = true;
-            bridge_request.capture_adapter_vendor =
-                redclaw::capture::detect_captured_frame_adapter_vendor(*captured_frame);
-
-            redclaw::capture::EncoderBackendBridgePlan bridge_plan;
-            if (!redclaw::capture::start_encoder_execution_from_bridge(
-                    encoder_profile,
-                    bridge_request,
-                    &stream_encoder_session,
-                    &bridge_plan,
-                    &encoder_error)) {
+            if (!encoder_start_ok) {
                 stream_encoder_start_retry_after_ms = now_ms + kDesktopStreamEncoderStartRetryCooldownMs;
                 stream_last_encoded_capture_sequence = capture_sequence;
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -6564,8 +6683,39 @@ int run_runtime_mode(
             }
 
             stream_encoder_started = true;
+            stream_encoder_codec = selected_codec;
             stream_encoder_start_retry_after_ms = 0;
             const auto encoder_diagnostics = stream_encoder_session.diagnostics();
+            {
+                const auto negotiated = video_codec_negotiator.snapshot();
+                const std::string codec_name = selected_codec == redclaw::capture::EncoderCodec::kHevc ? "hevc" : "h264";
+                std::string summary = "codec=" + codec_name
+                    + " reason=" + codec_reason
+                    + " preference=" + std::string(redclaw::protocol::to_string(options.stream_video_codec))
+                    + " peer_report=" + (negotiated.peer_report_received ? "received" : "missing")
+                    + " peer_version=" + std::to_string(negotiated.peer.version)
+                    + " peer_decode=" + redclaw::protocol::describe_video_codec_mask(negotiated.peer.decode_mask)
+                    + " peer_hardware_decode="
+                    + redclaw::protocol::describe_video_codec_mask(negotiated.peer.hardware_decode_mask)
+                    + " host_hevc_hardware_encoder="
+                    + (host_video_encode.hevc_hardware_encoder_available ? "true" : "false")
+                    + " backend=" + encoder_backend_to_string(encoder_diagnostics.backend)
+                    + " encoder=" + (encoder_diagnostics.encoder_name.empty() ? std::string("n/a") : encoder_diagnostics.encoder_name)
+                    + " forced_idr_option=" + (encoder_diagnostics.forced_idr_option_applied ? "true" : "false")
+                    + " target_bitrate_kbps=" + std::to_string(encoder_profile.target_bitrate_kbps);
+                if (!hevc_open_error.empty()) {
+                    summary += " hevc_open_error=\"" + hevc_open_error + "\"";
+                }
+                std::cout << "Runtime video codec negotiated role=" << role_name << ' ' << summary << '\n';
+                std::lock_guard<std::mutex> lock(callback_mutex);
+                stream_encoder_codec_snapshot = selected_codec;
+                append_timeline(
+                    hevc_open_error.empty()
+                        ? redclaw::render::RuntimeStatusSeverity::kInfo
+                        : redclaw::render::RuntimeStatusSeverity::kWarning,
+                    "stream",
+                    "video codec negotiated " + summary);
+            }
             stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -6622,6 +6772,7 @@ int run_runtime_mode(
             }
 
             std::cout << "Runtime desktop video encoder started role=" << role_name
+                      << " codec=" << (stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc ? "hevc" : "h264")
                       << " backend=" << encoder_backend_to_string(encoder_diagnostics.backend)
                       << " encoder="
                       << (encoder_diagnostics.encoder_name.empty() ? "n/a" : encoder_diagnostics.encoder_name)
@@ -6891,8 +7042,9 @@ int run_runtime_mode(
                         && required_channel_closed_at_ms == 0
                         && !stream_media_submission_paused.load();
                     geometry_revision = stream_geometry_revision;
-                    if (!stream_encoder_started && (stream_requested_viewport_width < 64
-                            || stream_requested_viewport_height < 64)) {
+                    if ((!stream_encoder_started && (stream_requested_viewport_width < 64
+                            || stream_requested_viewport_height < 64))
+                        || !video_codec_negotiator.snapshot().peer_report_received) {
                         readiness.due_ms = std::max(readiness.due_ms,
                             stream_required_channels_ready_at_ms + kDesktopStreamInitialViewportGraceMs);
                     }
@@ -8064,6 +8216,7 @@ int run_runtime_mode(
                 last_advertised_input_geometry = {};
                 stream_remote_control_guard.reset();
                 peer_capture_status_version.store(0);
+                video_codec_negotiator.reset_peer();
                 {
                     std::lock_guard<std::mutex> envelope_lock(stream_control_envelope_mutex);
                     stream_control_epoch = "runtime-" + role_name + "-"
@@ -8568,6 +8721,7 @@ int run_runtime_mode(
             std::uint32_t source_height = 0;
             std::uint32_t encoded_width = 0;
             std::uint32_t encoded_height = 0;
+            auto encoded_codec = redclaw::capture::EncoderCodec::kH264;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 stream_snapshot = stream_counters;
@@ -8581,6 +8735,7 @@ int run_runtime_mode(
                 source_height = stream_source_height_snapshot;
                 encoded_width = stream_encoded_width_snapshot;
                 encoded_height = stream_encoded_height_snapshot;
+                encoded_codec = stream_encoder_codec_snapshot;
             }
 
             const std::uint64_t adaptation_sample_ms = now_steady_ms();
@@ -8814,7 +8969,7 @@ int run_runtime_mode(
                     adaptive_profile_request.height = bitrate_height;
                     adaptive_profile_request.fps = desired_fps;
                     adaptive_profile_request.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
-                    adaptive_profile_request.preferred_codec = redclaw::capture::EncoderCodec::kH264;
+                    adaptive_profile_request.preferred_codec = encoded_codec;
 
                     redclaw::capture::EncoderConfigProfile adaptive_profile;
                     std::string adaptive_profile_error;

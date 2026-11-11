@@ -60,5 +60,25 @@ TEST(GuiStartupOptions, MaintenanceDoesNotBypassDiagnosticSafetyChecks) {
         GuiStartupOrigin::kValidatedMaintenance));
     EXPECT_FALSE(error.isEmpty());
 }
+
+TEST(GuiStartupOptions, VideoCodecPreferenceDefaultsToAutoAndAcceptsRollback) {
+    GuiAutoStartOptions options;
+    QString error;
+    const QStringList base{"redclaw_desktop", "--gui-auto-start", "--gui-role", "controller"};
+    ASSERT_TRUE(parse_gui_auto_start_options(base, &options, &error)) << error.toStdString();
+    EXPECT_EQ(options.stream_video_codec, redclaw::protocol::VideoCodecPreference::kAuto);
+
+    auto forced = base;
+    forced << "--stream-video-codec" << "h264";
+    options = {};
+    ASSERT_TRUE(parse_gui_auto_start_options(forced, &options, &error)) << error.toStdString();
+    EXPECT_EQ(options.stream_video_codec, redclaw::protocol::VideoCodecPreference::kH264);
+
+    auto invalid = base;
+    invalid << "--stream-video-codec" << "av1";
+    options = {};
+    EXPECT_FALSE(parse_gui_auto_start_options(invalid, &options, &error));
+    EXPECT_TRUE(error.contains("--stream-video-codec"));
+}
 } // namespace
 } // namespace redclaw::ui

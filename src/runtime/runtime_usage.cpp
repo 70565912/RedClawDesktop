@@ -45,6 +45,8 @@ void print_usage() {
         << "                             Debug QA: close only Agent channel after first task event\n"
         << "  --stream-preview-width <value>  Preview width for smoke stream (16..640, default 160)\n"
         << "  --stream-video-max-width <value>  Max encoded video width; 0 keeps native width (default 0)\n"
+        << "  --stream-video-codec <auto|h264|hevc>  Video codec preference (default auto: HEVC when both\n"
+        << "                             sides can, else H.264; h264 forces the H.264 rollback path)\n"
         << "  --stream-frame-pipe <name> Direct live frames to a local GUI shared-memory channel\n"
         << "  --stream-navigation-pipe <name> Direct navigation thumbnails to a local GUI shared-memory channel\n"
         << "  --log-dir <path>           Local rolling-log directory\n"
