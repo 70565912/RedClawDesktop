@@ -61,6 +61,7 @@
 - [远端 Agent 联调](testing/remote-development-agent-integration-runbook.md)
 - [Debug Bridge 联调](testing/p2p-debug-bridge-integration-runbook.md)
 - [产品性能基线](testing/product-performance-baseline-v1.md)
+- [HEVC 与 H.264 码率对比测量](testing/hevc-bitrate-measurement.md)
 - [T29–T31 Linux 最小联测与有界排查](testing/video-link-linux-checks-20261001.md)
 - [GitHub Actions 验证范围](testing/github-actions-validation.md)
 - [特权输入与 DirectX 检查表](testing/e2e-privileged-directx-checklist.md)
