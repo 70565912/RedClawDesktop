@@ -38,32 +38,30 @@ struct GpuAdapterChoice {
 [[nodiscard]] GpuAdapterChoice choose_gpu_adapter(std::span<const GpuAdapterCandidate> candidates) noexcept;
 [[nodiscard]] std::string describe_gpu_adapter(const GpuAdapterCandidate& adapter);
 
-// Where hardware decode of one codec runs relative to the presenting adapter.
-// The display adapter is preferred whenever it can decode the codec: it
-// avoids a cross-adapter copy and was measured faster on the Optimus laptop
-// (Intel HD 530 HEVC 0.9 ms/frame against GTX 960M about 4 ms). Another
-// hardware adapter is used only when the display adapter cannot decode.
+// Hardware decode of one codec on the adapter that presents the window.
+// Only that adapter is probed. Another adapter, even one that can decode the
+// codec, is not used: copying frames across adapters costs more than falling
+// back to H.264.
 struct DecodeAdapterAttempt {
     std::size_t index = 0;
     bool hardware_decode = false;
 };
 
 struct DecodeAdapterChoice {
-    // Index into the candidate span; empty means no adapter can decode.
+    // Index into the candidate span; empty means the display adapter cannot
+    // hardware-decode the codec.
     std::optional<std::size_t> index;
-    // The decode adapter differs from the presenting adapter, so decoded
-    // frames must cross adapters.
-    bool cross_adapter = false;
-    // `display_adapter`, `display_adapter_no_<codec>`,
-    // `present_adapter_not_enumerated` or `no_adapter_<codec>`.
+    // `display_adapter`, `display_adapter_no_<codec>` or
+    // `present_adapter_not_enumerated`.
     std::string reason;
-    // Adapters that were actually probed, in order. The display adapter is
-    // probed first and the others only when it fails.
+    // The display adapter, when it was probed. Empty when it is missing or
+    // a software adapter.
     std::vector<DecodeAdapterAttempt> attempts;
 };
 
 // `probe` reports whether the adapter can hardware-decode the codec (profile
-// present and a real device opens). Software adapters are never probed.
+// present and a real device opens). It is called for the display adapter
+// only, and never for a software adapter.
 using DecodeAdapterProbe = std::function<bool(const GpuAdapterCandidate&)>;
 [[nodiscard]] DecodeAdapterChoice choose_decode_adapter(
     std::span<const GpuAdapterCandidate> candidates,

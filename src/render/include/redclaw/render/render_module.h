@@ -279,9 +279,6 @@ public:
 	// Decode on `device` and output D3D11 surfaces (nullptr: FFmpeg's default
 	// adapter with CPU transfer).
 	void configure_d3d11_surface_output(ID3D11Device* device);
-	// Decode on `device`; with `surface_output` false every frame is copied
-	// to CPU BGRA, which is how frames cross to another adapter.
-	void configure_d3d11_decode_device(ID3D11Device* device, bool surface_output);
 #endif
 
 	void force_software_decode();
@@ -300,11 +297,10 @@ private:
 // with NV12 output exists and a real device opens, not merely that FFmpeg
 // ships a decoder.
 //
-// H.264 is probed on the display adapter only. HEVC is probed on the display
-// adapter first; when that adapter cannot decode it, the other hardware
-// adapters are tried (for example the output-less discrete GPU on Optimus).
-// If one can, HEVC is reported as hardware-decodable and `hevc_decode_*`
-// names the adapter that must run it. If none can, HEVC is not reported.
+// H.264 and HEVC are probed only on the display adapter (the one that owns
+// the window's monitor). Another adapter is never probed. HEVC hardware is
+// reported only when that adapter can decode it; `hevc_decode_*` then names
+// the same adapter.
 struct LocalVideoDecodeProbe {
 	bool h264_decoder = false;
 	bool hevc_decoder = false;
@@ -316,13 +312,12 @@ struct LocalVideoDecodeProbe {
 	std::string adapter;
 	std::string adapter_reason;
 	std::uint64_t present_adapter_luid = 0;
-	// HEVC decode adapter (empty/0 when HEVC has no hardware decoder), why it
-	// was chosen (`display_adapter`, `display_adapter_no_hevc`,
-	// `no_adapter_hevc`, ...) and whether decoded frames must cross adapters.
+	// The display adapter again when it can hardware-decode HEVC, otherwise
+	// empty/0. `hevc_decode_reason` is `display_adapter`,
+	// `display_adapter_no_hevc` or `present_adapter_not_enumerated`.
 	std::string hevc_decode_adapter;
 	std::uint64_t hevc_decode_adapter_luid = 0;
 	std::string hevc_decode_reason;
-	bool hevc_cross_adapter = false;
 };
 
 // `present_adapter_luid` is the adapter the presenter actually uses; 0 means

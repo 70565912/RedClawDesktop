@@ -4104,13 +4104,6 @@ bool launch_gui_shell(
         QString(" hevc_decode_adapter_luid=0x%1 decode_route=%2")
             .arg(transport.hevc_decode_adapter_luid, 16, 16, QLatin1Char('0'))
             .arg(transport.decode_route));
-    if (!transport.hevc_decode_device_error.isEmpty()) {
-      QString safe_error = transport.hevc_decode_device_error;
-      safe_error.replace(' ', '_');
-      safe_error.replace('\n', '_');
-      safe_error.replace('\r', '_');
-      log_line.append(QString(" hevc_decode_device_error=%1").arg(safe_error));
-    }
     {
       const QJsonObject canvas = playback_window_canvas->diagnostic_snapshot();
       if (canvas.contains("presentation_state")) {
@@ -5219,34 +5212,29 @@ bool launch_gui_shell(
       QString decode_device_error;
       playback_window_canvas->set_diagnostic_log(&append_log);
       std::uint64_t presenter_adapter_luid = 0;
-      std::uint64_t hevc_decode_adapter_luid = 0;
       const bool has_presentation_adapter =
           playback_window_canvas->d3d11_presentation_adapter(&presenter_adapter_luid, &decode_device_error);
       if (has_presentation_adapter) {
-        // H.264 always decodes on the presenter's adapter. HEVC does too unless
-        // that adapter has no hardware HEVC decode and another one has.
+        // HEVC is probed on this adapter only. The runtime gets the same LUID
+        // so the capability report matches the window.
         QElapsedTimer probe_timer;
         probe_timer.start();
         const auto decode_probe = redclaw::render::probe_local_video_decode_support(presenter_adapter_luid);
-        if (decode_probe.hevc_hardware && decode_probe.hevc_cross_adapter) {
-          hevc_decode_adapter_luid = decode_probe.hevc_decode_adapter_luid;
-        }
-        append_log(QString("Controller video decode adapters present_adapter=%1 h264_decode_adapter=present_adapter "
-                           "hevc_decode_adapter=%2 hevc_decode_reason=%3 cross_adapter=%4 "
-                           "cross_adapter_transfer=%5 probe_ms=%6 probe_detail=%7")
+        append_log(QString("Controller video decode adapters present_adapter=%1 hevc_decode_adapter=%2 "
+                           "hevc_decode_reason=%3 probe_ms=%4 probe_detail=%5")
                        .arg(QString::fromStdString(decode_probe.adapter))
                        .arg(decode_probe.hevc_hardware
                                 ? QString::fromStdString(decode_probe.hevc_decode_adapter)
                                 : QStringLiteral("none"))
                        .arg(QString::fromStdString(decode_probe.hevc_decode_reason))
-                       .arg(decode_probe.hevc_cross_adapter ? 1 : 0)
-                       .arg(decode_probe.hevc_cross_adapter ? QStringLiteral("cpu_copy") : QStringLiteral("none"))
                        .arg(probe_timer.elapsed())
                        .arg(QString::fromStdString(decode_probe.detail)));
+        if (presenter_adapter_luid != 0) {
+          args << "--present-adapter-luid" << QString::number(static_cast<qulonglong>(presenter_adapter_luid));
+        }
       }
       if (has_presentation_adapter
-          && direct_frame_pipe_server.configure_d3d11_decode_adapters(
-              presenter_adapter_luid, hevc_decode_adapter_luid, &decode_device_error)) {
+          && direct_frame_pipe_server.configure_d3d11_decode_adapter(presenter_adapter_luid, &decode_device_error)) {
         append_log(QString("D3D11 decode device enabled on the presenter adapter luid=0x%1:%2; "
                            "decoded frames reach the presenter through keyed-mutex shared textures.")
                        .arg(static_cast<quint32>(presenter_adapter_luid >> 32U), 8, 16, QLatin1Char('0'))

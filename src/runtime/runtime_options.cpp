@@ -1,5 +1,7 @@
 #include "runtime_options_detail.h"
 
+#include <limits>
+
 namespace redclaw::runtime {
 bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::string* error) {
     std::vector<std::string> args;
@@ -397,6 +399,30 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
                 return false;
             }
             options->stream_video_codec = preference.value();
+            continue;
+        }
+
+        if (arg == "--present-adapter-luid") {
+            if (i + 1 >= args.size()) {
+                *error = "missing value for --present-adapter-luid";
+                return false;
+            }
+            ++i;
+            std::uint64_t parsed = 0;
+            for (const char ch : args[i]) {
+                if (ch < '0' || ch > '9') {
+                    *error = "invalid --present-adapter-luid value: " + args[i];
+                    return false;
+                }
+                const auto digit = static_cast<std::uint64_t>(ch - '0');
+                if (parsed > (std::numeric_limits<std::uint64_t>::max)() / 10
+                    || parsed * 10 > (std::numeric_limits<std::uint64_t>::max)() - digit) {
+                    *error = "invalid --present-adapter-luid value: " + args[i];
+                    return false;
+                }
+                parsed = parsed * 10 + digit;
+            }
+            options->present_adapter_luid = parsed;
             continue;
         }
 

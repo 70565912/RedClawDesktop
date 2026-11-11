@@ -67,7 +67,8 @@ struct LocalVideoDecodeSupport {
 [[nodiscard]] std::uint32_t video_codec_mask_bit(NegotiatedVideoCodec codec) noexcept;
 
 // What a Controller advertises. A `h264` preference hides HEVC so either side
-// can force the rollback path.
+// can force the rollback path. HEVC is advertised only when this machine can
+// hardware-decode it; a software decoder is not offered.
 [[nodiscard]] PeerVideoDecodeCapabilities build_local_video_decode_capabilities(
     const LocalVideoDecodeSupport& support,
     VideoCodecPreference preference) noexcept;

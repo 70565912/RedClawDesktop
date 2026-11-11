@@ -44,12 +44,11 @@ struct DirectFrameTransportStats {
   quint64 surface_bridge_failures = 0;
   // 0 when decoding to CPU frames instead of the shared-surface bridge.
   quint64 decode_adapter_luid = 0;
-  // Adapter that decodes HEVC (0 = same as decode_adapter_luid) and how the
-  // last encoded frame reached the presenter: `present_adapter_surface`,
-  // `present_adapter_cpu` or `cross_adapter_cpu_copy`.
+  // Equals decode_adapter_luid while HEVC frames use the presenter's shared
+  // textures; 0 otherwise. HEVC is never decoded on a different adapter.
   quint64 hevc_decode_adapter_luid = 0;
+  // `present_adapter_surface` or `present_adapter_cpu`.
   QString decode_route = "none";
-  QString hevc_decode_device_error;
   QString last_surface_bridge_error;
   QString decoder_backend = "unopened";
   QString last_decode_error;
@@ -70,16 +69,10 @@ public:
     DirectFramePipeServer& operator=(const DirectFramePipeServer&) = delete;
     bool start(const QString& pipe_name, QString* error_detail);
     // Creates the decode device on the presenter's adapter (LUID 0 = default
-    // adapter); H.264 decodes there and reaches the presenter through shared
-    // textures. `hevc_adapter_luid` names the adapter that decodes HEVC when
-    // the presenter's adapter cannot; HEVC frames then cross adapters as CPU
-    // copies. 0, or the presenter's own LUID, keeps HEVC on the presenter's
-    // adapter. On failure decode falls back to CPU-transfer frames and the
-    // reason is written to `detail`. A failed HEVC device is not fatal: it is
-    // reported in stats and HEVC stays on the presenter's adapter. Call
-    // before start().
-    bool configure_d3d11_decode_adapters(
-        std::uint64_t present_adapter_luid, std::uint64_t hevc_adapter_luid, QString* detail);
+    // adapter). H.264 and HEVC both decode there. On failure decode falls
+    // back to CPU-transfer frames and the reason is written to `detail`.
+    // Call before start().
+    bool configure_d3d11_decode_adapter(std::uint64_t adapter_luid, QString* detail);
     void disable_d3d11_surface_output();
     void request_cpu_decode_fallback();
     void stop();

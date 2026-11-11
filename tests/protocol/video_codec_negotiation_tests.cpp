@@ -88,8 +88,13 @@ TEST(VideoCodecNegotiation, ControllerH264PreferenceHidesHevc) {
 
     const LocalVideoDecodeSupport software_hevc{true, true, true, false};
     const auto software = build_local_video_decode_capabilities(software_hevc, VideoCodecPreference::kAuto);
-    EXPECT_EQ(software.decode_mask, kVideoCodecMaskH264 | kVideoCodecMaskHevc);
+    EXPECT_EQ(software.decode_mask, kVideoCodecMaskH264);
     EXPECT_EQ(software.hardware_decode_mask, kVideoCodecMaskH264);
+    EXPECT_EQ(select_video_codec(VideoCodecPreference::kAuto, software, hevc_hardware_host()).reason,
+        "peer_no_hevc_decoder");
+    // An explicit hevc preference does not advertise a software decoder either.
+    EXPECT_EQ(build_local_video_decode_capabilities(software_hevc, VideoCodecPreference::kHevc).decode_mask,
+        kVideoCodecMaskH264);
 }
 
 TEST(VideoCodecNegotiation, PreferenceParserAcceptsOnlyKnownValues) {

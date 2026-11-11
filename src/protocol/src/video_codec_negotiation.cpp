@@ -42,9 +42,11 @@ PeerVideoDecodeCapabilities build_local_video_decode_capabilities(
         report.decode_mask |= kVideoCodecMaskH264;
         if (support.h264_hardware) report.hardware_decode_mask |= kVideoCodecMaskH264;
     }
-    if (preference != VideoCodecPreference::kH264 && support.hevc_decoder) {
+    // Software HEVC is not advertised. Without hardware decode on the display
+    // adapter the Host must send H.264 (`peer_no_hevc_decoder`).
+    if (preference != VideoCodecPreference::kH264 && support.hevc_decoder && support.hevc_hardware) {
         report.decode_mask |= kVideoCodecMaskHevc;
-        if (support.hevc_hardware) report.hardware_decode_mask |= kVideoCodecMaskHevc;
+        report.hardware_decode_mask |= kVideoCodecMaskHevc;
     }
     return report;
 }

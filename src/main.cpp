@@ -3347,7 +3347,7 @@ int run_runtime_mode(
     std::string local_video_codec_change_reason;
     redclaw::protocol::ControllerHevcDecodeOverloadMonitor controller_hevc_decode_overload;
     if (options.role == RuntimeRole::kController) {
-        const auto probe = redclaw::render::probe_local_video_decode_support();
+        const auto probe = redclaw::render::probe_local_video_decode_support(options.present_adapter_luid);
         local_video_decode = redclaw::protocol::build_local_video_decode_capabilities(
             {probe.h264_decoder, probe.hevc_decoder, probe.h264_hardware, probe.hevc_hardware},
             options.stream_video_codec);
@@ -3365,7 +3365,7 @@ int run_runtime_mode(
                   << " hevc_decode_adapter="
                   << (probe.hevc_hardware && !probe.hevc_decode_adapter.empty() ? probe.hevc_decode_adapter : std::string("none"))
                   << " hevc_decode_reason=" << (probe.hevc_decode_reason.empty() ? std::string("n/a") : probe.hevc_decode_reason)
-                  << " hevc_cross_adapter=" << (probe.hevc_cross_adapter ? "true" : "false") << '\n';
+                  << " present_adapter_luid=0x" << std::hex << probe.present_adapter_luid << std::dec << '\n';
     } else if (options.role == RuntimeRole::kHost) {
         redclaw::capture::EncoderBackendCapabilities encoder_capabilities;
         redclaw::capture::HevcHardwareEncoderProbe hevc_probe;

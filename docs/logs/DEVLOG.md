@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-11-11 — HEVC decode stays on the display adapter (M02-T03)
+
+- Ryan reversed the cross-adapter rule the same day: probe HEVC hardware decode only on the adapter that owns the playback window. If it can, advertise HEVC and decode there. If it cannot, do not probe or use any other adapter, and do not advertise the software HEVC decoder, so the Host sends H.264. A CPU copy from another GPU costs more than H.264. The ring-overrun fallback is unchanged.
+- Interface changes:
+  - `choose_decode_adapter` no longer has `cross_adapter` and never probes past the display adapter. Reasons are `display_adapter`, `display_adapter_no_<codec>` and `present_adapter_not_enumerated`.
+  - `build_local_video_decode_capabilities` adds HEVC to the decode report only when `hevc_hardware` is set. A Controller with a software HEVC decoder and no hardware decode now reports H.264 only, and the Host logs `peer_no_hevc_decoder`. An older Controller that still reports software HEVC keeps getting `peer_hevc_decode_not_hardware`.
+  - `LocalVideoDecodeProbe` drops `hevc_cross_adapter`. `FfmpegVideoFrameDecoder::configure_d3d11_decode_device` and `DirectFramePipeServer::configure_d3d11_decode_adapters` are removed; the receiver again has `configure_d3d11_decode_adapter(luid)`.
+  - New runtime flag `--present-adapter-luid`. The GUI passes the window's adapter at session start. 0, the default, probes the primary monitor.
+- Behavior: the probe opens a D3D11VA device on that one adapter. `hevc_probe_attempts` lists it alone (`indexN:ok|no_hevc_profile|probe_failed`) or `none` when the adapter was not enumerated. `decode_route` is `present_adapter_surface` for a D3D11 frame and `present_adapter_cpu` otherwise. `hevc_decode_adapter_luid` equals the presenter LUID while HEVC frames use the shared textures.
+- Not done: moving the window onto a monitor of a different adapter does not re-probe and does not ask the Host to switch to H.264. The decode device stays on the adapter chosen at session start. Restart the session. This is recorded in D10.
+- Checks (Linux, not MSVC): `redclaw_render_playback_flow_control_tests` 20/20, including the case where an output-less GPU could decode HEVC and is not probed. The negotiation test source compiles; its wire cases need the Windows CI link. `runtime_options.cpp`, `render_module.cpp`, the receiver, `gui_shell.cpp` and `main.cpp` pass a MinGW syntax check. Nothing here has run on Ryan's machines.
+
+
 ## 2026-11-11 — HEVC decodes on another adapter when the display adapter cannot (M02-T03)
 
 - Ryan approved one more Controller adapter rule on PR #10 (head `b89a396e`): probe HEVC hardware decode on the display adapter first; if it has no HEVC hardware decode but another adapter does (the output-less GTX 960M on the Optimus laptop), advertise HEVC and decode there. The display adapter stays preferred whenever it can decode, because it avoids a copy and was faster in his measurement (Intel HD 530 HEVC 0.9 ms/frame, GTX 960M about 4 ms). If no adapter can hardware-decode HEVC, hardware HEVC is not reported and the Host sends H.264. The decode-overload fallback stays as the safety net. H.264 always decodes on the display adapter.

@@ -202,15 +202,17 @@ TEST(VideoDecodeProbe, HevcDecodeAdapterMatchesTheReportedFlags) {
     EXPECT_FALSE(probe.hevc_decode_reason.empty());
     if (probe.hevc_hardware) {
         EXPECT_FALSE(probe.hevc_decode_adapter.empty());
-        EXPECT_NE(probe.hevc_decode_reason.rfind("no_adapter", 0), 0U);
+        EXPECT_EQ(probe.hevc_decode_reason, "display_adapter");
+        EXPECT_EQ(probe.hevc_decode_adapter_luid, probe.present_adapter_luid);
     } else {
         EXPECT_TRUE(probe.hevc_decode_adapter.empty());
         EXPECT_EQ(probe.hevc_decode_adapter_luid, 0U);
-        EXPECT_FALSE(probe.hevc_cross_adapter);
+        EXPECT_NE(probe.hevc_decode_reason, "display_adapter");
     }
-    if (probe.hevc_cross_adapter) {
-        EXPECT_NE(probe.hevc_decode_adapter_luid, 0U);
-        EXPECT_NE(probe.hevc_decode_adapter_luid, probe.present_adapter_luid);
+    // The attempt list names the display adapter only, so it has no comma.
+    if (probe.detail.find("hevc_probe_attempts=") != std::string::npos) {
+        const auto attempts = probe.detail.substr(probe.detail.find("hevc_probe_attempts="));
+        EXPECT_EQ(attempts.find(','), std::string::npos) << probe.detail;
     }
 }
 

@@ -39,7 +39,7 @@ DecodeAdapterChoice choose_decode_adapter(
     DecodeAdapterChoice choice;
     const std::string codec(codec_name);
     const auto try_adapter = [&](std::size_t index) {
-        if (candidates[index].software) return false;
+        if (candidates[index].software || !probe) return false;
         const bool ok = probe && probe(candidates[index]);
         choice.attempts.push_back({index, ok});
         return ok;
@@ -52,21 +52,16 @@ DecodeAdapterChoice choose_decode_adapter(
             break;
         }
     }
-    if (display && try_adapter(*display)) {
+    if (!display) {
+        choice.reason = "present_adapter_not_enumerated";
+        return choice;
+    }
+    if (try_adapter(*display)) {
         choice.index = display;
         choice.reason = "display_adapter";
         return choice;
     }
-    for (std::size_t i = 0; i < candidates.size(); ++i) {
-        if (display && i == *display) continue;
-        if (try_adapter(i)) {
-            choice.index = i;
-            choice.cross_adapter = true;
-            choice.reason = display ? "display_adapter_no_" + codec : "present_adapter_not_enumerated";
-            return choice;
-        }
-    }
-    choice.reason = "no_adapter_" + codec;
+    choice.reason = "display_adapter_no_" + codec;
     return choice;
 }
 

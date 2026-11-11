@@ -100,26 +100,22 @@ TEST(DecodeAdapterChoice, DisplayAdapterThatCanDecodeIsUsedAndNothingElseIsProbe
     const auto choice = choose_decode_adapter(adapters, adapters[1].luid, "hevc", fake_probe({0, 1}, &probed));
     ASSERT_TRUE(choice.index.has_value());
     EXPECT_EQ(*choice.index, 1U);
-    EXPECT_FALSE(choice.cross_adapter);
     EXPECT_EQ(choice.reason, "display_adapter");
     EXPECT_EQ(probed, std::vector<std::uint32_t>({1}));
     ASSERT_EQ(choice.attempts.size(), 1U);
     EXPECT_TRUE(choice.attempts[0].hardware_decode);
 }
 
-TEST(DecodeAdapterChoice, DisplayWithoutCodecFallsToAnotherAdapterAcrossAdapters) {
+TEST(DecodeAdapterChoice, DisplayWithoutCodecDoesNotUseAnotherAdapter) {
     const auto adapters = optimus_adapters();
     std::vector<std::uint32_t> probed;
+    // The output-less dGPU could decode HEVC. It must not be probed or chosen.
     const auto choice = choose_decode_adapter(adapters, adapters[1].luid, "hevc", fake_probe({0}, &probed));
-    ASSERT_TRUE(choice.index.has_value());
-    EXPECT_EQ(*choice.index, 0U);
-    EXPECT_TRUE(choice.cross_adapter);
+    EXPECT_FALSE(choice.index.has_value());
     EXPECT_EQ(choice.reason, "display_adapter_no_hevc");
-    // Display first, then the output-less dGPU; the software adapter is never probed.
-    EXPECT_EQ(probed, std::vector<std::uint32_t>({1, 0}));
-    ASSERT_EQ(choice.attempts.size(), 2U);
+    EXPECT_EQ(probed, std::vector<std::uint32_t>({1}));
+    ASSERT_EQ(choice.attempts.size(), 1U);
     EXPECT_FALSE(choice.attempts[0].hardware_decode);
-    EXPECT_TRUE(choice.attempts[1].hardware_decode);
 }
 
 TEST(DecodeAdapterChoice, NoAdapterThatCanDecodeMeansNoCodec) {
@@ -127,9 +123,8 @@ TEST(DecodeAdapterChoice, NoAdapterThatCanDecodeMeansNoCodec) {
     std::vector<std::uint32_t> probed;
     const auto choice = choose_decode_adapter(adapters, adapters[1].luid, "hevc", fake_probe({}, &probed));
     EXPECT_FALSE(choice.index.has_value());
-    EXPECT_FALSE(choice.cross_adapter);
-    EXPECT_EQ(choice.reason, "no_adapter_hevc");
-    EXPECT_EQ(probed, std::vector<std::uint32_t>({1, 0}));
+    EXPECT_EQ(choice.reason, "display_adapter_no_hevc");
+    EXPECT_EQ(probed, std::vector<std::uint32_t>({1}));
 }
 
 TEST(DecodeAdapterChoice, SoftwareAdapterIsNeverAcceptedEvenIfItClaimsSupport) {
@@ -140,34 +135,38 @@ TEST(DecodeAdapterChoice, SoftwareAdapterIsNeverAcceptedEvenIfItClaimsSupport) {
     EXPECT_EQ(std::count(probed.begin(), probed.end(), 2U), 0);
 }
 
-TEST(DecodeAdapterChoice, SoftwareDisplayAdapterFallsToAHardwareAdapter) {
+TEST(DecodeAdapterChoice, SoftwareDisplayAdapterIsNotReplacedByAnotherGpu) {
     std::vector<GpuAdapterCandidate> adapters{
         adapter(0, "Microsoft Basic Render Driver", 0x1414, 1, true, true),
         adapter(1, "NVIDIA GeForce GTX 960M", 0x10de, 0),
     };
     std::vector<std::uint32_t> probed;
     const auto choice = choose_decode_adapter(adapters, adapters[0].luid, "hevc", fake_probe({0, 1}, &probed));
-    ASSERT_TRUE(choice.index.has_value());
-    EXPECT_EQ(*choice.index, 1U);
-    EXPECT_TRUE(choice.cross_adapter);
-    EXPECT_EQ(probed, std::vector<std::uint32_t>({1}));
+    EXPECT_FALSE(choice.index.has_value());
+    EXPECT_EQ(choice.reason, "display_adapter_no_hevc");
+    EXPECT_TRUE(probed.empty());
 }
 
-TEST(DecodeAdapterChoice, UnknownPresentAdapterUsesFirstCapableAdapterAndCopiesAcrossAdapters) {
+TEST(DecodeAdapterChoice, UnknownPresentAdapterProbesNothing) {
     const auto adapters = optimus_adapters();
     std::vector<std::uint32_t> probed;
     const auto choice = choose_decode_adapter(adapters, 0, "hevc", fake_probe({0, 1}, &probed));
-    ASSERT_TRUE(choice.index.has_value());
-    EXPECT_EQ(*choice.index, 0U);
-    EXPECT_TRUE(choice.cross_adapter);
+    EXPECT_FALSE(choice.index.has_value());
+    EXPECT_TRUE(probed.empty());
     EXPECT_EQ(choice.reason, "present_adapter_not_enumerated");
 }
 
 TEST(DecodeAdapterChoice, EmptyAdapterListAndMissingProbeDecodeNothing) {
     std::vector<std::uint32_t> probed;
-    EXPECT_FALSE(choose_decode_adapter({}, 0x1001U, "hevc", fake_probe({0}, &probed)).index.has_value());
+    const auto missing_adapter = choose_decode_adapter({}, 0x1001U, "hevc", fake_probe({0}, &probed));
+    EXPECT_FALSE(missing_adapter.index.has_value());
+    EXPECT_EQ(missing_adapter.reason, "present_adapter_not_enumerated");
+    EXPECT_TRUE(probed.empty());
     const auto adapters = optimus_adapters();
-    EXPECT_FALSE(choose_decode_adapter(adapters, adapters[1].luid, "hevc", {}).index.has_value());
+    const auto missing_probe = choose_decode_adapter(adapters, adapters[1].luid, "hevc", {});
+    EXPECT_FALSE(missing_probe.index.has_value());
+    EXPECT_EQ(missing_probe.reason, "display_adapter_no_hevc");
+    EXPECT_TRUE(missing_probe.attempts.empty());
 }
 
 TEST(DecodeAdapterChoice, ReasonNamesTheCodec) {

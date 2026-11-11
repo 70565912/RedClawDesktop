@@ -1,7 +1,9 @@
 #include "runtime/runtime_options.h"
 #include <gtest/gtest.h>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <initializer_list>
 #include <string>
@@ -142,6 +144,13 @@ TEST(RuntimeOptions, VideoCodecDefaultsToAutoAndCliForcesH264OverProfile) {
     EXPECT_FALSE(parse({"--stream-video-codec", "h265"}, &invalid, &error));
     EXPECT_NE(error.find("--stream-video-codec"), std::string::npos);
     EXPECT_FALSE(parse({"--stream-video-codec"}, &invalid, &error));
+
+    RuntimeOptions luid;
+    ASSERT_TRUE(parse({"--present-adapter-luid", "18446744073709551615"}, &luid, &error)) << error;
+    EXPECT_EQ(luid.present_adapter_luid, std::numeric_limits<std::uint64_t>::max());
+    EXPECT_FALSE(parse({"--present-adapter-luid", "12x"}, &luid, &error));
+    EXPECT_FALSE(parse({"--present-adapter-luid", "18446744073709551616"}, &luid, &error));
+    EXPECT_FALSE(parse({"--present-adapter-luid"}, &luid, &error));
 
     { std::ofstream file(path); file << "role=host\nstream_video_codec=vp9\n"; }
     EXPECT_FALSE(parse({"--runtime-config", path.string()}, &invalid, &error));
