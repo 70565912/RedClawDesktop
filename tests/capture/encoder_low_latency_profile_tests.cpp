@@ -179,6 +179,44 @@ bool test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() {
             "unknown dimensions should fail back to the absolute bitrate floor");
 }
 
+bool test_hevc_budget_is_lower_than_h264_for_the_same_pixels() {
+    using redclaw::capture::EncoderCodec;
+    redclaw::capture::EncoderProfileRequest h264;
+    h264.width = 1920;
+    h264.height = 1080;
+    h264.fps = 30;
+    h264.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
+    auto hevc = h264;
+    hevc.preferred_codec = EncoderCodec::kHevc;
+
+    redclaw::capture::EncoderConfigProfile h264_profile;
+    redclaw::capture::EncoderConfigProfile hevc_profile;
+    std::string error;
+    const bool ok = redclaw::capture::build_desktop_encoder_profile(h264, &h264_profile, &error)
+        && redclaw::capture::build_desktop_encoder_profile(hevc, &hevc_profile, &error);
+    const std::uint32_t expected_hevc =
+        (h264_profile.target_bitrate_kbps * redclaw::capture::kHevcBitratePercentOfH264) / 100U;
+
+    return expect_true(ok, std::string("desktop profiles should build: ") + error)
+        && expect_true(h264_profile.target_bitrate_kbps == 4976, "H.264 1080p30 budget must stay unchanged")
+        && expect_true(hevc_profile.codec == EncoderCodec::kHevc, "HEVC profile should carry the codec")
+        && expect_true(hevc_profile.target_bitrate_kbps == expected_hevc,
+            "HEVC budget should be the documented share of H.264")
+        && expect_true(hevc_profile.target_bitrate_kbps < h264_profile.target_bitrate_kbps,
+            "HEVC must spend fewer bits than H.264 for the same pixels")
+        && expect_true(hevc_profile.max_bitrate_kbps
+                == hevc_profile.target_bitrate_kbps + hevc_profile.target_bitrate_kbps / 5,
+            "HEVC keeps the 1.2x CBR ceiling")
+        && expect_true(redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(
+                           1680, 1050, 30, EncoderCodec::kHevc) == 2963,
+            "HEVC floor should scale the H.264 floor")
+        && expect_true(redclaw::capture::resolve_interactive_desktop_bitrate_floor_kbps(
+                           580, 362, 1, EncoderCodec::kHevc) == 400,
+            "HEVC keeps the absolute 400 kbps floor")
+        && expect_true(redclaw::capture::scale_bitrate_for_codec(1000, EncoderCodec::kH264) == 1000,
+            "H.264 is never scaled");
+}
+
 }  // namespace
 
 int main() {
@@ -191,6 +229,7 @@ int main() {
     ok = test_low_latency_profile_uses_all_intra_at_one_fps() && ok;
     ok = test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() && ok;
     ok = test_desktop_codec_budget_is_independent_of_submission_cadence() && ok;
+    ok = test_hevc_budget_is_lower_than_h264_for_the_same_pixels() && ok;
 
     if (!ok) {
         return 1;

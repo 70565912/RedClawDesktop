@@ -255,6 +255,63 @@ bool test_live_hardware_encoder_preserves_rate_session_but_applies_geometry() {
             "an inactive hardware encoder does not need preservation");
 }
 
+bool test_bridge_plan_hevc_requires_hevc_hardware_encoder_name() {
+    redclaw::capture::EncoderBackendBridgeRequest request;
+    request.codec = redclaw::capture::EncoderCodec::kHevc;
+    request.preferred_backend = redclaw::capture::EncoderBackendType::kAuto;
+    request.capture_adapter_vendor = redclaw::capture::CaptureAdapterVendor::kNvidia;
+    request.allow_software_fallback = false;
+
+    redclaw::capture::EncoderBackendCapabilities capabilities;
+    capabilities.ffmpeg_runtime_available = true;
+    capabilities.nvenc_available = true;
+    capabilities.quicksync_available = true;
+    capabilities.software_available = true;
+    capabilities.hevc_quicksync_available = true;
+    capabilities.hevc_software_available = true;
+
+    redclaw::capture::EncoderBackendBridgePlan plan;
+    std::string error;
+    const bool ok = redclaw::capture::build_encoder_backend_bridge_plan(request, capabilities, &plan, &error);
+
+    return expect_true(ok, std::string("HEVC bridge plan should find QuickSync HEVC: ") + error)
+        && expect_true(plan.selected_backend == redclaw::capture::EncoderBackendType::kQuickSync,
+            "HEVC bridge plan should skip a backend without an HEVC encoder");
+}
+
+bool test_bridge_plan_automatic_hevc_never_selects_software() {
+    redclaw::capture::EncoderBackendBridgeRequest request;
+    request.codec = redclaw::capture::EncoderCodec::kHevc;
+    request.preferred_backend = redclaw::capture::EncoderBackendType::kAuto;
+    request.allow_software_fallback = false;
+
+    redclaw::capture::EncoderBackendCapabilities capabilities;
+    capabilities.ffmpeg_runtime_available = true;
+    capabilities.nvenc_available = true;
+    capabilities.software_available = true;
+    capabilities.hevc_software_available = true;
+
+    redclaw::capture::EncoderBackendBridgePlan plan;
+    std::string error;
+    const bool no_hevc_hardware = !redclaw::capture::build_encoder_backend_bridge_plan(
+        request, capabilities, &plan, &error);
+    const bool error_named = error.find("software encoder fallback is disabled") != std::string::npos;
+
+    request.allow_software_fallback = true;
+    const bool forced_ok = redclaw::capture::build_encoder_backend_bridge_plan(request, capabilities, &plan, &error);
+
+    request.codec = redclaw::capture::EncoderCodec::kH264;
+    request.allow_software_fallback = true;
+    const bool h264_ok = redclaw::capture::build_encoder_backend_bridge_plan(request, capabilities, &plan, &error)
+        && plan.selected_backend == redclaw::capture::EncoderBackendType::kNvenc;
+
+    return expect_true(no_hevc_hardware, "automatic HEVC without an HEVC hardware encoder must fail the plan")
+        && expect_true(error_named, "the plan error should name the disabled software fallback")
+        && expect_true(forced_ok && plan.selected_backend != redclaw::capture::EncoderBackendType::kAuto,
+            "an explicit HEVC request may still use libx265")
+        && expect_true(h264_ok, "H.264 planning is unchanged by HEVC capability fields");
+}
+
 }  // namespace
 
 int main() {
@@ -270,6 +327,8 @@ int main() {
     ok = test_bridge_plan_propagates_hardware_frame_input_policy() && ok;
     ok = test_initial_encoder_start_waits_boundedly_for_viewport() && ok;
     ok = test_live_hardware_encoder_preserves_rate_session_but_applies_geometry() && ok;
+    ok = test_bridge_plan_hevc_requires_hevc_hardware_encoder_name() && ok;
+    ok = test_bridge_plan_automatic_hevc_never_selects_software() && ok;
 
     if (!ok) {
         return 1;

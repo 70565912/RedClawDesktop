@@ -432,6 +432,26 @@ bool is_backend_usable(EncoderBackendType backend, const EncoderBackendCapabilit
     return false;
 }
 
+bool is_backend_usable_for_codec(
+    EncoderBackendType backend,
+    EncoderCodec codec,
+    const EncoderBackendCapabilities& capabilities) {
+    if (!is_backend_usable(backend, capabilities)) {
+        return false;
+    }
+    if (codec != EncoderCodec::kHevc) {
+        return true;
+    }
+    switch (backend) {
+    case EncoderBackendType::kNvenc: return capabilities.hevc_nvenc_available;
+    case EncoderBackendType::kQuickSync: return capabilities.hevc_quicksync_available;
+    case EncoderBackendType::kAmf: return capabilities.hevc_amf_available;
+    case EncoderBackendType::kSoftware: return capabilities.hevc_software_available;
+    case EncoderBackendType::kAuto: break;
+    }
+    return false;
+}
+
 bool is_hardware_backend(EncoderBackendType backend) {
     return backend == EncoderBackendType::kNvenc
         || backend == EncoderBackendType::kQuickSync
@@ -1220,10 +1240,21 @@ std::vector<CaptureDisplayDescriptor> enumerate_capture_displays(
     return displays;
 }
 
+std::uint32_t scale_bitrate_for_codec(
+    std::uint32_t h264_bitrate_kbps,
+    EncoderCodec codec) noexcept {
+    if (codec != EncoderCodec::kHevc) {
+        return h264_bitrate_kbps;
+    }
+    return static_cast<std::uint32_t>(
+        (static_cast<std::uint64_t>(h264_bitrate_kbps) * kHevcBitratePercentOfH264) / 100ULL);
+}
+
 std::uint32_t resolve_interactive_desktop_bitrate_floor_kbps(
     std::uint32_t width,
     std::uint32_t height,
-    std::uint32_t fps) {
+    std::uint32_t fps,
+    EncoderCodec codec) {
     constexpr std::uint32_t kInteractiveBitrateFloorKbps = 400;
     constexpr std::uint32_t kInteractiveBitrateCeilingKbps = 20000;
     if (width == 0 || height == 0 || fps == 0) {
@@ -1240,10 +1271,14 @@ std::uint32_t resolve_interactive_desktop_bitrate_floor_kbps(
     const std::uint64_t quality_floor_kbps = fps == 1
         ? (((pixels * 3ULL + 1ULL) / 2ULL) + 999ULL) / 1000ULL
         : (pixels * static_cast<std::uint64_t>(fps) * 8ULL) / 100000ULL;
-    return clamp_u32(
+    const std::uint32_t h264_floor_kbps = clamp_u32(
         static_cast<std::uint32_t>(std::min<std::uint64_t>(
             quality_floor_kbps,
             std::numeric_limits<std::uint32_t>::max())),
+        kInteractiveBitrateFloorKbps,
+        kInteractiveBitrateCeilingKbps);
+    return clamp_u32(
+        scale_bitrate_for_codec(h264_floor_kbps, codec),
         kInteractiveBitrateFloorKbps,
         kInteractiveBitrateCeilingKbps);
 }
@@ -1269,16 +1304,19 @@ bool build_low_latency_encoder_profile(
     std::uint32_t target_bitrate_kbps = 0;
     if (request.workload == EncoderWorkload::kFastAction) {
         target_bitrate_kbps = static_cast<std::uint32_t>(pixels_per_second / 180ULL);
-        target_bitrate_kbps = clamp_u32(target_bitrate_kbps, 6000, 35000);
+        target_bitrate_kbps = scale_bitrate_for_codec(
+            clamp_u32(target_bitrate_kbps, 6000, 35000), request.preferred_codec);
     } else {
-        // Interactive desktop starts at approximately 0.08 bits per pixel.
+        // Interactive desktop starts at approximately 0.08 bits per pixel for
+        // H.264; HEVC spends kHevcBitratePercentOfH264 of that.
         target_bitrate_kbps = static_cast<std::uint32_t>((pixels_per_second * 8ULL) / 100000ULL);
         target_bitrate_kbps = clamp_u32(
-            target_bitrate_kbps,
+            scale_bitrate_for_codec(target_bitrate_kbps, request.preferred_codec),
             resolve_interactive_desktop_bitrate_floor_kbps(
                 request.width,
                 request.height,
-                request.fps),
+                request.fps,
+                request.preferred_codec),
             20000);
     }
 
@@ -1405,6 +1443,10 @@ bool detect_encoder_backend_capabilities(
         capabilities->quicksync_available = has_any_encoder_named({"h264_qsv", "hevc_qsv"});
         capabilities->amf_available = has_any_encoder_named({"h264_amf", "hevc_amf"});
         capabilities->software_available = has_any_encoder_named({"libx264", "libopenh264", "libx265"});
+        capabilities->hevc_nvenc_available = has_any_encoder_named({"hevc_nvenc"});
+        capabilities->hevc_quicksync_available = has_any_encoder_named({"hevc_qsv"});
+        capabilities->hevc_amf_available = has_any_encoder_named({"hevc_amf"});
+        capabilities->hevc_software_available = has_any_encoder_named({"libx265"});
     }
 
     if (is_env_truthy("REDCLAW_DISABLE_NVENC") || is_env_falsy("REDCLAW_ENABLE_NVENC")) {
@@ -1419,6 +1461,12 @@ bool detect_encoder_backend_capabilities(
     if (is_env_truthy("REDCLAW_DISABLE_SOFTWARE_ENCODER")) {
         capabilities->software_available = false;
     }
+    capabilities->hevc_nvenc_available = capabilities->hevc_nvenc_available && capabilities->nvenc_available;
+    capabilities->hevc_quicksync_available =
+        capabilities->hevc_quicksync_available && capabilities->quicksync_available;
+    capabilities->hevc_amf_available = capabilities->hevc_amf_available && capabilities->amf_available;
+    capabilities->hevc_software_available =
+        capabilities->hevc_software_available && capabilities->software_available;
 
     if (error_detail != nullptr) {
         error_detail->clear();
@@ -1467,7 +1515,7 @@ bool build_encoder_backend_bridge_plan(
                 continue;
             }
 
-            if (is_backend_usable(backend, capabilities)) {
+            if (is_backend_usable_for_codec(backend, request.codec, capabilities)) {
                 return backend;
             }
         }
@@ -1476,7 +1524,13 @@ bool build_encoder_backend_bridge_plan(
     };
 
     auto finalize_software = [&](std::string reason, bool fallback_applied) -> bool {
-        if (!capabilities.software_available) {
+        if (!request.allow_software_fallback) {
+            if (error_detail != nullptr) {
+                *error_detail = "software encoder fallback is disabled for this codec request";
+            }
+            return false;
+        }
+        if (!is_backend_usable_for_codec(EncoderBackendType::kSoftware, request.codec, capabilities)) {
             if (error_detail != nullptr) {
                 *error_detail = "software encoder backend is unavailable";
             }
@@ -1513,7 +1567,7 @@ bool build_encoder_backend_bridge_plan(
     }
 
     if (request.preferred_backend == EncoderBackendType::kSoftware) {
-        if (!capabilities.software_available) {
+        if (!is_backend_usable_for_codec(EncoderBackendType::kSoftware, request.codec, capabilities)) {
             if (error_detail != nullptr) {
                 *error_detail = "software encoder backend is unavailable";
             }
@@ -1523,7 +1577,7 @@ bool build_encoder_backend_bridge_plan(
         return finalize_backend(EncoderBackendType::kSoftware, "preferred backend is available", false);
     }
 
-    if (is_backend_usable(request.preferred_backend, capabilities)) {
+    if (is_backend_usable_for_codec(request.preferred_backend, request.codec, capabilities)) {
         return finalize_backend(request.preferred_backend, "preferred backend is available", false);
     }
 
@@ -2425,6 +2479,21 @@ private:
                 return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
                     "NVENC forced IDR option could not be applied", error_detail);
             }
+            diagnostics_.forced_idr_option_applied = true;
+        }
+        if (context_->priv_data != nullptr
+            && (selected_encoder_name_ == "libx265" || selected_encoder_name_ == "hevc_amf")) {
+            // Without this, a requested HEVC keyframe may be a non-IDR intra
+            // picture and recovery waits for the natural GOP.
+            const char* option = selected_encoder_name_ == "libx265" ? "forced-idr" : "forced_idr";
+            diagnostics_.forced_idr_option_applied =
+                av_opt_set_int(context_->priv_data, option, 1, 0) >= 0;
+            // x265 keeps open GOP on by default and then emits a CRA even for
+            // a forced IDR request; a fresh decoder must start from a real IDR.
+            if (selected_encoder_name_ == "libx265") {
+                diagnostics_.forced_idr_option_applied = diagnostics_.forced_idr_option_applied
+                    && av_opt_set(context_->priv_data, "x265-params", "open-gop=0", 0) >= 0;
+            }
         }
         if (profile_.zero_latency_tuning && supports_nvenc_tuning && context_->priv_data != nullptr) {
             av_opt_set(context_->priv_data, "preset", "p1", 0);
@@ -2444,7 +2513,8 @@ private:
                 return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
                     "QSV low_delay_brc option could not be applied", error_detail);
             }
-            av_opt_set(context_->priv_data, "forced_idr", "1", 0);
+            diagnostics_.forced_idr_option_applied =
+                av_opt_set(context_->priv_data, "forced_idr", "1", 0) >= 0;
         }
         const bool supports_amf_tuning = selected_encoder_name_ == "h264_amf" || selected_encoder_name_ == "hevc_amf";
         if (profile_.zero_latency_tuning && supports_amf_tuning && context_->priv_data != nullptr) {
