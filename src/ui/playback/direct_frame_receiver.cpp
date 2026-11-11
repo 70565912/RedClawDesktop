@@ -138,11 +138,12 @@ class DirectFramePipeServer::Impl final {
     return true;
   }
 
-  bool configure_d3d11_decode_adapter(std::uint64_t adapter_luid, QString* detail) {
+  bool configure_d3d11_decode_adapters(
+      std::uint64_t present_adapter_luid, std::uint64_t hevc_adapter_luid, QString* detail) {
     disable_d3d11_surface_output();
     std::string error;
     Microsoft::WRL::ComPtr<ID3D11Device> device;
-    device.Attach(redclaw::render::create_d3d11_video_device(adapter_luid, &error));
+    device.Attach(redclaw::render::create_d3d11_video_device(present_adapter_luid, &error));
     if (!device) {
       if (detail != nullptr) *detail = QString::fromStdString(error);
       return false;
@@ -151,7 +152,18 @@ class DirectFramePipeServer::Impl final {
     surface_bridge_ = std::make_unique<redclaw::render::D3D11SharedSurfaceBridge>(device.Get());
     prefer_d3d11_surface_output_ = true;
     decoder_.configure_d3d11_surface_output(device.Get());
-    decode_adapter_luid_.store(redclaw::render::d3d11_device_adapter_luid(device.Get()));
+    const auto present_luid = redclaw::render::d3d11_device_adapter_luid(device.Get());
+    decode_adapter_luid_.store(present_luid);
+    active_route_ = DecodeRoute::kPresentAdapter;
+    if (hevc_adapter_luid != 0 && hevc_adapter_luid != present_luid) {
+      std::string hevc_error;
+      hevc_decode_device_.Attach(redclaw::render::create_d3d11_video_device(hevc_adapter_luid, &hevc_error));
+      if (hevc_decode_device_) {
+        hevc_decode_adapter_luid_.store(redclaw::render::d3d11_device_adapter_luid(hevc_decode_device_.Get()));
+      } else {
+        hevc_decode_device_error_ = QString::fromStdString(hevc_error);
+      }
+    }
     return true;
   }
 
@@ -162,7 +174,11 @@ class DirectFramePipeServer::Impl final {
     decoder_.configure_d3d11_surface_output(nullptr);
     surface_bridge_.reset();
     decode_device_.Reset();
+    hevc_decode_device_.Reset();
     decode_adapter_luid_.store(0);
+    hevc_decode_adapter_luid_.store(0);
+    hevc_decode_device_error_.clear();
+    active_route_ = DecodeRoute::kPresentAdapter;
   }
 
   void request_cpu_decode_fallback() {
@@ -355,6 +371,8 @@ class DirectFramePipeServer::Impl final {
     }
     snapshot.buffer_pool = frame_buffer_pool_.telemetry();
     snapshot.decode_adapter_luid = decode_adapter_luid_.load();
+    snapshot.hevc_decode_adapter_luid = hevc_decode_adapter_luid_.load();
+    snapshot.hevc_decode_device_error = hevc_decode_device_error_;
     {
       std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
       snapshot.keyframe_requests_sent = keyframe_limiter_.sent();
@@ -510,6 +528,35 @@ class DirectFramePipeServer::Impl final {
     }
   }
 
+  // HEVC on an adapter other than the presenter's runs on that adapter's
+  // device; every frame is a CPU copy, which is what crosses to the presenter.
+  enum class DecodeRoute { kPresentAdapter, kCrossAdapterCpuCopy };
+
+  DecodeRoute route_for_codec(redclaw::render::EncodedVideoCodec codec) const {
+    return codec == redclaw::render::EncodedVideoCodec::kHevc && hevc_decode_device_
+        ? DecodeRoute::kCrossAdapterCpuCopy
+        : DecodeRoute::kPresentAdapter;
+  }
+
+  bool surface_output_active() const {
+    return prefer_d3d11_surface_output_ && active_route_ == DecodeRoute::kPresentAdapter;
+  }
+
+  // Reconfigures the decoder for the adapter that decodes `route`. This
+  // resets the decoder, so the next frame must be a keyframe; a codec switch
+  // always starts one.
+  void apply_decode_route(DecodeRoute route) {
+    active_route_ = route;
+    if (route == DecodeRoute::kCrossAdapterCpuCopy) {
+      decoder_.configure_d3d11_decode_device(hevc_decode_device_.Get(), false);
+    } else {
+      decoder_.configure_d3d11_decode_device(
+          prefer_d3d11_surface_output_ ? decode_device_.Get() : nullptr, prefer_d3d11_surface_output_);
+    }
+    decoded_cpu_output_observed_ = !surface_output_active();
+    decoder_resync_needed_.store(true);
+  }
+
   bool decode_snapshot(
       const redclaw::helper::DirectFrameSharedSnapshot& snapshot,
       DirectFrameData* frame) {
@@ -571,10 +618,22 @@ class DirectFramePipeServer::Impl final {
     }
 
     if (cpu_decode_fallback_requested_.exchange(false)) {
-      decoder_.configure_d3d11_surface_output(nullptr);
       prefer_d3d11_surface_output_ = false;
       decoded_cpu_output_observed_ = true;
-      decoder_resync_needed_.store(true);
+      // Cross-adapter frames are already CPU copies; only the surface path
+      // needs to leave the decode device.
+      if (active_route_ == DecodeRoute::kPresentAdapter) {
+        decoder_.configure_d3d11_surface_output(nullptr);
+        decoder_resync_needed_.store(true);
+      }
+    }
+
+    if (is_encoded_format(header.format)) {
+      const auto wanted_route = route_for_codec(
+          header.format == redclaw::helper::kDirectFrameFormatH264
+              ? redclaw::render::EncodedVideoCodec::kH264
+              : redclaw::render::EncodedVideoCodec::kHevc);
+      if (wanted_route != active_route_) apply_decode_route(wanted_route);
     }
 
     const quint64 required_pixel_bytes = header.format == redclaw::helper::kDirectFrameFormatBgra
@@ -585,7 +644,7 @@ class DirectFramePipeServer::Impl final {
       return false;
     }
     const bool acquire_cpu_buffer = header.format == redclaw::helper::kDirectFrameFormatBgra
-        || !prefer_d3d11_surface_output_
+        || !surface_output_active()
         || decoded_cpu_output_observed_;
     *frame = acquire_cpu_buffer
         ? frame_buffer_pool_.acquire(static_cast<std::size_t>(required_pixel_bytes))
@@ -714,6 +773,11 @@ class DirectFramePipeServer::Impl final {
       stats_.consecutive_decode_failures = 0;
       stats_.decoder_backend = QString::fromStdString(decoder_.active_decoder_name());
       stats_.last_decode_error.clear();
+      stats_.decode_route = active_route_ == DecodeRoute::kCrossAdapterCpuCopy
+          ? QStringLiteral("cross_adapter_cpu_copy")
+          : decoded.output_path == redclaw::render::DecodedVideoFramePath::kD3D11DecodeSurface
+              ? QStringLiteral("present_adapter_surface")
+              : QStringLiteral("present_adapter_cpu");
     }
 
     decoded_cpu_output_observed_ =
@@ -862,11 +926,22 @@ class DirectFramePipeServer::Impl final {
   Microsoft::WRL::ComPtr<ID3D11Device> decode_device_;
   std::unique_ptr<redclaw::render::D3D11SharedSurfaceBridge> surface_bridge_;
   std::atomic<std::uint64_t> decode_adapter_luid_{0};
+
+  // Worker thread only, except as noted.
+  Microsoft::WRL::ComPtr<ID3D11Device> hevc_decode_device_;
+  std::atomic<std::uint64_t> hevc_decode_adapter_luid_{0};
+  // Written by configure_d3d11_decode_adapters on the GUI thread, which also
+  // reads stats.
+  QString hevc_decode_device_error_;
+  DecodeRoute active_route_ = DecodeRoute::kPresentAdapter;
 };
 DirectFramePipeServer::DirectFramePipeServer() : impl_(std::make_unique<Impl>()) {}
 DirectFramePipeServer::~DirectFramePipeServer() = default;
 bool DirectFramePipeServer::start(const QString& name, QString* error) { return impl_->start(name, error); }
-bool DirectFramePipeServer::configure_d3d11_decode_adapter(std::uint64_t luid, QString* detail) { return impl_->configure_d3d11_decode_adapter(luid, detail); }
+bool DirectFramePipeServer::configure_d3d11_decode_adapters(
+    std::uint64_t present_adapter_luid, std::uint64_t hevc_adapter_luid, QString* detail) {
+  return impl_->configure_d3d11_decode_adapters(present_adapter_luid, hevc_adapter_luid, detail);
+}
 void DirectFramePipeServer::disable_d3d11_surface_output() { impl_->disable_d3d11_surface_output(); }
 void DirectFramePipeServer::request_cpu_decode_fallback() { impl_->request_cpu_decode_fallback(); }
 void DirectFramePipeServer::stop() { impl_->stop(); }

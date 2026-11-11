@@ -276,7 +276,12 @@ public:
 		std::string* error_detail = nullptr) override;
 
 #if defined(_WIN32)
+	// Decode on `device` and output D3D11 surfaces (nullptr: FFmpeg's default
+	// adapter with CPU transfer).
 	void configure_d3d11_surface_output(ID3D11Device* device);
+	// Decode on `device`; with `surface_output` false every frame is copied
+	// to CPU BGRA, which is how frames cross to another adapter.
+	void configure_d3d11_decode_device(ID3D11Device* device, bool surface_output);
 #endif
 
 	void force_software_decode();
@@ -292,23 +297,37 @@ private:
 };
 
 // What this machine can decode. Hardware means a D3D11 video decoder profile
-// with NV12 output exists on the default adapter (the Controller's first
-// hardware decode choice), not merely that FFmpeg ships a decoder.
+// with NV12 output exists and a real device opens, not merely that FFmpeg
+// ships a decoder.
+//
+// H.264 is probed on the display adapter only. HEVC is probed on the display
+// adapter first; when that adapter cannot decode it, the other hardware
+// adapters are tried (for example the output-less discrete GPU on Optimus).
+// If one can, HEVC is reported as hardware-decodable and `hevc_decode_*`
+// names the adapter that must run it. If none can, HEVC is not reported.
 struct LocalVideoDecodeProbe {
 	bool h264_decoder = false;
 	bool hevc_decoder = false;
 	bool h264_hardware = false;
 	bool hevc_hardware = false;
 	std::string detail;
-	// The adapter the hardware profiles were probed on (Windows), formatted
-	// by describe_gpu_adapter, plus the selection reason.
+	// The display (presenting) adapter, formatted by describe_gpu_adapter, its
+	// LUID and the selection reason. This is where H.264 is probed and decoded.
 	std::string adapter;
 	std::string adapter_reason;
+	std::uint64_t present_adapter_luid = 0;
+	// HEVC decode adapter (empty/0 when HEVC has no hardware decoder), why it
+	// was chosen (`display_adapter`, `display_adapter_no_hevc`,
+	// `no_adapter_hevc`, ...) and whether decoded frames must cross adapters.
+	std::string hevc_decode_adapter;
+	std::uint64_t hevc_decode_adapter_luid = 0;
+	std::string hevc_decode_reason;
+	bool hevc_cross_adapter = false;
 };
 
-// Probes on the adapter that owns the primary monitor so the result matches
-// the adapter the Controller presenter and decoder will use.
-[[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support();
+// `present_adapter_luid` is the adapter the presenter actually uses; 0 means
+// the adapter that owns the primary monitor (the runtime has no window yet).
+[[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support(std::uint64_t present_adapter_luid = 0);
 
 [[nodiscard]] bool should_fallback_to_software_decode(
 	bool using_hardware_decode,

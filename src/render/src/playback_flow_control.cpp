@@ -31,6 +31,45 @@ std::string describe_gpu_adapter(const GpuAdapterCandidate& adapter) {
         + (adapter.owns_target_monitor ? " owns_window_monitor=1" : " owns_window_monitor=0");
 }
 
+DecodeAdapterChoice choose_decode_adapter(
+    std::span<const GpuAdapterCandidate> candidates,
+    std::uint64_t present_adapter_luid,
+    std::string_view codec_name,
+    const DecodeAdapterProbe& probe) {
+    DecodeAdapterChoice choice;
+    const std::string codec(codec_name);
+    const auto try_adapter = [&](std::size_t index) {
+        if (candidates[index].software) return false;
+        const bool ok = probe && probe(candidates[index]);
+        choice.attempts.push_back({index, ok});
+        return ok;
+    };
+
+    std::optional<std::size_t> display;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (present_adapter_luid != 0 && candidates[i].luid == present_adapter_luid) {
+            display = i;
+            break;
+        }
+    }
+    if (display && try_adapter(*display)) {
+        choice.index = display;
+        choice.reason = "display_adapter";
+        return choice;
+    }
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (display && i == *display) continue;
+        if (try_adapter(i)) {
+            choice.index = i;
+            choice.cross_adapter = true;
+            choice.reason = display ? "display_adapter_no_" + codec : "present_adapter_not_enumerated";
+            return choice;
+        }
+    }
+    choice.reason = "no_adapter_" + codec;
+    return choice;
+}
+
 bool KeyframeRequestLimiter::due(std::uint64_t now_ms) const noexcept {
     return !has_sent_ || now_ms < last_sent_ms_ || now_ms - last_sent_ms_ >= min_interval_ms_;
 }

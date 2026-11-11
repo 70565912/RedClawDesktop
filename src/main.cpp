@@ -3360,7 +3360,12 @@ int run_runtime_mode(
                   << " probe_hevc_hardware=" << (probe.hevc_hardware ? "true" : "false")
                   << " probe_detail=" << (probe.detail.empty() ? std::string("n/a") : probe.detail)
                   << " probe_adapter_reason=" << (probe.adapter_reason.empty() ? std::string("n/a") : probe.adapter_reason)
-                  << " probe_adapter=" << (probe.adapter.empty() ? std::string("n/a") : probe.adapter) << '\n';
+                  << " probe_adapter=" << (probe.adapter.empty() ? std::string("n/a") : probe.adapter)
+                  << " present_adapter=" << (probe.adapter.empty() ? std::string("n/a") : probe.adapter)
+                  << " hevc_decode_adapter="
+                  << (probe.hevc_hardware && !probe.hevc_decode_adapter.empty() ? probe.hevc_decode_adapter : std::string("none"))
+                  << " hevc_decode_reason=" << (probe.hevc_decode_reason.empty() ? std::string("n/a") : probe.hevc_decode_reason)
+                  << " hevc_cross_adapter=" << (probe.hevc_cross_adapter ? "true" : "false") << '\n';
     } else if (options.role == RuntimeRole::kHost) {
         redclaw::capture::EncoderBackendCapabilities encoder_capabilities;
         redclaw::capture::HevcHardwareEncoderProbe hevc_probe;

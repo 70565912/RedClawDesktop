@@ -122,28 +122,29 @@ bool same_guid(const GUID& lhs, const GUID& rhs) {
     return std::memcmp(&lhs, &rhs, sizeof(GUID)) == 0;
 }
 
-void probe_d3d11va_decoder_profiles(LocalVideoDecodeProbe* probe) {
-    const auto selected = select_gpu_adapter_for_monitor(nullptr);
-    probe->adapter_reason = std::string(selected.reason);
-    std::string adapter_index;
-    if (selected.adapter) {
-        probe->adapter = describe_gpu_adapter(*selected.adapter);
-        adapter_index = std::to_string(selected.adapter->enum_index);
-    } else {
-        probe->adapter = "system_default";
-    }
+struct AdapterDecodeProfiles {
+    bool h264 = false;
+    bool hevc = false;
+    std::string detail;
+};
+
+// Opens a real D3D11VA device on `adapter` (nullptr: FFmpeg's default) and
+// lists its H.264 and HEVC decode profiles with NV12 output.
+AdapterDecodeProfiles probe_d3d11va_decoder_profiles(const GpuAdapterCandidate* adapter) {
+    AdapterDecodeProfiles profiles;
+    const std::string adapter_index = adapter != nullptr ? std::to_string(adapter->enum_index) : std::string();
     AVBufferRef* device_ref = nullptr;
     const int result = av_hwdevice_ctx_create(&device_ref, AV_HWDEVICE_TYPE_D3D11VA,
         adapter_index.empty() ? nullptr : adapter_index.c_str(), nullptr, 0);
     if (result < 0 || device_ref == nullptr) {
-        probe->detail = "d3d11va_unavailable: " + ffmpeg_error_to_string(result);
-        return;
+        profiles.detail = "d3d11va_unavailable: " + ffmpeg_error_to_string(result);
+        return profiles;
     }
     const auto* device_context = reinterpret_cast<const AVHWDeviceContext*>(device_ref->data);
     const auto* d3d11 = static_cast<const AVD3D11VADeviceContext*>(device_context->hwctx);
     ID3D11VideoDevice* video_device = d3d11 != nullptr ? d3d11->video_device : nullptr;
     if (video_device == nullptr) {
-        probe->detail = "d3d11va_video_device_unavailable";
+        profiles.detail = "d3d11va_video_device_unavailable";
     } else {
         const UINT profile_count = video_device->GetVideoDecoderProfileCount();
         for (UINT index = 0; index < profile_count; ++index) {
@@ -161,12 +162,61 @@ void probe_d3d11va_decoder_profiles(LocalVideoDecodeProbe* probe) {
                 || nv12_supported == FALSE) {
                 continue;
             }
-            probe->h264_hardware = probe->h264_hardware || h264;
-            probe->hevc_hardware = probe->hevc_hardware || hevc;
+            profiles.h264 = profiles.h264 || h264;
+            profiles.hevc = profiles.hevc || hevc;
         }
-        probe->detail = "d3d11va_profiles=" + std::to_string(profile_count);
+        profiles.detail = "d3d11va_profiles=" + std::to_string(profile_count);
     }
     av_buffer_unref(&device_ref);
+    return profiles;
+}
+
+void probe_hardware_decode_adapters(std::uint64_t present_adapter_luid, LocalVideoDecodeProbe* probe) {
+    const auto adapters = enumerate_gpu_adapters(nullptr);
+    std::uint64_t display_luid = present_adapter_luid;
+    if (display_luid == 0) {
+        const auto chosen = choose_gpu_adapter(adapters);
+        probe->adapter_reason = std::string(chosen.reason);
+        if (chosen.index) display_luid = adapters[*chosen.index].luid;
+    } else {
+        probe->adapter_reason = "presenter_adapter";
+    }
+    const GpuAdapterCandidate* display = nullptr;
+    for (const auto& candidate : adapters) {
+        if (display_luid != 0 && candidate.luid == display_luid) display = &candidate;
+    }
+
+    AdapterDecodeProfiles display_profiles = probe_d3d11va_decoder_profiles(display);
+    probe->present_adapter_luid = display != nullptr ? display->luid : 0;
+    probe->adapter = display != nullptr ? describe_gpu_adapter(*display) : std::string("system_default");
+    probe->h264_hardware = display_profiles.h264;
+    probe->detail = display_profiles.detail;
+    if (display == nullptr) {
+        // No adapter to prefer: the default adapter decides, as before.
+        probe->hevc_hardware = display_profiles.hevc;
+        probe->hevc_decode_adapter = probe->adapter;
+        probe->hevc_decode_reason = display_profiles.hevc ? "system_default_adapter" : "no_adapter_hevc";
+        return;
+    }
+
+    std::string attempts;
+    const auto choice = choose_decode_adapter(adapters, display->luid, "hevc",
+        [&](const GpuAdapterCandidate& candidate) {
+            const bool is_display = candidate.luid == display->luid;
+            const auto profiles = is_display ? display_profiles : probe_d3d11va_decoder_profiles(&candidate);
+            if (!attempts.empty()) attempts += ",";
+            attempts += "index" + std::to_string(candidate.enum_index) + ":"
+                + (profiles.hevc ? "ok" : (profiles.detail.rfind("d3d11va_profiles=", 0) == 0 ? "no_hevc_profile" : "probe_failed"));
+            return profiles.hevc;
+        });
+    probe->hevc_decode_reason = choice.reason;
+    probe->hevc_cross_adapter = choice.cross_adapter;
+    if (choice.index) {
+        probe->hevc_hardware = true;
+        probe->hevc_decode_adapter = describe_gpu_adapter(adapters[*choice.index]);
+        probe->hevc_decode_adapter_luid = adapters[*choice.index].luid;
+    }
+    probe->detail += " hevc_probe_attempts=" + (attempts.empty() ? std::string("none") : attempts);
 }
 #endif
 
@@ -533,6 +583,7 @@ public:
             && hw_pixel_format_ == AV_PIX_FMT_D3D11
             && frame_->format == AV_PIX_FMT_D3D11
             && d3d11_surface_output_device_ != nullptr
+            && d3d11_surface_output_enabled_
             && output_d3d11_surface(frame_, timestamp_ms, output)) {
             if (error_detail != nullptr) {
                 error_detail->clear();
@@ -717,8 +768,13 @@ public:
 
 #if defined(_WIN32)
     void configure_d3d11_surface_output(ID3D11Device* device) {
+        configure_d3d11_decode_device(device, true);
+    }
+
+    void configure_d3d11_decode_device(ID3D11Device* device, bool surface_output) {
         force_software_decode_ = false;
         reset();
+        d3d11_surface_output_enabled_ = surface_output;
         if (d3d11_surface_output_device_ == device) {
             return;
         }
@@ -999,7 +1055,10 @@ private:
     bool force_software_decode_ = false;
     std::string active_decoder_name_;
 #if defined(_WIN32)
+    // The device D3D11VA decodes on; surfaces are handed out only while
+    // d3d11_surface_output_enabled_, otherwise frames are copied to CPU.
     ID3D11Device* d3d11_surface_output_device_ = nullptr;
+    bool d3d11_surface_output_enabled_ = true;
 #endif
 };
 
@@ -1039,6 +1098,10 @@ bool FfmpegVideoFrameDecoder::decode_frame(
 }
 
 #if defined(_WIN32)
+void FfmpegVideoFrameDecoder::configure_d3d11_decode_device(ID3D11Device* device, bool surface_output) {
+    impl_->configure_d3d11_decode_device(device, surface_output);
+}
+
 void FfmpegVideoFrameDecoder::configure_d3d11_surface_output(ID3D11Device* device) {
     impl_->configure_d3d11_surface_output(device);
 }
@@ -1073,19 +1136,26 @@ bool should_fallback_to_software_decode(
         && consecutive_decode_failures >= 1;
 }
 
-LocalVideoDecodeProbe probe_local_video_decode_support() {
+LocalVideoDecodeProbe probe_local_video_decode_support(std::uint64_t present_adapter_luid) {
     LocalVideoDecodeProbe probe;
 #if REDCLAW_RENDER_HAS_LIBAVCODEC
     probe.h264_decoder = avcodec_find_decoder(AV_CODEC_ID_H264) != nullptr;
     probe.hevc_decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC) != nullptr;
 #if defined(_WIN32)
-    probe_d3d11va_decoder_profiles(&probe);
+    probe_hardware_decode_adapters(present_adapter_luid, &probe);
 #else
+    (void)present_adapter_luid;
     probe.detail = "hardware_decode_probe_unsupported_platform";
 #endif
     probe.h264_hardware = probe.h264_hardware && probe.h264_decoder;
     probe.hevc_hardware = probe.hevc_hardware && probe.hevc_decoder;
+    if (!probe.hevc_hardware) {
+        probe.hevc_decode_adapter.clear();
+        probe.hevc_decode_adapter_luid = 0;
+        probe.hevc_cross_adapter = false;
+    }
 #else
+    (void)present_adapter_luid;
     probe.detail = "libavcodec_unavailable";
 #endif
     return probe;

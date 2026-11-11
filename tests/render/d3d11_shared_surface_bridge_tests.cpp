@@ -197,5 +197,22 @@ TEST(D3D11AdapterEnumeration, CandidatesCarryLuidAndDescription) {
     }
 }
 
+TEST(VideoDecodeProbe, HevcDecodeAdapterMatchesTheReportedFlags) {
+    const auto probe = redclaw::render::probe_local_video_decode_support();
+    EXPECT_FALSE(probe.hevc_decode_reason.empty());
+    if (probe.hevc_hardware) {
+        EXPECT_FALSE(probe.hevc_decode_adapter.empty());
+        EXPECT_NE(probe.hevc_decode_reason.rfind("no_adapter", 0), 0U);
+    } else {
+        EXPECT_TRUE(probe.hevc_decode_adapter.empty());
+        EXPECT_EQ(probe.hevc_decode_adapter_luid, 0U);
+        EXPECT_FALSE(probe.hevc_cross_adapter);
+    }
+    if (probe.hevc_cross_adapter) {
+        EXPECT_NE(probe.hevc_decode_adapter_luid, 0U);
+        EXPECT_NE(probe.hevc_decode_adapter_luid, probe.present_adapter_luid);
+    }
+}
+
 }  // namespace
 #endif

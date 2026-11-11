@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Platform-neutral policy for the Controller playback path. The Windows D3D11
 // presenter, the decode receiver and the decode probe feed these with real
@@ -35,6 +37,39 @@ struct GpuAdapterChoice {
 // chosen implicitly: presenting from it needs a cross-adapter copy.
 [[nodiscard]] GpuAdapterChoice choose_gpu_adapter(std::span<const GpuAdapterCandidate> candidates) noexcept;
 [[nodiscard]] std::string describe_gpu_adapter(const GpuAdapterCandidate& adapter);
+
+// Where hardware decode of one codec runs relative to the presenting adapter.
+// The display adapter is preferred whenever it can decode the codec: it
+// avoids a cross-adapter copy and was measured faster on the Optimus laptop
+// (Intel HD 530 HEVC 0.9 ms/frame against GTX 960M about 4 ms). Another
+// hardware adapter is used only when the display adapter cannot decode.
+struct DecodeAdapterAttempt {
+    std::size_t index = 0;
+    bool hardware_decode = false;
+};
+
+struct DecodeAdapterChoice {
+    // Index into the candidate span; empty means no adapter can decode.
+    std::optional<std::size_t> index;
+    // The decode adapter differs from the presenting adapter, so decoded
+    // frames must cross adapters.
+    bool cross_adapter = false;
+    // `display_adapter`, `display_adapter_no_<codec>`,
+    // `present_adapter_not_enumerated` or `no_adapter_<codec>`.
+    std::string reason;
+    // Adapters that were actually probed, in order. The display adapter is
+    // probed first and the others only when it fails.
+    std::vector<DecodeAdapterAttempt> attempts;
+};
+
+// `probe` reports whether the adapter can hardware-decode the codec (profile
+// present and a real device opens). Software adapters are never probed.
+using DecodeAdapterProbe = std::function<bool(const GpuAdapterCandidate&)>;
+[[nodiscard]] DecodeAdapterChoice choose_decode_adapter(
+    std::span<const GpuAdapterCandidate> candidates,
+    std::uint64_t present_adapter_luid,
+    std::string_view codec_name,
+    const DecodeAdapterProbe& probe);
 
 // Coalesces keyframe requests from the playback receiver. The first request
 // is sent immediately; requests inside the minimum interval become one
