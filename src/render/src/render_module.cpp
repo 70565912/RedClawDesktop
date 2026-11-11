@@ -1,4 +1,7 @@
 #include "redclaw/render/render_module.h"
+#if defined(_WIN32)
+#include "redclaw/render/d3d11_video_device.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -120,8 +123,18 @@ bool same_guid(const GUID& lhs, const GUID& rhs) {
 }
 
 void probe_d3d11va_decoder_profiles(LocalVideoDecodeProbe* probe) {
+    const auto selected = select_gpu_adapter_for_monitor(nullptr);
+    probe->adapter_reason = std::string(selected.reason);
+    std::string adapter_index;
+    if (selected.adapter) {
+        probe->adapter = describe_gpu_adapter(*selected.adapter);
+        adapter_index = std::to_string(selected.adapter->enum_index);
+    } else {
+        probe->adapter = "system_default";
+    }
     AVBufferRef* device_ref = nullptr;
-    const int result = av_hwdevice_ctx_create(&device_ref, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0);
+    const int result = av_hwdevice_ctx_create(&device_ref, AV_HWDEVICE_TYPE_D3D11VA,
+        adapter_index.empty() ? nullptr : adapter_index.c_str(), nullptr, 0);
     if (result < 0 || device_ref == nullptr) {
         probe->detail = "d3d11va_unavailable: " + ffmpeg_error_to_string(result);
         return;

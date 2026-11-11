@@ -33,7 +33,8 @@ endif()
 
 target_link_libraries(redclaw_render PUBLIC Opus::opus redclaw_protocol)
 if(WIN32)
-  target_link_libraries(redclaw_render PRIVATE ole32)
+  target_sources(redclaw_render PRIVATE src/d3d11_video_device.cpp)
+  target_link_libraries(redclaw_render PRIVATE ole32 d3d11 dxgi)
 endif()
 
 target_compile_features(redclaw_render PUBLIC cxx_std_20)

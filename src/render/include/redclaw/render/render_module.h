@@ -51,6 +51,13 @@ struct D3D11DecodedSurface {
 	std::uint32_t array_slice = 0;
 	std::uint32_t dxgi_format = 0;
 	std::shared_ptr<void> frame_lifetime;
+	// Cross-device handoff from D3D11SharedSurfaceBridge: a legacy shared
+	// handle to a keyed-mutex texture owned by the decode device. When set,
+	// `device` and `texture` are null; the presenter opens the handle on its
+	// own device and must AcquireSync(0) around every read.
+	void* shared_handle = nullptr;
+	std::uint64_t shared_generation = 0;
+	std::uint32_t shared_slot = 0;
 };
 #endif
 
@@ -293,8 +300,14 @@ struct LocalVideoDecodeProbe {
 	bool h264_hardware = false;
 	bool hevc_hardware = false;
 	std::string detail;
+	// The adapter the hardware profiles were probed on (Windows), formatted
+	// by describe_gpu_adapter, plus the selection reason.
+	std::string adapter;
+	std::string adapter_reason;
 };
 
+// Probes on the adapter that owns the primary monitor so the result matches
+// the adapter the Controller presenter and decoder will use.
 [[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support();
 
 [[nodiscard]] bool should_fallback_to_software_decode(
