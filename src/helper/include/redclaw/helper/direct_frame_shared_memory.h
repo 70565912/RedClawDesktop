@@ -68,8 +68,10 @@ constexpr std::uint32_t kDirectFrameFormatH264 = 2;
 constexpr std::uint32_t kDirectFrameFormatHevc = 3;
 constexpr std::uint32_t kDirectFrameFormatJpeg = 4;
 
-constexpr std::uint32_t kDirectFrameSharedMemoryVersion = 3;
-constexpr std::uint32_t kDirectFrameSharedMemorySlotCount = 2;
+constexpr std::uint32_t kDirectFrameSharedMemoryVersion = 4;
+// Six slots absorb ~200 ms of 30 fps reader stalls without losing a reference
+// frame. The mapping is committed but pages are touched only when written.
+constexpr std::uint32_t kDirectFrameSharedMemorySlotCount = 6;
 constexpr std::uint32_t kDirectFrameSharedMemorySlotPayloadBytes = 8U * 1024U * 1024U;
 constexpr std::uint32_t kDirectFrameMaxPayloadBytes = kDirectFrameSharedMemorySlotPayloadBytes;
 
@@ -171,7 +173,7 @@ struct DirectFrameSharedReadPlan {
     bool independent_skip = false;
 };
 
-// Metadata inspection is bounded to the two existing slots. The subsequent
+// Metadata inspection is bounded to the retained slots. The subsequent
 // payload copy must still validate committed_sequence: inspection is not a lease.
 inline DirectFrameSharedReadPlan plan_direct_frame_shared_read(
     const void* mapping_view,

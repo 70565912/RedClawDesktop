@@ -431,7 +431,7 @@ TEST(FfmpegRoundtripIntegration, TwoSlotBurstsPreservePredictiveChainWithoutExtr
         encoded.payload = packet.payload;
         ASSERT_TRUE(sequential_baseline.decode_frame(encoded, &expected, &error)) << error;
         auto* slot = redclaw::helper::direct_frame_shared_slot_header(mapping.data(),
-            static_cast<std::uint32_t>((sequence - 1) % 2));
+            static_cast<std::uint32_t>((sequence - 1) % redclaw::helper::kDirectFrameSharedMemorySlotCount));
         redclaw::helper::direct_frame_atomic_store_i64(&slot->committed_sequence, 0);
         slot->frame = {};
         slot->frame.width = profile.width;
@@ -473,7 +473,7 @@ TEST(FfmpegRoundtripIntegration, TwoSlotBurstsPreservePredictiveChainWithoutExtr
     EXPECT_EQ(predictive, 12U);
     EXPECT_EQ(decoded, 13U);
     EXPECT_EQ(catchups, 6U);
-    EXPECT_EQ(header->slot_count, 2U);
+    EXPECT_EQ(header->slot_count, redclaw::helper::kDirectFrameSharedMemorySlotCount);
     EXPECT_EQ(old_latest_only_gaps, 6U);
     EXPECT_EQ(dependency_gaps, 0U);
     RecordProperty("dependency_catchups", catchups);

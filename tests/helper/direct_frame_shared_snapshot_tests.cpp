@@ -13,6 +13,8 @@
 
 namespace {
 
+constexpr std::uint32_t kSlots = redclaw::helper::kDirectFrameSharedMemorySlotCount;
+
 class DirectFrameReadPlanTest : public ::testing::Test {
 protected:
     std::vector<std::uint64_t> mapping = std::vector<std::uint64_t>(
@@ -24,7 +26,7 @@ protected:
     void commit(std::uint64_t sequence, bool keyframe = false, std::uint64_t revision = 1,
                 std::uint32_t format = redclaw::helper::kDirectFrameFormatH264) {
         auto* slot = redclaw::helper::direct_frame_shared_slot_header(mapping.data(),
-            static_cast<std::uint32_t>((sequence - 1) % 2));
+            static_cast<std::uint32_t>((sequence - 1) % kSlots));
         slot->frame = {};
         slot->frame.width = 2;
         slot->frame.height = 2;
@@ -64,7 +66,31 @@ TEST_F(DirectFrameReadPlanTest, BurstRetainsBothPredictiveDependenciesWithOneReu
         EXPECT_EQ(header->reader_active_sequence, 0);
     }
     EXPECT_EQ(select(102).sequence, 0U);
-    EXPECT_EQ(header->slot_count, 2U);
+    EXPECT_EQ(header->slot_count, kSlots);
+    EXPECT_EQ(header->version, 4U);
+}
+
+TEST_F(DirectFrameReadPlanTest, ReaderStallShorterThanTheRingCatchesUpWithoutAGap) {
+    // A reader stalled for slot_count - 1 frames still finds every reference.
+    for (std::uint64_t sequence = 101; sequence < 101 + kSlots; ++sequence) commit(sequence);
+    redclaw::helper::DirectFrameSharedSnapshot copy;
+    ASSERT_TRUE(redclaw::helper::prepare_direct_frame_shared_snapshot(&copy));
+    for (std::uint64_t observed = 100; observed < 100 + kSlots; ++observed) {
+        const auto plan = select(observed);
+        ASSERT_EQ(plan.sequence, observed + 1);
+        EXPECT_EQ(plan.dependency_catchup, plan.sequence != 100 + kSlots);
+        ASSERT_EQ(redclaw::helper::copy_direct_frame_shared_sequence(
+            mapping.data(), header, plan.sequence, &copy),
+            redclaw::helper::DirectFrameSharedSnapshotStatus::kCopied);
+        EXPECT_EQ(static_cast<std::uint64_t>(header->reader_sequence), plan.sequence);
+    }
+}
+
+TEST_F(DirectFrameReadPlanTest, StallLongerThanTheRingIsAGapThatNeedsRecovery) {
+    for (std::uint64_t sequence = 101; sequence <= 101 + kSlots; ++sequence) commit(sequence);
+    const auto plan = select(100);
+    EXPECT_EQ(plan.sequence, 101U + kSlots);
+    EXPECT_FALSE(plan.dependency_catchup);
 }
 
 TEST_F(DirectFrameReadPlanTest, LatestIdrOrIndependentImageSkipsOldOutput) {
@@ -95,13 +121,13 @@ TEST_F(DirectFrameReadPlanTest, PendingWriteAndPayloadRaceAreRevalidated) {
     commit(101);
     commit(102);
     const auto plan = select(100);
-    commit(103); // Reuses 101's slot after planning, before payload copy.
+    commit(101 + kSlots); // Reuses 101's slot after planning, before payload copy.
     redclaw::helper::DirectFrameSharedSnapshot copy;
     ASSERT_TRUE(redclaw::helper::prepare_direct_frame_shared_snapshot(&copy));
     EXPECT_EQ(redclaw::helper::copy_direct_frame_shared_sequence(mapping.data(), header,
         plan.sequence, &copy), redclaw::helper::DirectFrameSharedSnapshotStatus::kMissingSequence);
     EXPECT_EQ(header->reader_active_sequence, 0);
-    auto* newest = redclaw::helper::direct_frame_shared_slot_header(mapping.data(), 0);
+    auto* newest = redclaw::helper::direct_frame_shared_slot_header(mapping.data(), 100 % kSlots);
     redclaw::helper::direct_frame_atomic_store_i64(&newest->committed_sequence, 0);
     EXPECT_EQ(select(100).sequence, 0U);
     EXPECT_EQ(header->reader_active_sequence, 0);
