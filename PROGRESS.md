@@ -45,7 +45,7 @@ Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md
 
 ## HEVC preferred codec, on a branch
 
-Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (Ryan, 2026-11-11). Branch `cursor/hevc-preferred-codec-5649`, pull request against `main`, not merged. No HEVC run on Ryan's machines yet.
+Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (Ryan, 2026-11-11). Branch `cursor/hevc-preferred-codec-5649`, pull request against `main`, not merged. Ryan has run two rounds on his machines; the latest build on the branch has not been run there yet.
 
 - Wire: optional `StreamControlMessageV1` fields 92–94 (`video_codec_version`, `video_decode_codecs`, `video_hardware_decode_codecs`; bit 0 H.264, bit 1 HEVC). Missing fields mean an older peer, which gets H.264.
 - Controller: probes FFmpeg decoders and D3D11VA H.264/HEVC decode profiles at startup and advertises them on every Hello/Capabilities. Log: `Runtime video decode capabilities`.
@@ -61,7 +61,15 @@ Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardwar
   - `src/main.cpp`, the GUI, and the Windows D3D11 probe were not compiled there; Windows CI on the pull request is the build check.
 - Live two-machine test of the first build (Ryan): negotiation, fallbacks, reconnect, reverse direction and mixed versions passed. It found the HEVC send pacing cap stuck at the sent rate (about 1.3 Mbps against a 2.7 Mbps encoder target). Cause from code reading: probes need non-application-limited samples, which low-bitrate HEVC frames rarely produce. Fix on this branch: a demand floor on the cap (125% of target, or the encoder max), drained below only by queue, loss or RTT evidence and restored after a 2 s hold. Not yet rerun on Ryan's machines, so the live effect is unmeasured.
 - Same follow-up: the Host encoder capability log now separates `compiled_hevc_*` from `probed_hevc_*` (real encoder open), and the baseline analysis skips leading zero-capture-time frames with a count. Details in [DEVLOG](docs/logs/DEVLOG.md).
-- Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md). Rerun the Dynamic HEVC scene and compare `pacing_cap_reason`, cap versus target and send-budget wait with the H.264 run.
+- Retest of `41b60846` (Ryan): the pacing fix works. HEVC sent 0.72x the H.264 bitrate at equal FPS, and the cap never went below the floor.
+- The same retest found a Controller problem on the Optimus laptop (Intel HD 530 drives the display, GTX 960M is the second GPU). The presenter and decoder shared one D3D11 device. GUI present preparation stalled for 440–475 ms, the 2-slot shared-memory ring fell behind, and the GUI sent 298 `shared_memory_sequence_gap` keyframe requests (6 under H.264). Changes on this branch, all independent of the codec:
+  - The GUI decoder has its own D3D11 device on the presenter's adapter. Frames reach the presenter through three keyed-mutex shared textures (a GPU copy, not zero-copy). When every slot is busy, that frame is skipped for display only; decoding continues.
+  - The frame ring has 6 slots (layout version 4). Gap keyframe requests are coalesced to at most one per 500 ms.
+  - Presentation stops while the window is hidden or minimized or the display is off, and probes every 250 ms while occluded. Each D3D call in present preparation is timed, and calls over 50 ms are logged.
+  - The presenter uses the adapter that owns the window's monitor, otherwise the first adapter with outputs. The HEVC decode probe uses the same choice. Adapter name, vendor and LUID are logged.
+  - After 5 ring-overrun episodes within 30 s on HEVC with no network loss, the Controller stops advertising HEVC. The Host then renegotiates to H.264 and logs `reason=controller_hevc_decode_overload` (new optional wire field 95).
+  - Linux checks: flow-control tests 12/12, codec negotiation 19/19, stream control 24/24. Windows-only code passed a MinGW syntax check only. The Windows build, the ring tests and the shared-texture test rely on CI. Nothing in this round has run on Ryan's machines yet.
+- Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md), including the laptop Controller checks for this round.
 
 ## Mainline
 

@@ -109,6 +109,7 @@ What that means in the implementation:
 - If a reconnecting Controller cannot decode HEVC, the Host rebuilds its encoder as H.264.
 - Requested HEVC keyframes must be IDR pictures (forced IDR on NVENC, QSV, AMF, and x265).
 - HEVC bitrate targets and floors are 70% of the H.264 budget for the same pixels and FPS. 70% is an unmeasured planning value. [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md) is the procedure that confirms or adjusts it on Ryan's machines.
+- A Controller whose decoder keeps falling behind on HEVC while the network is clean stops advertising HEVC for the rest of that runtime. The Host then renegotiates to H.264 and logs `reason=controller_hevc_decode_overload`. This note was added on 2026-11-11 after Ryan's laptop retest. The thresholds (5 ring overruns in 30 s, no loss in the last 5 s) are planning values and have not been measured.
 - Rollback and diagnosis: `--stream-video-codec h264`, profile key `stream_video_codec=h264`, or the GUI "Video codec" selector forces H.264 on the side that sets it. A Controller set to `h264` stops advertising HEVC.
 
 Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The assessment it accepts is PR #3 (https://github.com/70565912/RedClawDesktop/pull/3).
