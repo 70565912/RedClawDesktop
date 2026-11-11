@@ -304,6 +304,10 @@ message StreamControlMessageV1 {
   uint32 video_codec_version = 92;
   uint32 video_decode_codecs = 93;
   uint32 video_hardware_decode_codecs = 94;
+  // Optional token explaining why the decode masks changed mid-session, e.g.
+  // controller_hevc_decode_overload. Diagnostics only; receivers ignore it
+  // when empty, oversized or malformed.
+  string video_codec_change_reason = 95;
 }
 
 message WorkspaceControlV1 {

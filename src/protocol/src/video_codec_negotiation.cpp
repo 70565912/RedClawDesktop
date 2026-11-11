@@ -98,7 +98,8 @@ HostVideoCodecNegotiatorV1::HostVideoCodecNegotiatorV1(VideoCodecPreference pref
 bool HostVideoCodecNegotiatorV1::observe_peer(
     std::uint32_t version,
     std::uint32_t decode_mask,
-    std::uint32_t hardware_decode_mask) {
+    std::uint32_t hardware_decode_mask,
+    std::string_view change_reason) {
     PeerVideoDecodeCapabilities peer;
     if (version >= 1) {
         // Future codec bits are ignored; hardware support implies decode support.
@@ -113,6 +114,7 @@ bool HostVideoCodecNegotiatorV1::observe_peer(
         || state_.peer.hardware_decode_mask != peer.hardware_decode_mask;
     state_.peer_report_received = true;
     state_.peer = peer;
+    state_.peer_change_reason = sanitize_video_codec_change_reason(change_reason);
     if (changed) ++state_.revision;
     return changed;
 }
@@ -121,6 +123,7 @@ void HostVideoCodecNegotiatorV1::reset_peer() {
     std::lock_guard lock(mutex_);
     state_.peer_report_received = false;
     state_.peer = {};
+    state_.peer_change_reason.clear();
     ++state_.revision;
 }
 
@@ -141,6 +144,61 @@ VideoCodecSelection HostVideoCodecNegotiatorV1::select(HostVideoEncodeCapabiliti
     const auto state = snapshot();
     host.hevc_encoder_open_failed = host.hevc_encoder_open_failed || state.hevc_encoder_open_failed;
     return select_video_codec(preference_, state.peer, host);
+}
+
+std::string sanitize_video_codec_change_reason(std::string_view reason) {
+    if (reason.empty() || reason.size() > 64) return {};
+    for (const char c : reason) {
+        const bool token = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        if (!token) return {};
+    }
+    return std::string(reason);
+}
+
+ControllerHevcDecodeOverloadMonitor::ControllerHevcDecodeOverloadMonitor(Config config) noexcept
+    : config_(config) {
+    if (config_.overrun_episodes == 0) config_.overrun_episodes = 1;
+}
+
+bool ControllerHevcDecodeOverloadMonitor::observe(const Observation& observation) {
+    const std::uint64_t now = observation.now_ms;
+    if (!loss_seen_ || observation.network_loss_total != last_loss_total_) {
+        // The first observation only establishes the baseline.
+        if (loss_seen_) {
+            loss_changed_ = true;
+            last_loss_change_ms_ = now;
+        }
+        loss_seen_ = true;
+        last_loss_total_ = observation.network_loss_total;
+    }
+    if (triggered_) return false;
+    if (observation.codec != NegotiatedVideoCodec::kHevc || observation.ring_slots == 0) {
+        in_overrun_ = false;
+        return false;
+    }
+    const bool overrun = observation.ring_backlog >= observation.ring_slots;
+    if (!overrun) {
+        in_overrun_ = false;
+        return false;
+    }
+    if (in_overrun_) return false;
+    in_overrun_ = true;
+    const bool lossy = loss_changed_ && now >= last_loss_change_ms_
+        && now - last_loss_change_ms_ < config_.clean_network_ms;
+    if (lossy) {
+        ++ignored_lossy_;
+        return false;
+    }
+    while (!episodes_.empty() && now >= episodes_.front() && now - episodes_.front() > config_.window_ms) {
+        episodes_.pop_front();
+    }
+    episodes_.push_back(now);
+    ++total_counted_;
+    if (episodes_.size() >= config_.overrun_episodes) {
+        triggered_ = true;
+        return true;
+    }
+    return false;
 }
 
 }  // namespace redclaw::protocol

@@ -206,6 +206,7 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_video_codec_version(message.video_codec_version);
     encoded.set_video_decode_codecs(message.video_decode_codecs);
     encoded.set_video_hardware_decode_codecs(message.video_hardware_decode_codecs);
+    encoded.set_video_codec_change_reason(message.video_codec_change_reason);
     if (message.workspace) {
         const auto& data = *message.workspace;
         auto* nested = encoded.mutable_workspace();
@@ -338,6 +339,7 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.video_codec_version = encoded.video_codec_version();
     message.video_decode_codecs = encoded.video_decode_codecs();
     message.video_hardware_decode_codecs = encoded.video_hardware_decode_codecs();
+    message.video_codec_change_reason = encoded.video_codec_change_reason();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
         if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kClipboardMoveReceipt)

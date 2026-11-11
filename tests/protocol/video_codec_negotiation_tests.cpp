@@ -174,4 +174,115 @@ TEST(VideoCodecWire, OptionalFieldsRoundTripAndDefaultToOldPeer) {
     EXPECT_TRUE(validate_stream_control_message_v1(parsed.value));
 }
 
+TEST(VideoCodecWire, ChangeReasonRoundTripsAndDefaultsEmpty) {
+    StreamControlMessageV1 caps;
+    caps.type = StreamControlMessageTypeV1::kCapabilities;
+    caps.session_epoch = "epoch-1";
+    caps.message_id = 2;
+    caps.sent_at_ms = 2;
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(caps));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_TRUE(parsed.value.video_codec_change_reason.empty());
+    caps.video_codec_version = kVideoCodecCapabilityVersion;
+    caps.video_decode_codecs = kVideoCodecMaskH264;
+    caps.video_codec_change_reason = std::string(kControllerHevcDecodeOverloadReason);
+    parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(caps));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.video_codec_change_reason, kControllerHevcDecodeOverloadReason);
+}
+
+TEST(VideoCodecNegotiator, KeepsOnlySanitizedPeerChangeReason) {
+    HostVideoCodecNegotiatorV1 negotiator(VideoCodecPreference::kAuto);
+    EXPECT_TRUE(negotiator.observe_peer(1, kVideoCodecMaskH264 | kVideoCodecMaskHevc, kVideoCodecMaskHevc));
+    EXPECT_TRUE(negotiator.snapshot().peer_change_reason.empty());
+    EXPECT_TRUE(negotiator.observe_peer(1, kVideoCodecMaskH264, 0, kControllerHevcDecodeOverloadReason));
+    EXPECT_EQ(negotiator.snapshot().peer_change_reason, kControllerHevcDecodeOverloadReason);
+    EXPECT_FALSE(peer_accepts_video_codec(negotiator.snapshot().peer, NegotiatedVideoCodec::kHevc));
+    negotiator.observe_peer(1, kVideoCodecMaskH264, 0, "bad reason\nInjected");
+    EXPECT_TRUE(negotiator.snapshot().peer_change_reason.empty());
+    negotiator.observe_peer(1, kVideoCodecMaskH264, 0, std::string(65, 'a'));
+    EXPECT_TRUE(negotiator.snapshot().peer_change_reason.empty());
+    negotiator.observe_peer(1, kVideoCodecMaskH264, 0, kControllerHevcDecodeOverloadReason);
+    negotiator.reset_peer();
+    EXPECT_TRUE(negotiator.snapshot().peer_change_reason.empty());
+}
+
+ControllerHevcDecodeOverloadMonitor::Observation overload_sample(
+    std::uint64_t now_ms, std::uint64_t backlog, std::uint64_t loss = 0,
+    NegotiatedVideoCodec codec = NegotiatedVideoCodec::kHevc) {
+    ControllerHevcDecodeOverloadMonitor::Observation sample;
+    sample.now_ms = now_ms;
+    sample.codec = codec;
+    sample.ring_backlog = backlog;
+    sample.ring_slots = 6;
+    sample.network_loss_total = loss;
+    return sample;
+}
+
+TEST(ControllerHevcDecodeOverload, TripsOnceAfterRepeatedOverrunEpisodesOnCleanNetwork) {
+    ControllerHevcDecodeOverloadMonitor monitor({3, 10000, 2000});
+    std::uint64_t now = 1000;
+    int trips = 0;
+    for (int episode = 0; episode < 3; ++episode) {
+        // A sustained overrun is one episode, not one per frame.
+        for (int frame = 0; frame < 10; ++frame) trips += monitor.observe(overload_sample(now += 16, 6 + frame));
+        trips += monitor.observe(overload_sample(now += 16, 1));
+    }
+    EXPECT_EQ(trips, 1);
+    EXPECT_TRUE(monitor.triggered());
+    EXPECT_EQ(monitor.counted_episodes(), 3U);
+    for (int frame = 0; frame < 3; ++frame) {
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 1000, 0)));
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 9)));
+    }
+}
+
+TEST(ControllerHevcDecodeOverload, BacklogBelowRingSizeIsNotAnOverrun) {
+    ControllerHevcDecodeOverloadMonitor monitor({2, 10000, 2000});
+    std::uint64_t now = 0;
+    for (int i = 0; i < 100; ++i) {
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 5)));
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 0)));
+    }
+    EXPECT_EQ(monitor.counted_episodes(), 0U);
+}
+
+TEST(ControllerHevcDecodeOverload, EpisodesOutsideWindowExpire) {
+    ControllerHevcDecodeOverloadMonitor monitor({3, 10000, 2000});
+    std::uint64_t now = 0;
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 6000, 7)));
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 0)));
+    }
+    EXPECT_FALSE(monitor.triggered());
+    EXPECT_LE(monitor.episodes_in_window(), 2U);
+}
+
+TEST(ControllerHevcDecodeOverload, NetworkLossDisqualifiesNearbyOverruns) {
+    ControllerHevcDecodeOverloadMonitor monitor({2, 30000, 2000});
+    std::uint64_t now = 0;
+    std::uint64_t loss = 0;
+    EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 0, loss)));
+    for (int i = 0; i < 5; ++i) {
+        ++loss;
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 100, 8, loss)));
+        EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 0, loss)));
+    }
+    EXPECT_FALSE(monitor.triggered());
+    EXPECT_EQ(monitor.ignored_lossy_episodes(), 5U);
+    now += 2500;
+    EXPECT_FALSE(monitor.observe(overload_sample(now, 8, loss)));
+    EXPECT_FALSE(monitor.observe(overload_sample(now += 16, 0, loss)));
+    EXPECT_TRUE(monitor.observe(overload_sample(now += 16, 8, loss)));
+}
+
+TEST(ControllerHevcDecodeOverload, H264OverrunsNeverTrip) {
+    ControllerHevcDecodeOverloadMonitor monitor({1, 30000, 2000});
+    for (std::uint64_t now = 0; now < 2000; now += 32) {
+        EXPECT_FALSE(monitor.observe(overload_sample(now, 9, 0, NegotiatedVideoCodec::kH264)));
+        EXPECT_FALSE(monitor.observe(overload_sample(now + 16, 0, 0, NegotiatedVideoCodec::kH264)));
+    }
+    EXPECT_TRUE(monitor.observe(overload_sample(5000, 9)));
+}
+
 }  // namespace
