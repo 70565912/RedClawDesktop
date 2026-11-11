@@ -6,6 +6,14 @@ As of 2026-11-11 (Asia/Shanghai). The clipboard and mainline sections were writt
 
 Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
 
+## 2026-11-10 — Runtime logs go to files (M10-T02)
+
+- Remove the runtime log card and its copy and clear actions from the connection pages. Remove the diagnostic log displays from the workspace. Connection progress and actionable errors remain visible. The existing diagnostic writer still records GUI and runtime messages in the rotating local files. See [D9](DECISIONS.md#d9--show-connection-status-and-write-runtime-logs-to-files).
+- The Debug application built through `build.ps1 -SkipConfigure -Target redclaw_desktop -NoPublish`. An isolated GUI run returned home and exited successfully. The home and Host waiting snapshots show the connection controls with no log card, and the GUI diagnostic marker appears in the file log. Evidence is under `build/reports/ui-file-log-20261110`.
+- With a workspace-local test temporary directory, all 42 focused connection, workspace, and diagnostic writer cases passed. The D3D11, file logger, and structured redaction CTest suites also passed. The broader UI run in the default environment hit filesystem and Windows credential or registry restrictions. The running Host was not replaced.
+
+- The independent Debug candidate passed a 345-file manifest check and a restricted-PATH startup probe. CIM could not verify the running Host from the build environment, so the maintenance worker did not take ownership. The existing Host continued DHT publication in standby.
+
 ## Clipboard paste fix, on main
 
 Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly). [Release notes](docs/releases/v0.1.12.md).
@@ -37,7 +45,7 @@ Squash-merged as `c8ec2a2` (PR #5), from `ce0990fd`. Decision: [D7](DECISIONS.md
 
 ## HEVC preferred codec, on a branch
 
-Decision: [D8](DECISIONS.md#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (Ryan, 2026-11-11). Branch `cursor/hevc-preferred-codec-5649`, pull request against `main`, not merged. No HEVC run on Ryan's machines yet.
+Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (Ryan, 2026-11-11). Branch `cursor/hevc-preferred-codec-5649`, pull request against `main`, not merged. No HEVC run on Ryan's machines yet.
 
 - Wire: optional `StreamControlMessageV1` fields 92–94 (`video_codec_version`, `video_decode_codecs`, `video_hardware_decode_codecs`; bit 0 H.264, bit 1 HEVC). Missing fields mean an older peer, which gets H.264.
 - Controller: probes FFmpeg decoders and D3D11VA H.264/HEVC decode profiles at startup and advertises them on every Hello/Capabilities. Log: `Runtime video decode capabilities`.
@@ -99,7 +107,7 @@ Treat `RC7TST01` as optional context for a future LAN resume, not as a current `
 Items 1–5 remain open. Item 6 is the publish step after this preparation is on `main`.
 
 1. Leave PR #2 draft and sealed. Do not merge, rebase, or continue Android connect, decode, or input work until Ryan asks for a same-LAN or other free-P2P resume.
-2. HEVC (D8): review the HEVC pull request and its Windows CI. Before merging, run its on-device checklist on Ryan's desktop and laptop, at least: hardware HEVC opens, forced IDR on recovery, mixed old/new versions in both directions, and the `h264` rollback. After that, run [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md) and record the result here. PR #3 (assessment document) can be merged or closed at Ryan's choice.
+2. HEVC (D10): review the HEVC pull request and its Windows CI. Before merging, run its on-device checklist on Ryan's desktop and laptop, at least: hardware HEVC opens, forced IDR on recovery, mixed old/new versions in both directions, and the `h264` rollback. After that, run [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md) and record the result here. PR #3 (assessment document) can be merged or closed at Ryan's choice.
 3. Keep the Windows product on direct-first P2P. TURN stays optional and user-provided. Do not add a product-owned relay to paper over the cellular ICE failure.
 4. The next phase named in [README.md](README.md) — wider cross-site and TURN coverage, unattended install and upgrade, code signing, and lower GUI / Agent scheduling cost — stays backlog. It is not the next edit unless Ryan assigns it.
 5. Ryan confirms the open questions in [SPEC.md](SPEC.md): Flutter companion versus the sealed spike, and whether `RC7TST01` is still relevant.

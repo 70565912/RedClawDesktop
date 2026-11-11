@@ -1,6 +1,6 @@
 # HEVC versus H.264 bitrate measurement
 
-Decision: [D8](../../DECISIONS.md#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback). Goal: lower bitrate at comparable picture quality. This page is the procedure. It records no numbers. Nothing here has been run on Ryan's machines yet.
+Decision: [D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback). Goal: lower bitrate at comparable picture quality. This page is the procedure. It records no numbers. Nothing here has been run on Ryan's machines yet.
 
 ## What the build does
 
@@ -34,7 +34,7 @@ Run on the same two machines, the same Host display geometry, the same network p
 6. Picture quality. The comparator does not judge it. For each scene, take Controller screenshots at the same moments in both runs (static text, scrolling text, moving window) and compare them side by side. Record whether text is equally legible and whether motion shows more blocking or smearing under HEVC.
 7. Repeat once on the remote (DHT/ICE) path if available.
 
-Keep generated reports local; they contain endpoint data. Record the summary (ratios, quality judgment, machine/GPU/driver names) in [PROGRESS.md](../../PROGRESS.md) and, if the 70% value changes, in D8.
+Keep generated reports local; they contain endpoint data. Record the summary (ratios, quality judgment, machine/GPU/driver names) in [PROGRESS.md](../../PROGRESS.md) and, if the 70% value changes, in D10.
 
 ## Pass / adjust rules
 

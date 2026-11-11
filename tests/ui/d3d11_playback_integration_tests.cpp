@@ -22,13 +22,12 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QDir>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
 #include <QToolButton>
-#include "ui/runtime_log_view.h"
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -87,20 +86,7 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     QSettings settings(directory.filePath("ui.ini"), QSettings::IniFormat);
     // Existing installations may remember the former fixed default size.
     settings.setValue("controller/connection_overlay/v1/geometry", QRect(24, 32, 560, 560));
-    QMainWindow window; auto* home = new QWidget; auto* layout = new QVBoxLayout(home);
-    auto* log_box = new QGroupBox(home); log_box->setObjectName("primaryCard");
-    log_box->setMinimumHeight(160);
-    const auto home_log_policy = log_box->sizePolicy();
-    auto* log_layout = new QVBoxLayout(log_box); auto* log_header = new QHBoxLayout;
-    const QMargins home_log_margins(12, 6, 12, 10);
-    log_layout->setContentsMargins(home_log_margins); log_layout->setSpacing(6);
-    auto* label = new QLabel(QString::fromUtf8("运行日志")); label->setObjectName("connectionSectionTitle");
-    log_header->addWidget(label); log_header->addStretch();
-    log_header->addWidget(new QPushButton(QString::fromUtf8("复制日志")));
-    log_header->addWidget(new QPushButton(QString::fromUtf8("清空显示")));
-    log_layout->addLayout(log_header); auto* log = new RuntimeLogView(log_box); log->setMinimumHeight(84);
-    const auto home_editor_policy = log->sizePolicy();
-    log_layout->addWidget(log, 1); layout->addWidget(log_box);
+    QMainWindow window; auto* home = new QWidget;
     UnifiedSessionWorkspace session(&window, home, &settings);
     const auto renderer = create_qt_playback_renderer(session.desktop_page());
     session.desktop_page()->layout()->addWidget(renderer.widget);
@@ -113,14 +99,10 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     session.connection_overlay()->set_handshake_ready(true);
     session.connection_overlay()->set_process_state(ConnectionProcessState::kActive);
     session.update_runtime("unknown", QString::fromUtf8("等待首帧"));
-    for (const auto* text : {"开始连接远程设备", "已找到等待设备", "安全配对已完成", "正在建立网络路径"})
-        log->appendPlainText(QString::fromUtf8("[10:24:01] ") + QString::fromUtf8(text));
-    QCoreApplication::processEvents(); log->flush_pending(); QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
     auto* panel = session.connection_overlay()->panel();
     auto* scroll = panel->findChild<QScrollArea*>("connectionOverlayScroll"); ASSERT_NE(scroll, nullptr);
     EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
-    EXPECT_EQ(log_box->parentWidget(), home);
-    EXPECT_FALSE(panel->isAncestorOf(log_box));
     const auto expect_full_information = [&](const char* phase) {
         SCOPED_TRACE(phase);
         // Native tool windows cannot exceed the physical display's tracking
@@ -129,12 +111,12 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
             : std::min(session.desktop_page()->height(), panel->screen()->availableGeometry().height());
         const bool room = panel->height() < available;
         EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
-        EXPECT_EQ(log_box->parentWidget(), home);
         if (room) {
             EXPECT_EQ(scroll->verticalScrollBar()->maximum(), 0);
             EXPECT_EQ(scroll->horizontalScrollBar()->maximum(), 0);
             auto* details = panel->findChild<QLabel*>("connectionRuntimeDetails");
-            ASSERT_NE(details, nullptr);
+            EXPECT_NE(details, nullptr);
+            if (!details) return false;
             const QRect detail_bounds(details->mapTo(scroll->viewport(), QPoint()), details->size());
             EXPECT_TRUE(scroll->viewport()->rect().contains(detail_bounds))
                 << "viewport=" << scroll->viewport()->width() << 'x' << scroll->viewport()->height()
@@ -157,11 +139,6 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     EXPECT_GT(scroll->verticalScrollBar()->maximum(), 0);
     window.resize(1440, 900); QCoreApplication::processEvents(); QCoreApplication::processEvents();
     expect_full_information("owner restored"); EXPECT_EQ(panel->size(), expanded); EXPECT_EQ(renderer.widget->size(), canvas);
-    // Home-page log history must not change the floating panel, which has no log view.
-    for (int line = 0; line < 80; ++line) log->appendPlainText(QString("log entry %1").arg(line));
-    log->flush_pending(); QCoreApplication::processEvents();
-    EXPECT_EQ(panel->size(), expanded); expect_full_information("long log history");
-    EXPECT_EQ(panel->findChild<QPlainTextEdit*>(), nullptr);
     const auto output = qEnvironmentVariable("REDCLAW_UI_EVIDENCE_DIR");
     if (!output.isEmpty()) {
         QDir().mkpath(output);
@@ -185,7 +162,6 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     session.update_runtime("unknown", "Remote desktop live (1760x990, backend: d3d11).");
     QCoreApplication::processEvents(); QCoreApplication::processEvents();
     EXPECT_LE(panel->height(), 500);
-    EXPECT_EQ(log_box->parentWidget(), home);
     if (!output.isEmpty()) {
         panel->grab().save(output + "/connection-connected.png");
         QFile metrics(output + "/connection-metrics.json");
@@ -199,10 +175,6 @@ TEST(PlaybackTheme, ApprovedWorkspaceLayoutCanBeReviewedWithRealIsolatedComponen
     session.set_confirm_disconnect([] { return true; });
     session.set_request_stop([] {}); session.set_runtime_running([] { return false; });
     session.request_disconnect(); QCoreApplication::processEvents();
-    EXPECT_EQ(log_box->parentWidget(), home);
-    EXPECT_EQ(log_layout->contentsMargins(), home_log_margins);
-    EXPECT_EQ(log_box->sizePolicy(), home_log_policy);
-    EXPECT_EQ(log->sizePolicy(), home_editor_policy);
 }
 
 TEST(D3D11Playback, UnifiedWindowOverlayDoesNotResizeRendererAndReconnectRetainsCanvas) {

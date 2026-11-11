@@ -98,7 +98,7 @@ struct EncoderBackendCapabilities {
 };
 
 // HEVC budgets are this percentage of the H.264 budget for the same pixels and
-// nominal cadence. Unmeasured planning value; see DECISIONS.md D8 and
+// nominal cadence. Unmeasured planning value; see DECISIONS.md D10 and
 // docs/testing/hevc-bitrate-measurement.md.
 inline constexpr std::uint32_t kHevcBitratePercentOfH264 = 70;
 

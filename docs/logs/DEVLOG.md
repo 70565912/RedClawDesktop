@@ -1,8 +1,8 @@
 # Development Log
 
-## 2026-11-11 — HEVC preferred with negotiated H.264 fallback (M02-T03, D8)
+## 2026-11-11 — HEVC preferred with negotiated H.264 fallback (M02-T03, D10)
 
-- Ryan's decision: move to HEVC to save bitrate, with H.264 as fallback ([D8](../../DECISIONS.md#d8--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)). Default `auto`. The Host picks HEVC only when it has an HEVC hardware encoder and the Controller reports hardware HEVC decode. Every decision is logged as `Runtime video codec negotiated ... codec= reason=`.
+- Ryan's decision: move to HEVC to save bitrate, with H.264 as fallback ([D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)). Default `auto`. The Host picks HEVC only when it has an HEVC hardware encoder and the Controller reports hardware HEVC decode. Every decision is logged as `Runtime video codec negotiated ... codec= reason=`.
 - Interface changes:
   - Wire (protocol): optional `StreamControlMessageV1` fields 92 `video_codec_version`, 93 `video_decode_codecs`, 94 `video_hardware_decode_codecs` (bit 0 H.264, bit 1 HEVC). The Controller sends them on every Hello/Capabilities. A missing field means an older peer, which gets H.264. Older Hosts ignore the fields.
   - `redclaw/protocol/video_codec_negotiation.h` (new): `VideoCodecPreference`, `select_video_codec`, `HostVideoCodecNegotiatorV1`.
@@ -12,6 +12,10 @@
 - Behavior: the Host waits for the peer report up to the existing 3 s viewport grace. If an HEVC hardware open fails, it falls back to H.264 for the rest of the process. If a reconnecting peer cannot decode HEVC, it rebuilds the encoder as H.264. Requested HEVC keyframes are forced to IDR; x265 also needs `open-gop=0`, otherwise it emits CRA (the new libx265 integration case found this).
 - Bitrate: HEVC target and floor are 70% of H.264, an unmeasured planning value. Procedure: [HEVC bitrate measurement](../testing/hevc-bitrate-measurement.md). `run-video-link-baseline.ps1` now also saves `host-video-codec.txt`; `compare-video-codec-baseline.py` compares an H.264 and an HEVC report and refuses mislabeled runs.
 - Checks: scratch Linux builds against Ubuntu FFmpeg 6.1. Negotiation 12/12, stream control protocol 24/24, capture bridge and low-latency profile tests, the FFmpeg roundtrip portable set 5/5 (including the libx265 IDR case), and the comparator unit tests 3/3 all pass. `src/main.cpp`, the GUI, and the Windows D3D11 probe rely on Windows CI. No run on Ryan's machines.
+
+## 2026-11-10 — Write runtime diagnostics to files (M10-T02)
+
+- Remove the UI log card, its copy and clear actions, the remote log display and the unused text renderer. Keep the diagnostic writer, connection status and Debug snapshot access. The isolated application run verifies the connection pages and a GUI diagnostic in the file log. See [validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
 
 ## 2026-11-06 — Prepare v0.1.12 release metadata
 
