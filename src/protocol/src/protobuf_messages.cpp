@@ -203,6 +203,9 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_auth_data(message.auth_data);
     encoded.set_audio_version(message.audio_version);
     encoded.set_audio_playback_requested(message.audio_playback_requested);
+    encoded.set_video_codec_version(message.video_codec_version);
+    encoded.set_video_decode_codecs(message.video_decode_codecs);
+    encoded.set_video_hardware_decode_codecs(message.video_hardware_decode_codecs);
     if (message.workspace) {
         const auto& data = *message.workspace;
         auto* nested = encoded.mutable_workspace();
@@ -332,6 +335,9 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.auth_data = encoded.auth_data();
     message.audio_version = encoded.audio_version();
     message.audio_playback_requested = encoded.audio_playback_requested();
+    message.video_codec_version = encoded.video_codec_version();
+    message.video_decode_codecs = encoded.video_decode_codecs();
+    message.video_hardware_decode_codecs = encoded.video_hardware_decode_codecs();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
         if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kClipboardMoveReceipt)

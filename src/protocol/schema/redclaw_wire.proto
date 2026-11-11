@@ -298,6 +298,12 @@ message StreamControlMessageV1 {
   // Optional navigation command capability; absent means legacy revision requests.
   uint32 capture_region_command_version = 90;
   uint64 capture_region_request_id = 91;
+  // Optional video codec capability v1 on Hello/Capabilities. Zero means an
+  // older peer that only guarantees H.264. Masks: bit0 H.264, bit1 HEVC;
+  // unknown bits are ignored.
+  uint32 video_codec_version = 92;
+  uint32 video_decode_codecs = 93;
+  uint32 video_hardware_decode_codecs = 94;
 }
 
 message WorkspaceControlV1 {

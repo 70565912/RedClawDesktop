@@ -9,6 +9,7 @@ add_library(redclaw_protocol STATIC
   src/stream_control_protocol.cpp
   src/terminal_protocol.cpp
   src/transfer_protocol.cpp
+  src/video_codec_negotiation.cpp
 )
 
 find_package(OpenSSL REQUIRED)

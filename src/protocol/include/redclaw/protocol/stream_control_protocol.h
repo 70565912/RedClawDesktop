@@ -183,6 +183,10 @@ struct StreamControlMessageV1 {
     // Optional system-audio capability. Zero means an older peer.
     std::uint32_t audio_version = 0;
     bool audio_playback_requested = false;
+    // Optional video codec capability. Zero means an older, H.264-only peer.
+    std::uint32_t video_codec_version = 0;
+    std::uint32_t video_decode_codecs = 0;
+    std::uint32_t video_hardware_decode_codecs = 0;
     std::optional<WorkspaceControlV1> workspace;
     // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
     std::uint32_t capture_status = 0;
