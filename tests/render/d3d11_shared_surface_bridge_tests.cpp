@@ -167,15 +167,15 @@ TEST_F(D3D11SharedSurfaceBridgeTest, SlotsHeldByPresenterAreSkippedAndAllBusyDro
 
 TEST_F(D3D11SharedSurfaceBridgeTest, SizeChangeStartsNewGenerationWhileOldFramesStayValid) {
     D3D11SharedSurfaceBridge bridge(devices.producer.Get());
-    const auto small = make_source(devices.producer.Get(), devices.producer_context.Get(), 32, 32, 0xff111111U);
-    const auto large = make_source(devices.producer.Get(), devices.producer_context.Get(), 64, 64, 0xff222222U);
-    ASSERT_TRUE(small && large);
+    const auto small_source = make_source(devices.producer.Get(), devices.producer_context.Get(), 32, 32, 0xff111111U);
+    const auto large_source = make_source(devices.producer.Get(), devices.producer_context.Get(), 64, 64, 0xff222222U);
+    ASSERT_TRUE(small_source && large_source);
     D3D11DecodedSurface old_surface;
-    const auto status = publish(bridge, small.Get(), &old_surface);
+    const auto status = publish(bridge, small_source.Get(), &old_surface);
     if (skipped) GTEST_SKIP() << last_error;
     ASSERT_EQ(status, D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
     D3D11DecodedSurface new_surface;
-    ASSERT_EQ(publish(bridge, large.Get(), &new_surface), D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
+    ASSERT_EQ(publish(bridge, large_source.Get(), &new_surface), D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
     EXPECT_GT(new_surface.shared_generation, old_surface.shared_generation);
     auto opened = open_slot(devices.consumer.Get(), old_surface);
     ASSERT_TRUE(opened.mutex);
