@@ -1,5 +1,6 @@
 add_library(redclaw_render STATIC
   src/render_module.cpp
+  src/playback_flow_control.cpp
   src/audio_player.cpp
   src/audio_jitter_buffer.cpp
   src/audio_decoder.cpp
