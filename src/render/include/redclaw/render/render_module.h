@@ -284,6 +284,19 @@ private:
 	std::unique_ptr<Impl> impl_;
 };
 
+// What this machine can decode. Hardware means a D3D11 video decoder profile
+// with NV12 output exists on the default adapter (the Controller's first
+// hardware decode choice), not merely that FFmpeg ships a decoder.
+struct LocalVideoDecodeProbe {
+	bool h264_decoder = false;
+	bool hevc_decoder = false;
+	bool h264_hardware = false;
+	bool hevc_hardware = false;
+	std::string detail;
+};
+
+[[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support();
+
 [[nodiscard]] bool should_fallback_to_software_decode(
 	bool using_hardware_decode,
 	std::uint32_t consecutive_decode_failures,

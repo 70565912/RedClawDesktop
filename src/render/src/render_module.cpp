@@ -107,6 +107,56 @@ std::vector<AVHWDeviceType> resolve_decoder_hw_device_priority_order() {
     };
 }
 
+#if defined(_WIN32)
+// Local copies: d3d11.h declares the profile GUIDs without storage unless the
+// translation unit defines INITGUID or links dxguid.
+constexpr GUID kD3D11DecoderProfileH264VldNoFgt =
+    {0x1b81be68, 0xa0c7, 0x11d3, {0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5}};
+constexpr GUID kD3D11DecoderProfileHevcVldMain =
+    {0x5b11d51b, 0x2f4c, 0x4452, {0xbc, 0xc3, 0x09, 0xf2, 0xa1, 0x16, 0x0c, 0xc0}};
+
+bool same_guid(const GUID& lhs, const GUID& rhs) {
+    return std::memcmp(&lhs, &rhs, sizeof(GUID)) == 0;
+}
+
+void probe_d3d11va_decoder_profiles(LocalVideoDecodeProbe* probe) {
+    AVBufferRef* device_ref = nullptr;
+    const int result = av_hwdevice_ctx_create(&device_ref, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0);
+    if (result < 0 || device_ref == nullptr) {
+        probe->detail = "d3d11va_unavailable: " + ffmpeg_error_to_string(result);
+        return;
+    }
+    const auto* device_context = reinterpret_cast<const AVHWDeviceContext*>(device_ref->data);
+    const auto* d3d11 = static_cast<const AVD3D11VADeviceContext*>(device_context->hwctx);
+    ID3D11VideoDevice* video_device = d3d11 != nullptr ? d3d11->video_device : nullptr;
+    if (video_device == nullptr) {
+        probe->detail = "d3d11va_video_device_unavailable";
+    } else {
+        const UINT profile_count = video_device->GetVideoDecoderProfileCount();
+        for (UINT index = 0; index < profile_count; ++index) {
+            GUID profile{};
+            if (FAILED(video_device->GetVideoDecoderProfile(index, &profile))) {
+                continue;
+            }
+            const bool h264 = same_guid(profile, kD3D11DecoderProfileH264VldNoFgt);
+            const bool hevc = same_guid(profile, kD3D11DecoderProfileHevcVldMain);
+            if (!h264 && !hevc) {
+                continue;
+            }
+            BOOL nv12_supported = FALSE;
+            if (FAILED(video_device->CheckVideoDecoderFormat(&profile, DXGI_FORMAT_NV12, &nv12_supported))
+                || nv12_supported == FALSE) {
+                continue;
+            }
+            probe->h264_hardware = probe->h264_hardware || h264;
+            probe->hevc_hardware = probe->hevc_hardware || hevc;
+        }
+        probe->detail = "d3d11va_profiles=" + std::to_string(profile_count);
+    }
+    av_buffer_unref(&device_ref);
+}
+#endif
+
 #endif
 
 }  // namespace
@@ -1008,6 +1058,24 @@ bool should_fallback_to_software_decode(
     return using_hardware_decode
         && decoded_frames == 0
         && consecutive_decode_failures >= 1;
+}
+
+LocalVideoDecodeProbe probe_local_video_decode_support() {
+    LocalVideoDecodeProbe probe;
+#if REDCLAW_RENDER_HAS_LIBAVCODEC
+    probe.h264_decoder = avcodec_find_decoder(AV_CODEC_ID_H264) != nullptr;
+    probe.hevc_decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC) != nullptr;
+#if defined(_WIN32)
+    probe_d3d11va_decoder_profiles(&probe);
+#else
+    probe.detail = "hardware_decode_probe_unsupported_platform";
+#endif
+    probe.h264_hardware = probe.h264_hardware && probe.h264_decoder;
+    probe.hevc_hardware = probe.hevc_hardware && probe.hevc_decoder;
+#else
+    probe.detail = "libavcodec_unavailable";
+#endif
+    return probe;
 }
 
 std::string render_runtime_status_timeline_text(
