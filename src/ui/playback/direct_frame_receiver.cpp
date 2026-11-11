@@ -756,6 +756,11 @@ class DirectFramePipeServer::Impl final {
     surface.reset();
     if (status == redclaw::render::D3D11SharedSurfaceBridge::PublishStatus::kPublished) {
       surface = std::move(shared);
+      const std::string note = surface_bridge_->shared_texture_note();
+      if (!note.empty()) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.shared_texture_bind = QString::fromStdString(note);
+      }
       return true;
     }
     decoded->output_path = redclaw::render::DecodedVideoFramePath::kUnknown;

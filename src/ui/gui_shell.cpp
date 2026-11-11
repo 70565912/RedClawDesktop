@@ -4114,6 +4114,9 @@ bool launch_gui_shell(
             .arg(QString::number(canvas.value("slow_d3d_call_max_us").toDouble() / 1000.0, 'f', 1)));
       }
     }
+    if (!transport.shared_texture_bind.isEmpty()) {
+      log_line.append(QString(" shared_texture_bind=%1").arg(transport.shared_texture_bind));
+    }
     if (!transport.last_surface_bridge_error.isEmpty()) {
       QString safe_bridge_error = transport.last_surface_bridge_error;
       safe_bridge_error.replace(' ', '_');

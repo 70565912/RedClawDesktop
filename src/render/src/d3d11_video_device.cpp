@@ -143,6 +143,61 @@ std::uint64_t d3d11_device_adapter_luid(ID3D11Device* device) {
 
 namespace {
 
+// Intel HD 530 returns E_INVALIDARG from CreateVideoProcessorInputView when an
+// NV12 texture's only bind flag is D3D11_BIND_SHADER_RESOURCE. Render-target,
+// render-target plus shader-resource, and no bind flags all accept the view.
+const char* shared_bind_flag_name(UINT flags) {
+    if (flags == (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE)) {
+        return "render_target|shader_resource";
+    }
+    if (flags == D3D11_BIND_RENDER_TARGET) return "render_target";
+    if (flags == 0) return "none";
+    return "other";
+}
+
+enum class VideoInputViewProbe {
+    kAccepted,
+    kRejected,
+    kUnavailable,
+};
+
+// kUnavailable means this device cannot host the probe (no video device, or the
+// enumerator refused the format). The caller then keeps the texture. kRejected
+// means the view itself returned a failure, which is the HD 530 shader-resource
+// case, so another bind-flag set must be tried.
+VideoInputViewProbe probe_shared_video_input_view(ID3D11Device* device, ID3D11Texture2D* texture) {
+    ComPtr<ID3D11VideoDevice> video;
+    if (device == nullptr || texture == nullptr
+        || FAILED(device->QueryInterface(__uuidof(ID3D11VideoDevice), reinterpret_cast<void**>(video.GetAddressOf())))
+        || !video) {
+        return VideoInputViewProbe::kUnavailable;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    if (desc.Width == 0 || desc.Height == 0) return VideoInputViewProbe::kUnavailable;
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content{};
+    content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
+    content.InputWidth = desc.Width;
+    content.InputHeight = desc.Height;
+    content.OutputWidth = desc.Width;
+    content.OutputHeight = desc.Height;
+    content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+    ComPtr<ID3D11VideoProcessorEnumerator> enumerator;
+    if (FAILED(video->CreateVideoProcessorEnumerator(&content, enumerator.GetAddressOf())) || !enumerator) {
+        return VideoInputViewProbe::kUnavailable;
+    }
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input{};
+    input.FourCC = 0;
+    input.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+    input.Texture2D.MipSlice = 0;
+    input.Texture2D.ArraySlice = 0;
+    ComPtr<ID3D11VideoProcessorInputView> view;
+    const HRESULT hr = video->CreateVideoProcessorInputView(
+        texture, enumerator.Get(), &input, view.GetAddressOf());
+    if (FAILED(hr) || !view) return VideoInputViewProbe::kRejected;
+    return VideoInputViewProbe::kAccepted;
+}
+
 // Owned jointly by the bridge and every published frame so a presenter can
 // finish with a slot after the bridge has moved to a new format or size.
 struct SharedSlotSet {
@@ -208,52 +263,93 @@ public:
         return PublishStatus::kAllSlotsBusy;
     }
 
+    std::string shared_texture_note() const { return texture_note_; }
+
 private:
     bool create_slots(const D3D11_TEXTURE2D_DESC& source_desc, std::string* error_detail) {
-        auto slots = std::make_shared<SharedSlotSet>();
-        slots->width = source_desc.Width;
-        slots->height = source_desc.Height;
-        slots->format = source_desc.Format;
-        slots->generation = ++generation_;
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = source_desc.Width;
-        desc.Height = source_desc.Height;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = source_desc.Format;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-        for (std::uint32_t slot = 0; slot < kSlotCount; ++slot) {
-            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &slots->textures[slot]);
-            if (FAILED(hr)) {
-                // Some drivers reject shader-resource binding for YUV formats.
-                desc.BindFlags = 0;
-                hr = device_->CreateTexture2D(&desc, nullptr, &slots->textures[slot]);
+        // Prefer a bind set the presenter can wrap in a video-processor input
+        // view. Shader-resource alone is intentionally absent: HD 530 creates
+        // that NV12 texture and then rejects the view with E_INVALIDARG.
+        constexpr UINT kBindCandidates[] = {
+            D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+            D3D11_BIND_RENDER_TARGET,
+            0U,
+        };
+        std::string tried;
+        HRESULT last_create_hr = E_FAIL;
+        for (const UINT flags : kBindCandidates) {
+            auto slots = std::make_shared<SharedSlotSet>();
+            slots->width = source_desc.Width;
+            slots->height = source_desc.Height;
+            slots->format = source_desc.Format;
+            D3D11_TEXTURE2D_DESC desc{};
+            desc.Width = source_desc.Width;
+            desc.Height = source_desc.Height;
+            desc.MipLevels = 1;
+            desc.ArraySize = 1;
+            desc.Format = source_desc.Format;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = flags;
+            desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+            VideoInputViewProbe view = VideoInputViewProbe::kUnavailable;
+            bool created = true;
+            for (std::uint32_t slot = 0; slot < kSlotCount; ++slot) {
+                const HRESULT hr = device_->CreateTexture2D(&desc, nullptr, &slots->textures[slot]);
+                if (FAILED(hr)) {
+                    last_create_hr = hr;
+                    created = false;
+                    break;
+                }
+                if (slot == 0) {
+                    view = probe_shared_video_input_view(device_.Get(), slots->textures[slot].Get());
+                    if (view == VideoInputViewProbe::kRejected) break;
+                }
+                ComPtr<IDXGIResource> resource;
+                HRESULT shared_hr = slots->textures[slot].As(&slots->mutexes[slot]);
+                if (SUCCEEDED(shared_hr)) shared_hr = slots->textures[slot].As(&resource);
+                if (SUCCEEDED(shared_hr)) shared_hr = resource->GetSharedHandle(&slots->handles[slot]);
+                if (FAILED(shared_hr) || slots->handles[slot] == nullptr) {
+                    if (error_detail) *error_detail = hresult_text("IDXGIResource::GetSharedHandle", shared_hr);
+                    return false;
+                }
             }
-            if (FAILED(hr)) {
-                if (error_detail) *error_detail = hresult_text("CreateTexture2D(shared keyed mutex)", hr)
-                    + " format=" + std::to_string(static_cast<unsigned>(desc.Format));
-                return false;
+            if (!created) {
+                if (!tried.empty()) tried += ';';
+                tried += shared_bind_flag_name(flags);
+                tried += ":create_failed";
+                continue;
             }
-            ComPtr<IDXGIResource> resource;
-            hr = slots->textures[slot].As(&slots->mutexes[slot]);
-            if (SUCCEEDED(hr)) hr = slots->textures[slot].As(&resource);
-            if (SUCCEEDED(hr)) hr = resource->GetSharedHandle(&slots->handles[slot]);
-            if (FAILED(hr) || slots->handles[slot] == nullptr) {
-                if (error_detail) *error_detail = hresult_text("IDXGIResource::GetSharedHandle", hr);
-                return false;
+            if (view == VideoInputViewProbe::kRejected) {
+                if (!tried.empty()) tried += ';';
+                tried += shared_bind_flag_name(flags);
+                tried += ":view_rejected";
+                continue;
             }
+            slots->generation = ++generation_;
+            const char* view_token = view == VideoInputViewProbe::kAccepted ? "ok" : "unavailable";
+            texture_note_ = std::string("bind_flags=") + shared_bind_flag_name(flags)
+                + ",vp_input_view=" + view_token;
+            if (!tried.empty()) texture_note_ += ",tried=" + tried;
+            slots_ = std::move(slots);
+            next_slot_ = 0;
+            return true;
         }
-        slots_ = std::move(slots);
-        next_slot_ = 0;
-        return true;
+        if (error_detail) {
+            *error_detail = tried.find("view_rejected") != std::string::npos
+                ? "CreateVideoProcessorInputView(shared keyed mutex) rejected tried=" + tried
+                    + " format=" + std::to_string(static_cast<unsigned>(source_desc.Format))
+                : hresult_text("CreateTexture2D(shared keyed mutex)", last_create_hr)
+                    + " tried=" + tried
+                    + " format=" + std::to_string(static_cast<unsigned>(source_desc.Format));
+        }
+        return false;
     }
 
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     std::shared_ptr<SharedSlotSet> slots_;
+    std::string texture_note_;
     std::uint32_t next_slot_ = 0;
     std::uint64_t generation_ = 0;
 };
@@ -266,6 +362,10 @@ D3D11SharedSurfaceBridge::~D3D11SharedSurfaceBridge() = default;
 D3D11SharedSurfaceBridge::PublishStatus D3D11SharedSurfaceBridge::publish(
     ID3D11Texture2D* source, std::uint32_t array_slice, D3D11DecodedSurface* output, std::string* error_detail) {
     return impl_->publish(source, array_slice, output, error_detail);
+}
+
+std::string D3D11SharedSurfaceBridge::shared_texture_note() const {
+    return impl_ ? impl_->shared_texture_note() : std::string{};
 }
 
 }  // namespace redclaw::render

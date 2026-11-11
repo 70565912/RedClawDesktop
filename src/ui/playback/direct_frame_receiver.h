@@ -50,6 +50,8 @@ struct DirectFrameTransportStats {
   // `present_adapter_surface` or `present_adapter_cpu`.
   QString decode_route = "none";
   QString last_surface_bridge_error;
+  // bind_flags=... ,vp_input_view=ok|unavailable once the shared textures exist.
+  QString shared_texture_bind;
   QString decoder_backend = "unopened";
   QString last_decode_error;
   QString hardware_decode_fallback_from_backend;

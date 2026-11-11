@@ -60,6 +60,12 @@ public:
         D3D11DecodedSurface* output,
         std::string* error_detail);
 
+    // Empty until the first textures exist. No spaces. Example:
+    // bind_flags=render_target|shader_resource,vp_input_view=ok
+    // vp_input_view is ok, unavailable (this device could not probe), or the
+    // note is absent because every candidate was rejected.
+    [[nodiscard]] std::string shared_texture_note() const;
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

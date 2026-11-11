@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-11-11 — Shared NV12 texture accepts the video processor view (M02-T03)
+
+- On-device, head `b89a396e`, laptop Intel HD 530: the shared-surface present failed with `CreateVideoProcessorInputView(shared) failed: 0x80070057` (`E_INVALIDARG`). The GUI then requested the CPU transfer path for the rest of the session (`hardware-decode-cpu-transfer-bgra`). A standalone probe on that GPU showed the cause. The NV12 slot in `D3D11SharedSurfaceBridge` was created with `D3D11_BIND_SHADER_RESOURCE` only. That texture is created successfully, and the video-processor input view rejects it. Bind flags 0, `RENDER_TARGET`, `RENDER_TARGET|SHADER_RESOURCE`, and `DECODER` all accept the view.
+- The bridge now tries `RENDER_TARGET|SHADER_RESOURCE`, then `RENDER_TARGET`, then no bind flags. On the first texture of a candidate it creates a video-processor input view once. A rejected view tries the next flags. If the device has no video processor, the first set that creates is kept. The choice is logged with no spaces as `shared_texture_bind=bind_flags=render_target|shader_resource,vp_input_view=ok` (or `unavailable`, plus `tried=` when an earlier set was skipped) on the 5 s GUI stats line.
+- Not changed: a first-present `CreateVideoProcessor` of 53.7 ms on that laptop is just over the 50 ms slow-call log. The threshold stays.
+- Checks: the Windows bridge test asserts the published texture is not shader-resource-only and, where NV12 and a video device exist, that `CreateVideoProcessorInputView` succeeds. This environment cannot run that test. `d3d11_video_device.cpp` is compiled by the Windows unit CI. The GUI stats line and the receiver are not.
+
 ## 2026-11-11 — HEVC decode stays on the display adapter (M02-T03)
 
 - Ryan reversed the cross-adapter rule the same day: probe HEVC hardware decode only on the adapter that owns the playback window. If it can, advertise HEVC and decode there. If it cannot, do not probe or use any other adapter, and do not advertise the software HEVC decoder, so the Host sends H.264. A CPU copy from another GPU costs more than H.264. The ring-overrun fallback is unchanged.

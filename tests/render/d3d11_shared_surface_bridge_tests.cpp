@@ -135,6 +135,17 @@ TEST_F(D3D11SharedSurfaceBridgeTest, PublishedSliceIsReadableOnAnotherDevice) {
 
     auto opened = open_slot(devices.consumer.Get(), surface);
     ASSERT_TRUE(opened.texture && opened.mutex);
+    D3D11_TEXTURE2D_DESC opened_desc{};
+    opened.texture->GetDesc(&opened_desc);
+    // Shader-resource alone makes CreateVideoProcessorInputView return
+    // E_INVALIDARG on Intel HD 530. The bridge must not select it.
+    EXPECT_NE(opened_desc.BindFlags, static_cast<UINT>(D3D11_BIND_SHADER_RESOURCE));
+    EXPECT_TRUE(opened_desc.BindFlags == (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE)
+        || opened_desc.BindFlags == D3D11_BIND_RENDER_TARGET
+        || opened_desc.BindFlags == 0U);
+    const std::string note = bridge.shared_texture_note();
+    EXPECT_NE(note.find("bind_flags="), std::string::npos);
+    EXPECT_EQ(note.find(' '), std::string::npos);
     ASSERT_EQ(opened.mutex->AcquireSync(0, 2000), S_OK);
     EXPECT_EQ(read_first_pixel(devices.consumer.Get(), devices.consumer_context.Get(), opened.texture.Get()), 0xff3366ccU);
     EXPECT_EQ(opened.mutex->ReleaseSync(0), S_OK);
@@ -214,6 +225,77 @@ TEST(VideoDecodeProbe, HevcDecodeAdapterMatchesTheReportedFlags) {
         const auto attempts = probe.detail.substr(probe.detail.find("hevc_probe_attempts="));
         EXPECT_EQ(attempts.find(','), std::string::npos) << probe.detail;
     }
+}
+
+// The HD 530 bug: an NV12 shared texture with only D3D11_BIND_SHADER_RESOURCE
+// is created successfully, then CreateVideoProcessorInputView returns
+// E_INVALIDARG. This checks the flags the bridge actually publishes.
+TEST(D3D11SharedSurfaceBridgeNv12, PublishedTextureAcceptsVideoProcessorInputView) {
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    HRESULT created = E_FAIL;
+    for (const auto type : {D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP}) {
+        device.Reset();
+        context.Reset();
+        created = D3D11CreateDevice(nullptr, type, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, device.GetAddressOf(), nullptr, context.GetAddressOf());
+        if (SUCCEEDED(created)) break;
+    }
+    if (FAILED(created) || !device) GTEST_SKIP() << "no D3D11 video device";
+    ComPtr<ID3D11VideoDevice> video;
+    if (FAILED(device.As(&video)) || !video) GTEST_SKIP() << "ID3D11VideoDevice unavailable";
+
+    D3D11_TEXTURE2D_DESC source_desc{};
+    source_desc.Width = 64;
+    source_desc.Height = 32;
+    source_desc.MipLevels = 1;
+    source_desc.ArraySize = 1;
+    source_desc.Format = DXGI_FORMAT_NV12;
+    source_desc.SampleDesc.Count = 1;
+    source_desc.Usage = D3D11_USAGE_DEFAULT;
+    source_desc.BindFlags = 0;
+    ComPtr<ID3D11Texture2D> source;
+    if (FAILED(device->CreateTexture2D(&source_desc, nullptr, source.GetAddressOf()))) {
+        GTEST_SKIP() << "NV12 textures are unsupported on this device";
+    }
+
+    D3D11SharedSurfaceBridge bridge(device.Get());
+    D3D11DecodedSurface surface;
+    std::string error;
+    const auto status = bridge.publish(source.Get(), 0, &surface, &error);
+    if (status != D3D11SharedSurfaceBridge::PublishStatus::kPublished) {
+        GTEST_SKIP() << error;
+    }
+    const std::string note = bridge.shared_texture_note();
+    EXPECT_EQ(note.find(' '), std::string::npos) << note;
+    EXPECT_EQ(note.find("bind_flags=shader_resource"), std::string::npos) << note;
+    if (note.find("vp_input_view=ok") == std::string::npos) {
+        GTEST_SKIP() << note;
+    }
+
+    ComPtr<ID3D11Texture2D> opened;
+    ASSERT_HRESULT_SUCCEEDED(device->OpenSharedResource(static_cast<HANDLE>(surface.shared_handle),
+        __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(opened.GetAddressOf())));
+    D3D11_TEXTURE2D_DESC opened_desc{};
+    opened->GetDesc(&opened_desc);
+    EXPECT_NE(opened_desc.BindFlags, static_cast<UINT>(D3D11_BIND_SHADER_RESOURCE));
+
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content{};
+    content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
+    content.InputWidth = opened_desc.Width;
+    content.InputHeight = opened_desc.Height;
+    content.OutputWidth = opened_desc.Width;
+    content.OutputHeight = opened_desc.Height;
+    content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+    ComPtr<ID3D11VideoProcessorEnumerator> enumerator;
+    ASSERT_HRESULT_SUCCEEDED(video->CreateVideoProcessorEnumerator(&content, enumerator.GetAddressOf()));
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input{};
+    input.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+    ComPtr<ID3D11VideoProcessorInputView> view;
+    const HRESULT view_hr = video->CreateVideoProcessorInputView(
+        opened.Get(), enumerator.Get(), &input, view.GetAddressOf());
+    EXPECT_HRESULT_SUCCEEDED(view_hr) << note;
 }
 
 }  // namespace
