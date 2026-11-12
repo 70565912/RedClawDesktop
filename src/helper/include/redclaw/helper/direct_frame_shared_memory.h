@@ -63,6 +63,7 @@ struct alignas(8) DirectFrameSharedMemoryHeader {
     volatile LONG64 playback_boundary = 0;
     volatile LONG64 playback_resynchronizing = 0;
     volatile LONG64 playback_progress = 0;
+    volatile LONG64 playback_hevc_progress = 0;
     volatile LONG64 playback_failures = 0;
     volatile LONG64 playback_software_fallback = 0;
 };
@@ -199,6 +200,7 @@ inline void initialize_direct_frame_shared_memory(DirectFrameSharedMemoryHeader*
     direct_frame_atomic_store_i64(&header->playback_guard, 0);
     publish_direct_frame_playback_state(header, {.session = 1});
     direct_frame_atomic_store_i64(&header->playback_progress, 0);
+    direct_frame_atomic_store_i64(&header->playback_hevc_progress, 0);
     direct_frame_atomic_store_i64(&header->playback_failures, 0);
     direct_frame_atomic_store_i64(&header->playback_software_fallback, 0);
 }

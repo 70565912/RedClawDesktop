@@ -284,7 +284,8 @@ class DirectFramePipeServer::Impl final {
       playback_state_.resynchronizing = true;
       playback_state_.reason = reason == "display_off" ? redclaw::helper::PlaybackPauseReason::kDisplayOff
           : reason == "occluded" ? redclaw::helper::PlaybackPauseReason::kOccluded
-          : paused ? redclaw::helper::PlaybackPauseReason::kHidden : redclaw::helper::PlaybackPauseReason::kRecovery;
+          : paused && reason != "native_window" ? redclaw::helper::PlaybackPauseReason::kHidden
+                                               : redclaw::helper::PlaybackPauseReason::kRecovery;
       publish_direct_frame_playback_state(shared_header_, playback_state_);
       latest_frame_ = {};
       delivered_frame_count_ = latest_frame_count_;
@@ -587,7 +588,7 @@ class DirectFramePipeServer::Impl final {
       const bool decoded = decode_snapshot(shared_snapshot_, &frame);
       if (decoded) {
         frame.playback_generation = generation;
-        publish_latest_frame(std::move(frame), next_sequence, transition);
+        publish_latest_frame(std::move(frame), next_sequence, transition, shared_snapshot_.frame.format);
       } else {
         frame_buffer_pool_.release(std::move(frame));
       }
@@ -863,7 +864,7 @@ class DirectFramePipeServer::Impl final {
     return false;
   }
 
-  void publish_latest_frame(DirectFrameData frame, quint64 sequence, const redclaw::helper::PlaybackStateSnapshot& transition) {
+  void publish_latest_frame(DirectFrameData frame, quint64 sequence, const redclaw::helper::PlaybackStateSnapshot& transition, quint32 encoded_format) {
     const auto generation = frame.playback_generation;
     const auto output_path = frame.output_path;
     const quint64 frame_id = frame.frame_id;
@@ -889,6 +890,8 @@ class DirectFramePipeServer::Impl final {
       ++stats_.observed_sequences;
       ++stats_.published_frames;
       redclaw::helper::direct_frame_atomic_increment_i64(&shared_header_->playback_progress);
+      if (encoded_format == redclaw::helper::kDirectFrameFormatHevc)
+        redclaw::helper::direct_frame_atomic_increment_i64(&shared_header_->playback_hevc_progress);
       stats_.last_sequence = sequence;
       stats_.latest_displayable_frame_id = (std::max)(
           stats_.latest_displayable_frame_id, frame_id);

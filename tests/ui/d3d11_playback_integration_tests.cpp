@@ -544,6 +544,7 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
     EXPECT_EQ(receiver.stats_snapshot().decode_failures, before_pause.decode_failures);
     EXPECT_EQ(receiver.stats_snapshot().shared_dependency_gaps, before_pause.shared_dependency_gaps);
     EXPECT_GE(receiver.stats_snapshot().pause_discarded_sequences, 50U);
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->playback_hevc_progress), 0);
     EXPECT_EQ(requests.load(), 0U);
     EXPECT_FALSE(receiver.take_latest_frame(&stale, &count));
     receiver.set_playback_paused(false, "display_on");
@@ -584,6 +585,12 @@ TEST(PlaybackVisibility, D3D11TransitionsWithoutDecodedFramesAndKeepsOtherReason
     owner.showNormal(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
     owner.hide(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
     owner.show(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    const auto before_recreation = states.size();
+    QEvent recreated(QEvent::WinIdChange);
+    QCoreApplication::sendEvent(renderer.widget, &recreated);
+    ASSERT_GE(states.size(), before_recreation+2);
+    EXPECT_TRUE(states[before_recreation]);
+    EXPECT_FALSE(states.back()); // zero-frame native-window recovery
     renderer.canvas->set_playback_state_callback({});
 }
 

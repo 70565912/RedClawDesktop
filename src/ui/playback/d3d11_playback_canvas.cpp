@@ -329,6 +329,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       context_->Flush();
     }
     if (event->type() == QEvent::WinIdChange) {
+      // A new HWND also needs a fresh frame on a static desktop. Publish a
+      // fenced recovery transition even when visibility itself did not change.
+      if (playback_state_changed_) {
+        playback_state_changed_(true, "native_window");
+        last_notified_state_.clear();
+      }
       unregister_display_power_notification();
       register_display_power_notification();
     }

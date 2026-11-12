@@ -402,8 +402,20 @@ TEST(ControllerHevcTrial, WaitsFiveMinutesAnd120SecondsThenObservesActualHevcAnd
     }
     EXPECT_FALSE(policy.trial_succeeded()); // old Host stays on H.264
     sample.codec = NegotiatedVideoCodec::kHevc;
-    for (; sample.now_ms<=381000; sample.now_ms+=1000) {
+    // Receiving HEVC with only old H.264 output progress is still no trial proof.
+    for (; sample.now_ms<390000; sample.now_ms+=1000) {
         ++sample.progress; EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_FALSE(policy.trial_succeeded());
+    // One HEVC output followed by stalled HEVC must not complete 30 seconds,
+    // even if unrelated cumulative output progress is still fresh.
+    sample.hevc_progress = 1;
+    for (; sample.now_ms<430000; sample.now_ms+=1000) {
+        ++sample.progress; EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_FALSE(policy.trial_succeeded());
+    for (; sample.now_ms<=461000; sample.now_ms+=1000) {
+        ++sample.progress; ++sample.hevc_progress; EXPECT_FALSE(policy.observe(sample));
     }
     EXPECT_TRUE(policy.trial_succeeded());
     policy.on_fallback(sample.now_ms);

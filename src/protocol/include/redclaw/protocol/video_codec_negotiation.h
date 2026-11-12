@@ -229,6 +229,7 @@ public:
         std::uint64_t backlog = 0;
         std::uint32_t ring_slots = 6;
         std::uint64_t progress = 0;
+        std::uint64_t hevc_progress = 0;
         std::uint64_t failures = 0;
         std::uint64_t recovery_breaks = 0;
         std::uint64_t playback_revision = 0;
@@ -247,8 +248,10 @@ private:
     bool withdrawn_ = false, attempted_ = false, trial_succeeded_ = false;
     std::uint64_t fallback_ms_ = 0, stable_since_ms_ = 0, trial_since_ms_ = 0;
     std::uint64_t last_sample_ms_ = 0, last_progress_ms_ = 0;
-    std::uint64_t progress_ = 0, failures_ = 0, breaks_ = 0, attempt_progress_ = 0;
+    std::uint64_t progress_ = 0, failures_ = 0, breaks_ = 0;
     std::uint64_t playback_revision_ = 0;
+    std::uint64_t attempt_hevc_progress_ = 0;
+    std::uint64_t hevc_progress_ = 0, last_hevc_progress_ms_ = 0;
 };
 
 }  // namespace redclaw::protocol

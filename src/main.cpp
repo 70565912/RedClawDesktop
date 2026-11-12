@@ -1745,7 +1745,7 @@ struct HostStreamStageTelemetry {
 
 struct DirectFramePipeTransportStats {
     redclaw::helper::PlaybackStateSnapshot playback;
-    std::uint64_t playback_progress = 0, playback_failures = 0;
+    std::uint64_t playback_progress = 0, playback_hevc_progress = 0, playback_failures = 0;
     bool playback_backend_healthy = false;
     bool connected = false;
     std::uint64_t write_sequence = 0;
@@ -2383,6 +2383,7 @@ public:
         snapshot.connected = true;
         snapshot.playback = redclaw::helper::read_direct_frame_playback_state(shared_header);
         snapshot.playback_progress = redclaw::helper::direct_frame_atomic_load_i64(&shared_header->playback_progress);
+        snapshot.playback_hevc_progress = redclaw::helper::direct_frame_atomic_load_i64(&shared_header->playback_hevc_progress);
         snapshot.playback_failures = redclaw::helper::direct_frame_atomic_load_i64(&shared_header->playback_failures);
         snapshot.playback_backend_healthy = redclaw::helper::direct_frame_atomic_load_i64(&shared_header->playback_software_fallback) == 0;
         snapshot.write_sequence = static_cast<std::uint64_t>(
@@ -4659,6 +4660,7 @@ int run_runtime_mode(
                         .recovering = recovery.state != redclaw::session::ControllerDecoderRecoveryState::kSynchronized,
                         .backlog = observation.ring_backlog, .ring_slots = observation.ring_slots,
                         .progress = direct_pipe_transport_stats.playback_progress,
+                        .hevc_progress = direct_pipe_transport_stats.playback_hevc_progress,
                         .failures = direct_pipe_transport_stats.playback_failures,
                         .recovery_breaks = recovery.dependency_break_total,
                         .playback_revision = playback.revision,
@@ -4677,7 +4679,9 @@ int run_runtime_mode(
             }
             // Discard a provisional observation if visibility changed during
             // sampling. Rearm only an unpublished trip; keep prior fallbacks.
-            if (!redclaw::helper::playback_output_is_current(playback, direct_frame_pipe.stats_snapshot().playback)) {
+            const auto current_playback_stats = direct_frame_pipe.stats_snapshot();
+            if (!redclaw::helper::playback_output_is_current(playback, current_playback_stats.playback)
+                || (hevc_trial_eligible && !current_playback_stats.playback_backend_healthy)) {
                 controller_hevc_decode_overload.clear_overrun_history();
                 if (hevc_decode_overloaded) controller_hevc_decode_overload.rearm();
                 if (hevc_trial_eligible) controller_hevc_trial.cancel_unpublished_attempt();

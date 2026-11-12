@@ -251,6 +251,8 @@ bool ControllerHevcTrialPolicy::observe(const Sample& sample) noexcept {
     const auto now = sample.now_ms;
     const bool progressed = sample.progress > progress_;
     if (progressed) last_progress_ms_ = now;
+    if (sample.hevc_progress > hevc_progress_) last_hevc_progress_ms_ = now;
+    hevc_progress_ = sample.hevc_progress;
     const bool healthy = sample.playback_revision == playback_revision_
         && sample.visible && sample.feedback_fresh && sample.backend_healthy
         && !sample.recovering && sample.ring_slots != 0 && sample.backlog < sample.ring_slots
@@ -272,11 +274,12 @@ bool ControllerHevcTrialPolicy::observe(const Sample& sample) noexcept {
         && now - stable_since_ms_ >= 120000) {
         attempted_ = true;
         withdrawn_ = false;
-        attempt_progress_ = sample.progress;
+        attempt_hevc_progress_ = sample.hevc_progress;
         return true;
     }
     if (attempted_ && !withdrawn_ && sample.codec == NegotiatedVideoCodec::kHevc
-        && sample.progress > attempt_progress_) {
+        && sample.hevc_progress > attempt_hevc_progress_ && last_hevc_progress_ms_ != 0
+        && now >= last_hevc_progress_ms_ && now - last_hevc_progress_ms_ <= 5000) {
         if (!trial_since_ms_) trial_since_ms_ = now;
         if (now - trial_since_ms_ >= 30000) trial_succeeded_ = true;
     } else {
