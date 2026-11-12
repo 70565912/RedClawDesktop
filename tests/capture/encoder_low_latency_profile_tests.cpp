@@ -217,6 +217,30 @@ bool test_hevc_budget_is_lower_than_h264_for_the_same_pixels() {
             "H.264 is never scaled");
 }
 
+bool test_hevc_budget_applies_share_after_the_h264_ceiling() {
+    using redclaw::capture::EncoderCodec;
+    redclaw::capture::EncoderProfileRequest h264;
+    // Desktop profiles budget for 30 fps; 5K30 is about 35000 kbps uncapped.
+    h264.width = 5120;
+    h264.height = 2880;
+    h264.fps = 30;
+    h264.workload = redclaw::capture::EncoderWorkload::kInteractiveDesktop;
+    auto hevc = h264;
+    hevc.preferred_codec = EncoderCodec::kHevc;
+
+    redclaw::capture::EncoderConfigProfile h264_profile;
+    redclaw::capture::EncoderConfigProfile hevc_profile;
+    std::string error;
+    const bool ok = redclaw::capture::build_desktop_encoder_profile(h264, &h264_profile, &error)
+        && redclaw::capture::build_desktop_encoder_profile(hevc, &hevc_profile, &error);
+    const std::uint32_t expected_hevc = (20000U * redclaw::capture::kHevcBitratePercentOfH264) / 100U;
+    return expect_true(ok, std::string("5K desktop profiles should build: ") + error)
+        && expect_true(h264_profile.target_bitrate_kbps == 20000, "5K H.264 should sit at the 20000 kbps ceiling")
+        && expect_true(hevc_profile.target_bitrate_kbps == expected_hevc,
+            "HEVC must take its share of the clamped H.264 budget, not hit the same ceiling")
+        && expect_true(expected_hevc == 14000, "70% of 20000 kbps is 14000 kbps");
+}
+
 }  // namespace
 
 int main() {
@@ -230,6 +254,7 @@ int main() {
     ok = test_interactive_desktop_bitrate_floor_preserves_clarity_before_cadence() && ok;
     ok = test_desktop_codec_budget_is_independent_of_submission_cadence() && ok;
     ok = test_hevc_budget_is_lower_than_h264_for_the_same_pixels() && ok;
+    ok = test_hevc_budget_applies_share_after_the_h264_ceiling() && ok;
 
     if (!ok) {
         return 1;

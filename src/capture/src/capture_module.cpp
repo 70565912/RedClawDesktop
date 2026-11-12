@@ -1308,10 +1308,21 @@ bool build_low_latency_encoder_profile(
             clamp_u32(target_bitrate_kbps, 6000, 35000), request.preferred_codec);
     } else {
         // Interactive desktop starts at approximately 0.08 bits per pixel for
-        // H.264; HEVC spends kHevcBitratePercentOfH264 of that.
-        target_bitrate_kbps = static_cast<std::uint32_t>((pixels_per_second * 8ULL) / 100000ULL);
+        // H.264, clamped to the H.264 range; HEVC spends
+        // kHevcBitratePercentOfH264 of the clamped value, so it stays below
+        // H.264 even where H.264 hits the 20000 kbps ceiling.
+        const std::uint32_t h264_target_kbps = clamp_u32(
+            static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                (pixels_per_second * 8ULL) / 100000ULL,
+                std::numeric_limits<std::uint32_t>::max())),
+            resolve_interactive_desktop_bitrate_floor_kbps(
+                request.width,
+                request.height,
+                request.fps,
+                EncoderCodec::kH264),
+            20000);
         target_bitrate_kbps = clamp_u32(
-            scale_bitrate_for_codec(target_bitrate_kbps, request.preferred_codec),
+            scale_bitrate_for_codec(h264_target_kbps, request.preferred_codec),
             resolve_interactive_desktop_bitrate_floor_kbps(
                 request.width,
                 request.height,
