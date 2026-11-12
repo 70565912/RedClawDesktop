@@ -279,6 +279,10 @@ public:
 	// Decode on `device` and output D3D11 surfaces (nullptr: FFmpeg's default
 	// adapter with CPU transfer).
 	void configure_d3d11_surface_output(ID3D11Device* device);
+	// false: keep decoding on the configured device but transfer frames to
+	// the CPU. Hardware decode stays on that device's adapter (D3D11VA only),
+	// otherwise software. Reopens the decoder on the next frame.
+	void set_d3d11_surface_output_enabled(bool enabled);
 #endif
 
 	void force_software_decode();

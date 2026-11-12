@@ -30,6 +30,10 @@ class PlaybackCanvas {
   // Warnings the backend wants in the session log (adapter choice, slow
   // D3D calls). Invoked on the GUI thread.
   virtual void set_diagnostic_log(std::function<void(const QString&)>) {}
+  // Invoked on the GUI thread with a short trigger name when presentation
+  // reopens after frames were dropped while hidden, minimized, occluded or
+  // with the display off. The owner requests a keyframe.
+  virtual void set_presentation_resumed_callback(std::function<void(const QString&)>) {}
 #if defined(_WIN32)
   // The presenter's own device. Decode never shares it; tests use it to
   // build same-device surfaces.

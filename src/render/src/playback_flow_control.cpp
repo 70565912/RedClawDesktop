@@ -65,6 +65,17 @@ DecodeAdapterChoice choose_decode_adapter(
     return choice;
 }
 
+bool presenter_adapter_changed(
+    std::uint64_t device_adapter_luid, std::uint64_t window_monitor_adapter_luid) noexcept {
+    return device_adapter_luid != 0 && window_monitor_adapter_luid != 0
+        && device_adapter_luid != window_monitor_adapter_luid;
+}
+
+std::vector<DecoderHwBackend> decoder_hw_backend_order(bool pinned_to_presenter_adapter) {
+    if (pinned_to_presenter_adapter) return {DecoderHwBackend::kD3D11va};
+    return {DecoderHwBackend::kD3D11va, DecoderHwBackend::kQsv, DecoderHwBackend::kCuda, DecoderHwBackend::kDxva2};
+}
+
 bool KeyframeRequestLimiter::due(std::uint64_t now_ms) const noexcept {
     return !has_sent_ || now_ms < last_sent_ms_ || now_ms - last_sent_ms_ >= min_interval_ms_;
 }
@@ -97,14 +108,41 @@ void KeyframeRequestLimiter::reset() noexcept {
     last_sent_ms_ = 0;
 }
 
+void PresentationGate::set_hidden(bool hidden) noexcept {
+    hidden_ = hidden;
+    note_state_change();
+}
+
+void PresentationGate::set_display_on(bool on) noexcept {
+    display_on_ = on;
+    note_state_change();
+}
+
 void PresentationGate::on_present_result(bool occluded, std::uint64_t now_ms) noexcept {
     occluded_ = occluded;
     last_occlusion_probe_ms_ = now_ms;
+    // An occluded result drops the frame that triggered it.
+    if (occluded) skipped_while_closed_ = true;
+    note_state_change();
+}
+
+void PresentationGate::note_state_change() noexcept {
+    if (skipped_while_closed_ && !hidden_ && display_on_ && !occluded_) {
+        skipped_while_closed_ = false;
+        resume_pending_ = true;
+    }
+}
+
+bool PresentationGate::take_resume() noexcept {
+    const bool resume = resume_pending_;
+    resume_pending_ = false;
+    return resume;
 }
 
 PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexcept {
     if (hidden_ || !display_on_) {
         ++skipped_;
+        skipped_while_closed_ = true;
         return Decision::kSkip;
     }
     if (!occluded_) return Decision::kPresent;
@@ -113,6 +151,7 @@ PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexce
         return Decision::kTestOcclusion;
     }
     ++skipped_;
+    skipped_while_closed_ = true;
     return Decision::kSkip;
 }
 

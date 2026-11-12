@@ -270,4 +270,57 @@ TEST(SlowCallReporter, ReportsCallsAboveThresholdWithRateLimit) {
     EXPECT_EQ(reporter.max_elapsed_us(), 470000U);
 }
 
+TEST(PresentationGate, RestoreAfterSkippedFramesAsksForOneKeyframe) {
+    PresentationGate gate(250);
+    EXPECT_FALSE(gate.take_resume());
+    // Hidden and shown again with no frame in between: nothing was lost.
+    gate.set_hidden(true);
+    gate.set_hidden(false);
+    EXPECT_FALSE(gate.take_resume());
+
+    gate.set_hidden(true);
+    EXPECT_EQ(gate.decide(10), PresentationGate::Decision::kSkip);
+    EXPECT_FALSE(gate.take_resume());
+    gate.set_hidden(false);
+    EXPECT_TRUE(gate.take_resume());
+    EXPECT_FALSE(gate.take_resume());
+
+    // Display off, then minimized while still off: resume only when both clear.
+    gate.set_display_on(false);
+    EXPECT_EQ(gate.decide(20), PresentationGate::Decision::kSkip);
+    gate.set_hidden(true);
+    gate.set_display_on(true);
+    EXPECT_FALSE(gate.take_resume());
+    gate.set_hidden(false);
+    EXPECT_TRUE(gate.take_resume());
+}
+
+TEST(PresentationGate, OcclusionEndingAfterDroppedFramesAsksForKeyframe) {
+    PresentationGate gate(250);
+    gate.on_present_result(true, 1000);
+    EXPECT_EQ(gate.decide(1016), PresentationGate::Decision::kSkip);
+    gate.on_present_result(true, 1250);
+    EXPECT_FALSE(gate.take_resume());
+    gate.on_present_result(false, 1500);
+    EXPECT_TRUE(gate.take_resume());
+    gate.on_present_result(false, 1516);
+    EXPECT_FALSE(gate.take_resume());
+}
+
+TEST(PresenterAdapter, SessionStartRebuildsOnlyForAKnownDifferentAdapter) {
+    EXPECT_TRUE(presenter_adapter_changed(0x10, 0x20));
+    EXPECT_FALSE(presenter_adapter_changed(0x10, 0x10));
+    EXPECT_FALSE(presenter_adapter_changed(0, 0x20));
+    EXPECT_FALSE(presenter_adapter_changed(0x10, 0));
+}
+
+TEST(DecoderHwBackendOrder, PinnedDecodeUsesOnlyThePresenterAdapter) {
+    const auto pinned = decoder_hw_backend_order(true);
+    ASSERT_EQ(pinned.size(), 1U);
+    EXPECT_EQ(pinned.front(), DecoderHwBackend::kD3D11va);
+    const auto unpinned = decoder_hw_backend_order(false);
+    ASSERT_EQ(unpinned.size(), 4U);
+    EXPECT_EQ(unpinned.front(), DecoderHwBackend::kD3D11va);
+}
+
 }  // namespace

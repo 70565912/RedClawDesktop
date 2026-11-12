@@ -123,7 +123,26 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (diagnostic_log_ && !adapter_description_.empty()) log_adapter_choice();
   }
 
+  void set_presentation_resumed_callback(std::function<void(const QString&)> callback) override {
+    presentation_resumed_ = std::move(callback);
+  }
+
+  // Called at session start. The device outlives sessions, so re-check the
+  // adapter of the window's current monitor and rebuild after a move.
   bool d3d11_presentation_adapter(std::uint64_t* luid, QString* error_detail) override {
+    if (device_) {
+      const auto selected = redclaw::render::select_gpu_adapter_for_monitor(
+          MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST));
+      const std::uint64_t current = redclaw::render::d3d11_device_adapter_luid(device_.Get());
+      if (selected.adapter && redclaw::render::presenter_adapter_changed(current, selected.adapter->luid)) {
+        log_diagnostic(QString("D3D11 presenter adapter changed since the last session old_luid=0x%1:%2 new=%3; "
+                               "recreating the presenter device")
+            .arg(static_cast<quint32>(current >> 32U), 8, 16, QLatin1Char('0'))
+            .arg(static_cast<quint32>(current & 0xffffffffU), 8, 16, QLatin1Char('0'))
+            .arg(QString::fromStdString(redclaw::render::describe_gpu_adapter(*selected.adapter))));
+        release_device();
+      }
+    }
     if (!ensure_device(error_detail)) return false;
     if (luid != nullptr) *luid = redclaw::render::d3d11_device_adapter_luid(device_.Get());
     return true;
@@ -274,6 +293,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
           presentation_gate_.set_display_on(on);
           log_diagnostic(QString("D3D11 presenter display power state=%1; presentation %2 while decode continues")
               .arg(QString::fromLatin1(on ? "on" : "off"), QString::fromLatin1(on ? "resumed" : "paused")));
+          notify_if_presentation_resumed("display_on");
         }
       }
     }
@@ -318,6 +338,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   void paintEvent(QPaintEvent*) override {
+    if (presentation_gate_.occluded() && swap_chain_) {
+      // Uncovering the window repaints it; a static remote desktop sends no
+      // frame that would run the occlusion probe.
+      D3DCallTimer timer(this, "Present(TEST)");
+      const HRESULT hr = swap_chain_->Present(0, DXGI_PRESENT_TEST);
+      timer.finish();
+      presentation_gate_.on_present_result(hr == DXGI_STATUS_OCCLUDED, steady_now_ms());
+      notify_if_presentation_resumed("repaint");
+    }
     if (frame_texture_ && !latest_frame_is_surface_) {
       (void)render(nullptr, true);
     } else if (!frame_texture_ && !latest_frame_is_surface_) {
@@ -343,9 +372,21 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (frame_texture_ && !latest_frame_is_surface_) {
       (void)render(nullptr, true);
     }
+    const QWidget* top = window();
+    presentation_gate_.set_hidden(!isVisible() || (top != nullptr && top->isMinimized()));
+    notify_if_presentation_resumed("shown");
   }
 
  private:
+  void notify_if_presentation_resumed(const char* trigger) {
+    if (!presentation_gate_.take_resume()) return;
+    log_diagnostic(QString("D3D11 presenter presentation resumed trigger=%1 presentation_skipped=%2; "
+                           "requesting a keyframe")
+        .arg(QString::fromLatin1(trigger))
+        .arg(presentation_gate_.skipped()));
+    if (presentation_resumed_) presentation_resumed_(QString::fromLatin1(trigger));
+  }
+
   // Times one D3D/DXGI call on the GUI thread; anything above 50 ms is logged
   // with the call name (rate limited) so stalls can be attributed.
   class D3DCallTimer {
@@ -406,6 +447,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   bool presentation_allowed() {
     const QWidget* top = window();
     presentation_gate_.set_hidden(!isVisible() || (top != nullptr && top->isMinimized()));
+    notify_if_presentation_resumed("visible");
     const auto now = steady_now_ms();
     switch (presentation_gate_.decide(now)) {
     case redclaw::render::PresentationGate::Decision::kPresent:
@@ -421,6 +463,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     timer.finish();
     const bool occluded = hr == DXGI_STATUS_OCCLUDED;
     presentation_gate_.on_present_result(occluded, now);
+    notify_if_presentation_resumed("occlusion_probe");
     return !occluded;
   }
 
@@ -1168,6 +1211,38 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
                  qRound(height() * devicePixelRatioF()));
   }
 
+  // Drops every resource created on device_ so ensure_device() starts over.
+  void release_device() {
+    if (context_) release_output_resources();
+    swap_chain3_.Reset();
+    swap_chain_.Reset();
+    swap_chain_phys_size_ = {};
+    vertex_shader_.Reset();
+    pixel_shader_.Reset();
+    input_layout_.Reset();
+    sampler_.Reset();
+    vertex_buffer_.Reset();
+    frame_texture_.Reset();
+    frame_srv_.Reset();
+    shared_input_slots_ = {};
+    shared_input_generation_ = 0;
+    video_context_.Reset();
+    video_device_.Reset();
+    if (context_) {
+      context_->ClearState();
+      context_->Flush();
+    }
+    context_.Reset();
+    device_.Reset();
+    latest_frame_is_surface_ = false;
+    frame_has_presented_ = false;
+    frame_width_ = 0;
+    frame_height_ = 0;
+    video_source_width_ = 0;
+    video_source_height_ = 0;
+    adapter_description_.clear();
+  }
+
   void release_output_resources() {
     context_->OMSetRenderTargets(0, nullptr, nullptr);
     render_target_.Reset();
@@ -1325,6 +1400,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   redclaw::render::PresentationGate presentation_gate_;
   redclaw::render::SlowCallReporter slow_calls_;
   std::function<void(const QString&)> diagnostic_log_;
+  std::function<void(const QString&)> presentation_resumed_;
   std::string adapter_description_;
   std::string adapter_reason_;
   HPOWERNOTIFY display_power_notification_ = nullptr;

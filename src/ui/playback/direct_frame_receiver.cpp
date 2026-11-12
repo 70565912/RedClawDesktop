@@ -571,7 +571,10 @@ class DirectFramePipeServer::Impl final {
     }
 
     if (cpu_decode_fallback_requested_.exchange(false)) {
-      decoder_.configure_d3d11_surface_output(nullptr);
+      // Stay on the presenter's adapter (D10): only the surface hand-over is
+      // dropped. Hardware decode remains D3D11VA on decode_device_ with CPU
+      // transfer, or software; never another GPU's default device.
+      decoder_.set_d3d11_surface_output_enabled(false);
       prefer_d3d11_surface_output_ = false;
       decoded_cpu_output_observed_ = true;
       decoder_resync_needed_.store(true);
@@ -715,11 +718,13 @@ class DirectFramePipeServer::Impl final {
       stats_.decoder_backend = QString::fromStdString(decoder_.active_decoder_name());
       stats_.last_decode_error.clear();
       const bool surface = decoded.output_path == redclaw::render::DecodedVideoFramePath::kD3D11DecodeSurface;
-      stats_.decode_route = surface
-          ? QStringLiteral("present_adapter_surface")
-          : QStringLiteral("present_adapter_cpu");
-      stats_.hevc_decode_adapter_luid = surface && header.format == redclaw::helper::kDirectFrameFormatHevc
-          ? decode_adapter_luid_.load()
+      const quint64 pinned_luid = decode_adapter_luid_.load();
+      stats_.decode_route = surface ? QStringLiteral("present_adapter_surface")
+          : pinned_luid != 0       ? QStringLiteral("present_adapter_cpu")
+                                   : QStringLiteral("default_adapter_cpu");
+      stats_.hevc_decode_adapter_luid = header.format == redclaw::helper::kDirectFrameFormatHevc
+              && (surface || decoder_.using_hardware_decode())
+          ? pinned_luid
           : 0;
     }
 

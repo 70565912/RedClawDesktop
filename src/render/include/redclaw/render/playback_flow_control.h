@@ -69,6 +69,25 @@ using DecodeAdapterProbe = std::function<bool(const GpuAdapterCandidate&)>;
     std::string_view codec_name,
     const DecodeAdapterProbe& probe);
 
+// The presenter device is created once and outlives sessions. At session
+// start it is recreated when the window's monitor is now driven by another
+// adapter. Unknown LUIDs (0) never force a rebuild.
+[[nodiscard]] bool presenter_adapter_changed(
+    std::uint64_t device_adapter_luid, std::uint64_t window_monitor_adapter_luid) noexcept;
+
+enum class DecoderHwBackend {
+    kD3D11va,
+    kQsv,
+    kCuda,
+    kDxva2,
+};
+
+// Hardware decode backends to try, in order. With a decode device pinned to
+// the presenter's adapter only D3D11VA can use it; QSV, CUDA and DXVA2 would
+// open FFmpeg's default device, which may sit on another GPU, so they are
+// left out and decode falls back to software instead.
+[[nodiscard]] std::vector<DecoderHwBackend> decoder_hw_backend_order(bool pinned_to_presenter_adapter);
+
 // Coalesces keyframe requests from the playback receiver. The first request
 // is sent immediately; requests inside the minimum interval become one
 // pending request that poll() emits once the interval elapses, unless a
@@ -113,11 +132,16 @@ public:
     explicit PresentationGate(std::uint64_t occlusion_probe_interval_ms = 250) noexcept
         : occlusion_probe_interval_ms_(occlusion_probe_interval_ms) {}
 
-    void set_hidden(bool hidden) noexcept { hidden_ = hidden; }
-    void set_display_on(bool on) noexcept { display_on_ = on; }
+    void set_hidden(bool hidden) noexcept;
+    void set_display_on(bool on) noexcept;
     // Report the result of a real or test Present.
     void on_present_result(bool occluded, std::uint64_t now_ms) noexcept;
     Decision decide(std::uint64_t now_ms) noexcept;
+    // True once after presentation reopens (shown, restored, display on, no
+    // longer occluded) if a frame was skipped while it was closed. The
+    // skipped frames were decoded but never shown, and a static remote
+    // desktop may send nothing newer, so the caller asks for a keyframe.
+    bool take_resume() noexcept;
 
     [[nodiscard]] bool hidden() const noexcept { return hidden_; }
     [[nodiscard]] bool display_on() const noexcept { return display_on_; }
@@ -126,10 +150,14 @@ public:
     [[nodiscard]] std::string_view state_name() const noexcept;
 
 private:
+    void note_state_change() noexcept;
+
     std::uint64_t occlusion_probe_interval_ms_;
     bool hidden_ = false;
     bool display_on_ = true;
     bool occluded_ = false;
+    bool skipped_while_closed_ = false;
+    bool resume_pending_ = false;
     std::uint64_t last_occlusion_probe_ms_ = 0;
     std::uint64_t skipped_ = 0;
 };

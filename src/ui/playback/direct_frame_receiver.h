@@ -44,10 +44,13 @@ struct DirectFrameTransportStats {
   quint64 surface_bridge_failures = 0;
   // 0 when decoding to CPU frames instead of the shared-surface bridge.
   quint64 decode_adapter_luid = 0;
-  // Equals decode_adapter_luid while HEVC frames use the presenter's shared
-  // textures; 0 otherwise. HEVC is never decoded on a different adapter.
+  // Equals decode_adapter_luid while HEVC frames are hardware-decoded on the
+  // presenter's adapter (shared textures or CPU transfer); 0 otherwise. HEVC
+  // is never decoded on a different adapter.
   quint64 hevc_decode_adapter_luid = 0;
-  // `present_adapter_surface` or `present_adapter_cpu`.
+  // `present_adapter_surface`, `present_adapter_cpu` (decode stays on the
+  // presenter's adapter after a bridge fallback) or `default_adapter_cpu`
+  // (no decode device was configured).
   QString decode_route = "none";
   QString last_surface_bridge_error;
   // bind_flags=... ,vp_input_view=ok|unavailable once the shared textures exist.

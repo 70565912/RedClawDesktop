@@ -1,4 +1,5 @@
 #include "redclaw/render/render_module.h"
+#include "redclaw/render/playback_flow_control.h"
 #if defined(_WIN32)
 #include "redclaw/render/d3d11_video_device.h"
 #endif
@@ -101,13 +102,17 @@ const AVCodecHWConfig* find_decoder_hw_config(const AVCodec* decoder, AVHWDevice
     return nullptr;
 }
 
-std::vector<AVHWDeviceType> resolve_decoder_hw_device_priority_order() {
-    return {
-        AV_HWDEVICE_TYPE_D3D11VA,
-        AV_HWDEVICE_TYPE_QSV,
-        AV_HWDEVICE_TYPE_CUDA,
-        AV_HWDEVICE_TYPE_DXVA2,
-    };
+std::vector<AVHWDeviceType> resolve_decoder_hw_device_priority_order(bool pinned_to_presenter_adapter) {
+    std::vector<AVHWDeviceType> order;
+    for (const auto backend : decoder_hw_backend_order(pinned_to_presenter_adapter)) {
+        switch (backend) {
+        case DecoderHwBackend::kD3D11va: order.push_back(AV_HWDEVICE_TYPE_D3D11VA); break;
+        case DecoderHwBackend::kQsv: order.push_back(AV_HWDEVICE_TYPE_QSV); break;
+        case DecoderHwBackend::kCuda: order.push_back(AV_HWDEVICE_TYPE_CUDA); break;
+        case DecoderHwBackend::kDxva2: order.push_back(AV_HWDEVICE_TYPE_DXVA2); break;
+        }
+    }
+    return order;
 }
 
 #if defined(_WIN32)
@@ -581,6 +586,7 @@ public:
             && hw_pixel_format_ == AV_PIX_FMT_D3D11
             && frame_->format == AV_PIX_FMT_D3D11
             && d3d11_surface_output_device_ != nullptr
+            && d3d11_surface_output_enabled_
             && output_d3d11_surface(frame_, timestamp_ms, output)) {
             if (error_detail != nullptr) {
                 error_detail->clear();
@@ -764,8 +770,17 @@ public:
     }
 
 #if defined(_WIN32)
+    void set_d3d11_surface_output_enabled(bool enabled) {
+        if (d3d11_surface_output_enabled_ == enabled) {
+            return;
+        }
+        d3d11_surface_output_enabled_ = enabled;
+        reset();
+    }
+
     void configure_d3d11_surface_output(ID3D11Device* device) {
         force_software_decode_ = false;
+        d3d11_surface_output_enabled_ = true;
         reset();
         if (d3d11_surface_output_device_ == device) {
             return;
@@ -996,7 +1011,13 @@ private:
 
         std::string hardware_errors;
         if (!force_software_decode_) {
-            for (const AVHWDeviceType device_type : resolve_decoder_hw_device_priority_order()) {
+#if defined(_WIN32)
+            const bool pinned_to_presenter_adapter = d3d11_surface_output_device_ != nullptr;
+#else
+            const bool pinned_to_presenter_adapter = false;
+#endif
+            for (const AVHWDeviceType device_type :
+                 resolve_decoder_hw_device_priority_order(pinned_to_presenter_adapter)) {
                 const AVCodecHWConfig* hw_config = find_decoder_hw_config(decoder, device_type);
                 if (hw_config == nullptr) {
                     continue;
@@ -1047,7 +1068,10 @@ private:
     bool force_software_decode_ = false;
     std::string active_decoder_name_;
 #if defined(_WIN32)
+    // Pins hardware decode to the presenter's adapter even when surface
+    // output is off and frames go through CPU transfer.
     ID3D11Device* d3d11_surface_output_device_ = nullptr;
+    bool d3d11_surface_output_enabled_ = true;
 #endif
 };
 
@@ -1089,6 +1113,10 @@ bool FfmpegVideoFrameDecoder::decode_frame(
 #if defined(_WIN32)
 void FfmpegVideoFrameDecoder::configure_d3d11_surface_output(ID3D11Device* device) {
     impl_->configure_d3d11_surface_output(device);
+}
+
+void FfmpegVideoFrameDecoder::set_d3d11_surface_output_enabled(bool enabled) {
+    impl_->set_d3d11_surface_output_enabled(enabled);
 }
 #endif
 
