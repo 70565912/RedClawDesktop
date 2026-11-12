@@ -93,6 +93,17 @@ struct LocalVideoDecodeSupport {
     std::uint64_t now_ms,
     std::uint64_t grace_ms) noexcept;
 
+// A running H.264 encoder is rebuilt as HEVC only when the negotiation changed
+// since it started (late or reconnect peer report) and the current selection
+// is HEVC. Each revision yields at most one rebuild, and a failed HEVC open
+// bumps the revision while selecting H.264, so this cannot loop. The rebuilt
+// encoder starts on an IDR.
+[[nodiscard]] bool should_upgrade_running_encoder_to_hevc(
+    NegotiatedVideoCodec running_codec,
+    std::uint64_t negotiation_revision_at_start,
+    std::uint64_t current_negotiation_revision,
+    const VideoCodecSelection& current_selection) noexcept;
+
 // Host-side owner of the per-session peer report and the sticky HEVC failure.
 // Control-channel and encoder threads share it.
 class HostVideoCodecNegotiatorV1 final {
@@ -134,6 +145,19 @@ private:
 
 inline constexpr std::string_view kControllerHevcDecodeOverloadReason = "controller_hevc_decode_overload";
 
+// Frames lost on the network, for ControllerHevcDecodeOverloadMonitor.
+// `dependency_frames_dropped` counts every dropped dependent frame;
+// `local_dependency_frames_dropped` is the part discarded locally while
+// waiting for an IDR after a ring gap or busy drop. Those are a consequence
+// of decode overload, not network loss, so they are excluded; otherwise each
+// overrun would reset the clean-network window and the fallback never fires.
+[[nodiscard]] std::uint64_t controller_network_loss_total(
+    std::uint64_t incomplete_frames_dropped,
+    std::uint64_t dependency_frames_dropped,
+    std::uint64_t local_dependency_frames_dropped,
+    std::uint64_t dropped_keyframes,
+    std::uint64_t reassembly_timeouts) noexcept;
+
 // Controller-side safety net: HEVC frames that the local decoder cannot keep
 // up with show as shared-memory ring overruns (the reader is a full ring
 // behind). When that happens repeatedly while the network is clean, the
@@ -155,7 +179,8 @@ public:
         // latest written sequence minus reader sequence after the write.
         std::uint64_t ring_backlog = 0;
         std::uint32_t ring_slots = 0;
-        // Monotonic count of frames lost before reaching the decoder.
+        // Monotonic count of frames lost on the network; see
+        // controller_network_loss_total.
         std::uint64_t network_loss_total = 0;
     };
 

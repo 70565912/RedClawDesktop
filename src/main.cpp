@@ -114,6 +114,8 @@ constexpr std::uint64_t kDesktopStreamRttPingTimeoutMs = 3000;
 constexpr std::uint32_t kDesktopStreamAdaptiveMinFps = 1;
 constexpr std::uint64_t kDesktopStreamAdaptiveReconfigureCooldownMs = 2000;
 constexpr std::uint64_t kDesktopStreamEncoderStartRetryCooldownMs = 5000;
+// Rate limit for rebuilding a running H.264 encoder as HEVC.
+constexpr std::uint64_t kDesktopStreamCodecUpgradeMinEncoderAgeMs = 2000;
 constexpr std::uint32_t kDesktopStreamAdaptiveReliefQueueDelayMs = 40;
 constexpr std::uint32_t kDesktopStreamAdaptiveHighQueueDelayMs = 120;
 constexpr std::uint32_t kDesktopStreamAdaptiveSevereQueueDelayMs = 200;
@@ -2942,6 +2944,9 @@ int run_runtime_mode(
     std::uint64_t stream_encoded_frames_reassembled = 0;
     std::uint64_t stream_incomplete_frames_dropped = 0;
     std::uint64_t stream_dependency_frames_dropped = 0;
+    // Subset of stream_dependency_frames_dropped discarded while waiting for
+    // an IDR the Controller itself requested (ring gap, busy drop).
+    std::uint64_t stream_local_dependency_frames_dropped = 0;
     std::uint64_t stream_completed_keyframes = 0;
     std::uint64_t stream_dropped_keyframes = 0;
     std::uint64_t stream_reassembly_timeout_total = 0;
@@ -3208,6 +3213,8 @@ int run_runtime_mode(
     std::mutex stream_encoder_mutex;
     bool stream_encoder_started = false;
     redclaw::capture::EncoderCodec stream_encoder_codec = redclaw::capture::EncoderCodec::kH264;
+    std::uint64_t stream_encoder_codec_negotiation_revision = 0;
+    std::uint64_t stream_encoder_started_at_ms = 0;
     std::uint64_t stream_last_preserved_hardware_rate_revision = 0;
     std::uint64_t stream_last_preserved_hardware_geometry_transaction_id = 0;
     std::uint64_t stream_encoder_start_retry_after_ms = 0;
@@ -4597,8 +4604,12 @@ int run_runtime_mode(
                         : redclaw::protocol::NegotiatedVideoCodec::kH264;
                     observation.ring_backlog = stream_controller_stage_telemetry_snapshot.current_direct_pipe_backlog;
                     observation.ring_slots = kControllerFrameRingSlots;
-                    observation.network_loss_total = stream_incomplete_frames_dropped
-                        + stream_dependency_frames_dropped + stream_dropped_keyframes + stream_reassembly_timeout_total;
+                    observation.network_loss_total = redclaw::protocol::controller_network_loss_total(
+                        stream_incomplete_frames_dropped,
+                        stream_dependency_frames_dropped,
+                        stream_local_dependency_frames_dropped,
+                        stream_dropped_keyframes,
+                        stream_reassembly_timeout_total);
                     hevc_decode_overloaded = controller_hevc_decode_overload.observe(observation);
                 }
                 ++stream_counters.received_frames;
@@ -5406,6 +5417,7 @@ int run_runtime_mode(
                 reassembly_result.frame.keyframe)) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             ++stream_dependency_frames_dropped;
+            ++stream_local_dependency_frames_dropped;
             return;
         }
 
@@ -6449,6 +6461,34 @@ int run_runtime_mode(
             stream_encoder_session.stop();
             stream_encoder_started = false;
         }
+        if (stream_encoder_started
+            && now_ms >= stream_encoder_started_at_ms
+            && now_ms - stream_encoder_started_at_ms >= kDesktopStreamCodecUpgradeMinEncoderAgeMs) {
+            const auto upgrade_selection = video_codec_negotiator.select(host_video_encode);
+            if (redclaw::protocol::should_upgrade_running_encoder_to_hevc(
+                    stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
+                        ? redclaw::protocol::NegotiatedVideoCodec::kHevc
+                        : redclaw::protocol::NegotiatedVideoCodec::kH264,
+                    stream_encoder_codec_negotiation_revision,
+                    codec_negotiation.revision,
+                    upgrade_selection)) {
+                // A late, post-grace or reconnect peer report made HEVC
+                // eligible. The rebuilt encoder starts on an IDR, so the
+                // Controller switches decoders at a keyframe boundary.
+                const std::string reason(upgrade_selection.reason);
+                std::cout << "Runtime video codec renegotiation role=" << role_name
+                          << " from=h264 to=hevc reason=" << reason << '\n';
+                {
+                    std::lock_guard<std::mutex> lock(callback_mutex);
+                    append_timeline(
+                        redclaw::render::RuntimeStatusSeverity::kInfo,
+                        "stream",
+                        "video codec renegotiation from=h264 to=hevc reason=" + reason);
+                }
+                stream_encoder_session.stop();
+                stream_encoder_started = false;
+            }
+        }
         const std::uint32_t adaptive_target_fps = clamp_stream_target_fps(
             adaptive_control.target_fps == 0 ? kDesktopStreamTargetFps : adaptive_control.target_fps);
         const std::uint64_t encode_interval_ms = stream_frame_interval_ms(adaptive_target_fps);
@@ -6778,6 +6818,8 @@ int run_runtime_mode(
 
             stream_encoder_started = true;
             stream_encoder_codec = selected_codec;
+            stream_encoder_codec_negotiation_revision = video_codec_negotiator.snapshot().revision;
+            stream_encoder_started_at_ms = now_ms;
             stream_encoder_start_retry_after_ms = 0;
             const auto encoder_diagnostics = stream_encoder_session.diagnostics();
             {

@@ -94,6 +94,28 @@ bool should_wait_for_peer_video_codec_report(
         && now_ms - required_channels_ready_at_ms < grace_ms;
 }
 
+bool should_upgrade_running_encoder_to_hevc(
+    NegotiatedVideoCodec running_codec,
+    std::uint64_t negotiation_revision_at_start,
+    std::uint64_t current_negotiation_revision,
+    const VideoCodecSelection& current_selection) noexcept {
+    return running_codec == NegotiatedVideoCodec::kH264
+        && current_negotiation_revision != negotiation_revision_at_start
+        && current_selection.codec == NegotiatedVideoCodec::kHevc;
+}
+
+std::uint64_t controller_network_loss_total(
+    std::uint64_t incomplete_frames_dropped,
+    std::uint64_t dependency_frames_dropped,
+    std::uint64_t local_dependency_frames_dropped,
+    std::uint64_t dropped_keyframes,
+    std::uint64_t reassembly_timeouts) noexcept {
+    const std::uint64_t network_dependency_drops = dependency_frames_dropped > local_dependency_frames_dropped
+        ? dependency_frames_dropped - local_dependency_frames_dropped
+        : 0;
+    return incomplete_frames_dropped + network_dependency_drops + dropped_keyframes + reassembly_timeouts;
+}
+
 HostVideoCodecNegotiatorV1::HostVideoCodecNegotiatorV1(VideoCodecPreference preference) noexcept
     : preference_(preference) {}
 

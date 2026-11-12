@@ -290,4 +290,75 @@ TEST(ControllerHevcDecodeOverload, H264OverrunsNeverTrip) {
     EXPECT_TRUE(monitor.observe(overload_sample(5000, 9)));
 }
 
+TEST(ControllerHevcDecodeOverload, LocalIdrWaitDiscardsAreNotNetworkLoss) {
+    EXPECT_EQ(controller_network_loss_total(1, 10, 10, 2, 3), 6U);
+    EXPECT_EQ(controller_network_loss_total(0, 10, 4, 0, 0), 6U);
+    EXPECT_EQ(controller_network_loss_total(0, 3, 5, 0, 0), 0U);
+
+    // Every ring overrun makes the Controller drop dependent frames until the
+    // next IDR. Counted as loss, those discards would reset the clean-network
+    // window on every episode and the fallback would never fire.
+    const auto run = [](bool count_local_as_loss) {
+        ControllerHevcDecodeOverloadMonitor monitor({3, 30000, 2000});
+        std::uint64_t now = 0;
+        std::uint64_t dependency_drops = 0;
+        std::uint64_t local_drops = 0;
+        const auto loss = [&] {
+            return controller_network_loss_total(
+                0, dependency_drops, count_local_as_loss ? 0 : local_drops, 0, 0);
+        };
+        bool tripped = monitor.observe(overload_sample(now, 0, loss()));
+        for (int episode = 0; episode < 3; ++episode) {
+            now += 1000;
+            tripped = monitor.observe(overload_sample(now, 8, loss())) || tripped;
+            dependency_drops += 4;
+            local_drops += 4;
+            tripped = monitor.observe(overload_sample(now += 16, 0, loss())) || tripped;
+        }
+        return std::make_pair(tripped, monitor.ignored_lossy_episodes());
+    };
+    const auto fixed = run(false);
+    EXPECT_TRUE(fixed.first);
+    EXPECT_EQ(fixed.second, 0U);
+    const auto counted_as_loss = run(true);
+    EXPECT_FALSE(counted_as_loss.first);
+    EXPECT_EQ(counted_as_loss.second, 2U);
+}
+
+TEST(VideoCodecNegotiation, RunningH264EncoderUpgradesOncePerNegotiationChange) {
+    HostVideoCodecNegotiatorV1 negotiator(VideoCodecPreference::kAuto);
+    const auto host = hevc_hardware_host();
+    // Grace period expired before the report: the encoder started as H.264.
+    const auto started_at = negotiator.snapshot().revision;
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kH264, started_at, negotiator.snapshot().revision, negotiator.select(host)));
+
+    ASSERT_TRUE(negotiator.observe_peer(1, kKnownVideoCodecMask, kKnownVideoCodecMask));
+    EXPECT_TRUE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kH264, started_at, negotiator.snapshot().revision, negotiator.select(host)));
+    // Already rebuilt at this revision, or already HEVC: nothing to do.
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(NegotiatedVideoCodec::kH264,
+        negotiator.snapshot().revision, negotiator.snapshot().revision, negotiator.select(host)));
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kHevc, started_at, negotiator.snapshot().revision, negotiator.select(host)));
+
+    // The HEVC open failed during the rebuild: the new revision selects H.264.
+    negotiator.record_hevc_encoder_open_failure();
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kH264, started_at, negotiator.snapshot().revision, negotiator.select(host)));
+
+    // An older peer that never reports keeps H.264.
+    HostVideoCodecNegotiatorV1 old_peer(VideoCodecPreference::kAuto);
+    const auto old_start = old_peer.snapshot().revision;
+    ASSERT_TRUE(old_peer.observe_peer(0, 0, 0));
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kH264, old_start, old_peer.snapshot().revision, old_peer.select(host)));
+
+    HostVideoCodecNegotiatorV1 forced(VideoCodecPreference::kH264);
+    const auto forced_start = forced.snapshot().revision;
+    ASSERT_TRUE(forced.observe_peer(1, kKnownVideoCodecMask, kKnownVideoCodecMask));
+    EXPECT_FALSE(should_upgrade_running_encoder_to_hevc(
+        NegotiatedVideoCodec::kH264, forced_start, forced.snapshot().revision, forced.select(host)));
+}
+
 }  // namespace
