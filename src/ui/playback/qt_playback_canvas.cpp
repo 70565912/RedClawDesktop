@@ -1,4 +1,5 @@
 #include "playback_backends.h"
+#include "playback_visibility.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QPainter>
 namespace redclaw::ui {
@@ -10,6 +11,11 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
+  }
+
+  void set_playback_state_callback(std::function<void(bool, const QString&)> callback) override {
+    if (!visibility_) visibility_ = new PlaybackVisibility(this);
+    visibility_->set_callback(std::move(callback));
   }
 
   [[nodiscard]] QString backend_name() const override { return "qt"; }
@@ -73,6 +79,7 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  private:
+  PlaybackVisibility* visibility_ = nullptr;
   QImage current_image_;
 };
 }  // namespace

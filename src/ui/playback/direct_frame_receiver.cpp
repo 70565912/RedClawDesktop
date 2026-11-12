@@ -108,7 +108,7 @@ class DirectFramePipeServer::Impl final {
     pipe_name_ = pipe_name;
     shared_snapshot_ = std::move(prepared_snapshot);
 
-    decoder_resync_needed_.store(false);
+    decoder_reference_.invalidate();
     session_reset_requested_.store(false);
     playback_generation_.store(1);
     decoded_cpu_output_observed_ = false;
@@ -130,6 +130,14 @@ class DirectFramePipeServer::Impl final {
     {
       std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
       keyframe_limiter_.reset();
+    }
+    {
+      std::lock_guard lock(frame_mutex_);
+      playback_state_ = {.session = ++playback_session_counter_};
+      desired_paused_ = false;
+      playback_reason_ = "initial";
+      worker_revision_ = 0;
+      publish_direct_frame_playback_state(shared_header_, playback_state_);
     }
     running_.store(true);
     worker_ = std::thread([this]() {
@@ -174,6 +182,13 @@ class DirectFramePipeServer::Impl final {
 
   void stop() {
     running_.store(false);
+    {
+      std::lock_guard lock(frame_mutex_);
+      playback_state_.paused = true;
+      playback_state_.reason = redclaw::helper::PlaybackPauseReason::kRecovery;
+      ++playback_state_.revision;
+      if (shared_header_) publish_direct_frame_playback_state(shared_header_, playback_state_);
+    }
     HANDLE data_event = nullptr;
     {
       std::lock_guard<std::mutex> lock(handle_mutex_);
@@ -205,7 +220,7 @@ class DirectFramePipeServer::Impl final {
     }
 
     decoder_.reset();
-    decoder_resync_needed_.store(false);
+    decoder_reference_.clear();
     session_reset_requested_.store(false);
     consecutive_decode_failures_ = 0;
     decoded_encoded_frames_ = 0;
@@ -246,52 +261,95 @@ class DirectFramePipeServer::Impl final {
     on_frame_notify_ = std::move(fn);
   }
 
-  void set_on_keyframe_request(std::function<void(QString)> fn) {
+  void set_on_keyframe_request(std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> fn) {
     std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
     on_keyframe_request_ = std::move(fn);
+  }
+
+  redclaw::helper::PlaybackStateSnapshot playback_state() const {
+    std::lock_guard lock(frame_mutex_);
+    return playback_state_;
+  }
+
+  void set_playback_paused(bool paused, const QString& reason) {
+    {
+      std::lock_guard lock(frame_mutex_);
+      if (!shared_header_ || (desired_paused_ == paused
+          && (playback_reason_ == reason || (!paused && !playback_state_.paused)))) return;
+      desired_paused_ = paused;
+      playback_reason_ = reason;
+      ++playback_state_.revision;
+      // Resume stays ineligible until the worker has discarded retained work.
+      playback_state_.paused = true;
+      playback_state_.resynchronizing = true;
+      playback_state_.reason = reason == "display_off" ? redclaw::helper::PlaybackPauseReason::kDisplayOff
+          : reason == "occluded" ? redclaw::helper::PlaybackPauseReason::kOccluded
+          : paused ? redclaw::helper::PlaybackPauseReason::kHidden : redclaw::helper::PlaybackPauseReason::kRecovery;
+      publish_direct_frame_playback_state(shared_header_, playback_state_);
+      latest_frame_ = {};
+      delivered_frame_count_ = latest_frame_count_;
+    }
+    {
+      std::lock_guard lock(keyframe_request_mutex_);
+      keyframe_limiter_.satisfied();
+      pending_keyframe_reason_.clear();
+    }
+    std::lock_guard lock(handle_mutex_);
+    if (data_event_) SetEvent(data_event_);
   }
 
   // Every dependent frame after a gap asks for a keyframe; the limiter turns
   // that burst into one request now and at most one per interval after.
   void request_keyframe(const QString& reason) {
-    std::function<void(QString)> notify;
+    const auto state = playback_state();
+    if (state.paused) return;
+    std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> notify;
     {
       std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
       if (!keyframe_limiter_.request(steady_now_ms())) {
-        pending_keyframe_reason_ = reason;
+        if (pending_keyframe_reason_.isEmpty() || reason.startsWith("presentation_resumed_"))
+          pending_keyframe_reason_ = reason;
         return;
       }
       notify = on_keyframe_request_;
+      pending_keyframe_reason_.clear();
     }
     if (notify) {
-      notify(reason);
+      notify(reason, state);
     }
   }
 
   void poll_coalesced_keyframe_request() {
-    std::function<void(QString)> notify;
+    const auto state = playback_state();
+    if (state.paused) return;
+    std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> notify;
     QString reason;
     {
       std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
       if (!keyframe_limiter_.poll(steady_now_ms())) return;
       notify = on_keyframe_request_;
       reason = pending_keyframe_reason_;
+      pending_keyframe_reason_.clear();
     }
     if (notify) {
-      notify(reason);
+      notify(reason, state);
     }
   }
 
   void keyframe_request_satisfied() {
     std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
+    // Resume has one initial notification even if an unsolicited IDR beats
+    // the coalescer; runtime recovery is armed by that notification.
+    if (keyframe_limiter_.pending() && pending_keyframe_reason_.startsWith("presentation_resumed_")) return;
     keyframe_limiter_.satisfied();
+    pending_keyframe_reason_.clear();
   }
 
   bool take_latest_frame(DirectFrameData* frame, quint64* frame_count) {
     GuiLatencyScope timing(GuiStage::kFrameLock);
     std::lock_guard<std::mutex> lock(frame_mutex_);
     timing.finish();
-    if (!has_frame_content(latest_frame_) || delivered_frame_count_ == latest_frame_count_
+    if (playback_state_.paused || !has_frame_content(latest_frame_) || delivered_frame_count_ == latest_frame_count_
         || latest_frame_.playback_generation != playback_generation_.load()) {
       return false;
     }
@@ -319,11 +377,16 @@ class DirectFramePipeServer::Impl final {
   quint64 request_session_reset() {
     session_reset_requested_.store(true);
     const auto generation = playback_generation_.fetch_add(1) + 1;
-    decoder_resync_needed_.store(true);
     {
       std::lock_guard<std::mutex> lock(frame_mutex_);
       latest_frame_ = DirectFrameData{};
       delivered_frame_count_ = latest_frame_count_;
+      playback_state_.session = ++playback_session_counter_;
+      if (!desired_paused_) playback_reason_ = "session_reset";
+      ++playback_state_.revision;
+      playback_state_.paused = true;
+      playback_state_.resynchronizing = true;
+      if (shared_header_) publish_direct_frame_playback_state(shared_header_, playback_state_);
     }
     {
       std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -391,13 +454,10 @@ class DirectFramePipeServer::Impl final {
         break;
       }
       if (session_reset_requested_.exchange(false)) {
-        decoder_.reset();
-        decoder_resync_needed_.store(true);
+        decoder_reference_.invalidate();
         frame_buffer_pool_.clear();
         consecutive_decode_failures_ = 0;
         decoded_encoded_frames_ = 0;
-        decoded_source_width_ = 0;
-        decoded_source_height_ = 0;
         const auto* shared_header = shared_header_;
         if (shared_header != nullptr) {
           observed_sequence_ = static_cast<quint64>(
@@ -413,6 +473,27 @@ class DirectFramePipeServer::Impl final {
         break;
       }
 
+      QString resume_reason;
+      {
+        std::lock_guard lock(frame_mutex_);
+        if (playback_state_.paused || worker_revision_ != playback_state_.revision) {
+          const auto discarded = redclaw::helper::discard_direct_frame_shared_latest(shared_header_, observed_sequence_);
+          decoder_reference_.invalidate();
+          {
+            std::lock_guard stats_lock(stats_mutex_);
+            stats_.pause_discarded_sequences += discarded;
+          }
+          if (desired_paused_) { worker_revision_ = playback_state_.revision; continue; }
+          // One deferred reset, on this worker, immediately before recovery IDR.
+          worker_revision_ = playback_state_.revision;
+          playback_state_.boundary = observed_sequence_;
+          playback_state_.paused = false;
+          playback_state_.reason = redclaw::helper::PlaybackPauseReason::kVisible;
+          publish_direct_frame_playback_state(shared_header_, playback_state_);
+          resume_reason = "presentation_resumed_" + playback_reason_;
+        }
+      }
+      if (!resume_reason.isEmpty()) request_keyframe(resume_reason);
       const auto before_consume = observed_sequence_;
       consume_latest_frame();
       poll_coalesced_keyframe_request();
@@ -433,6 +514,8 @@ class DirectFramePipeServer::Impl final {
          running_.load() && consumed < redclaw::helper::kDirectFrameSharedMemorySlotCount;
          ++consumed) {
       const auto generation = playback_generation_.load();
+      const auto transition = playback_state();
+      if (transition.paused) return;
       if (session_reset_requested_.load()) return;
       const auto* shared_header = shared_header_;
       if (shared_header == nullptr) {
@@ -440,7 +523,7 @@ class DirectFramePipeServer::Impl final {
       }
 
       const auto read_plan = redclaw::helper::plan_direct_frame_shared_read(
-          mapping_view_, shared_header_, observed_sequence_, decoder_resync_needed_.load());
+          mapping_view_, shared_header_, observed_sequence_, decoder_reference_.needs_idr());
       if (read_plan.sequence == 0) {
         return;
       }
@@ -476,7 +559,7 @@ class DirectFramePipeServer::Impl final {
             ++stats_.shared_snapshot_sequence_changes;
           }
         }
-        decoder_resync_needed_.store(true);
+        decoder_reference_.invalidate();
         request_keyframe("shared_memory_sequence_changed_during_snapshot");
         continue;
       }
@@ -491,7 +574,7 @@ class DirectFramePipeServer::Impl final {
       }
       const bool snapshot_keyframe = (shared_snapshot_.frame.flags & 1U) != 0U;
       const bool encoded_sequence_gap = sequence_gap && is_encoded_format(shared_snapshot_.frame.format);
-      if (encoded_sequence_gap) decoder_resync_needed_.store(true);
+      if (encoded_sequence_gap) decoder_reference_.invalidate();
       if (encoded_sequence_gap && !snapshot_keyframe) {
         {
           std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -500,10 +583,11 @@ class DirectFramePipeServer::Impl final {
         request_keyframe("shared_memory_sequence_gap");
       }
 
+      if (playback_state().revision != transition.revision || playback_state().paused) return;
       const bool decoded = decode_snapshot(shared_snapshot_, &frame);
       if (decoded) {
         frame.playback_generation = generation;
-        publish_latest_frame(std::move(frame), next_sequence);
+        publish_latest_frame(std::move(frame), next_sequence, transition);
       } else {
         frame_buffer_pool_.release(std::move(frame));
       }
@@ -536,7 +620,7 @@ class DirectFramePipeServer::Impl final {
                 || header.row_pitch < header.width * 4U
                 || static_cast<quint64>(header.payload_size)
                        < static_cast<quint64>(header.row_pitch) * header.height))) {
-      decoder_resync_needed_.store(true);
+      decoder_reference_.invalidate();
       return false;
     }
 
@@ -577,14 +661,14 @@ class DirectFramePipeServer::Impl final {
       decoder_.set_d3d11_surface_output_enabled(false);
       prefer_d3d11_surface_output_ = false;
       decoded_cpu_output_observed_ = true;
-      decoder_resync_needed_.store(true);
+      decoder_reference_.invalidate();
     }
 
     const quint64 required_pixel_bytes = header.format == redclaw::helper::kDirectFrameFormatBgra
         ? static_cast<quint64>(header.payload_size)
         : static_cast<quint64>(header.width) * header.height * 4U;
     if (required_pixel_bytes > static_cast<quint64>((std::numeric_limits<std::size_t>::max)())) {
-      decoder_resync_needed_.store(true);
+      decoder_reference_.invalidate();
       return false;
     }
     const bool acquire_cpu_buffer = header.format == redclaw::helper::kDirectFrameFormatBgra
@@ -614,22 +698,12 @@ class DirectFramePipeServer::Impl final {
 
     const bool keyframe = (header.flags & 1u) != 0u;
 
-    if (decoder_resync_needed_.load() && !keyframe) {
+    if (!decoder_reference_.prepare(header.format, header.width, header.height,
+            header.capture_region_revision, keyframe)) {
       request_keyframe("latest_frame_missing_keyframe_dependency");
       return false;
     }
-
-    if (decoded_source_width_ != 0
-        && (decoded_source_width_ != header.width || decoded_source_height_ != header.height)) {
-      decoder_.reset();
-      decoder_resync_needed_.store(true);
-    }
-    decoded_source_width_ = header.width;
-    decoded_source_height_ = header.height;
-
-    if (decoder_resync_needed_.load() && keyframe) {
-      decoder_.reset();
-    }
+    if (decoder_reference_.needs_idr() && keyframe) decoder_.reset();
 
     redclaw::render::DecodedVideoFrame decoded = std::move(*frame);
     std::string decode_error;
@@ -657,6 +731,7 @@ class DirectFramePipeServer::Impl final {
       if (fallback_to_software) {
         const std::string hardware_error = decode_error;
         decoder_.force_software_decode();
+        redclaw::helper::direct_frame_atomic_store_i64(&shared_header_->playback_software_fallback, 1);
         frame_ready = false;
         std::string software_error;
         decode_ok = decoder_.decode_frame_view(
@@ -695,20 +770,26 @@ class DirectFramePipeServer::Impl final {
       {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         ++stats_.decode_failures;
+        redclaw::helper::direct_frame_atomic_increment_i64(&shared_header_->playback_failures);
         stats_.consecutive_decode_failures = consecutive_decode_failures_;
         stats_.decoder_backend = QString::fromStdString(decoder_.active_decoder_name());
         stats_.last_decode_error = QString::fromStdString(decode_error);
       }
-      decoder_resync_needed_.store(true);
+      decoder_reference_.invalidate();
       request_keyframe("gui_decode_failure");
       return false;
     }
 
+    // Successful IDR submission permits following dependencies even when the
+    // decoder buffers output. Displayability is acknowledged only on output.
+    decoder_reference_.submitted(keyframe);
     if (!frame_ready) {
       *frame = std::move(decoded);
       return false;
     }
 
+    if (!decoder_.using_hardware_decode())
+      redclaw::helper::direct_frame_atomic_store_i64(&shared_header_->playback_software_fallback, 1);
     consecutive_decode_failures_ = 0;
     ++decoded_encoded_frames_;
     {
@@ -731,16 +812,18 @@ class DirectFramePipeServer::Impl final {
     decoded_cpu_output_observed_ =
         decoded.output_path != redclaw::render::DecodedVideoFramePath::kD3D11DecodeSurface;
     decoded.frame_id = header.frame_id;
-    decoded.keyframe = keyframe;
+    decoded.keyframe = keyframe || decoder_reference_.awaiting_output();
     decoded.capture_region_revision = header.capture_region_revision;
     decoded.content_rect_x = header.content_rect_x;
     decoded.content_rect_y = header.content_rect_y;
     decoded.content_rect_width = header.content_rect_width;
     decoded.content_rect_height = header.content_rect_height;
 
-    if (keyframe) keyframe_request_satisfied();
-    decoder_resync_needed_.store(false);
     const bool displayable = hand_over_d3d11_surface(&decoded);
+    if (displayable) {
+      if (decoded.keyframe) keyframe_request_satisfied();
+      (void)decoder_reference_.take_recovery_output();
+    }
     *frame = std::move(decoded);
     return displayable;
   }
@@ -780,7 +863,7 @@ class DirectFramePipeServer::Impl final {
     return false;
   }
 
-  void publish_latest_frame(DirectFrameData frame, quint64 sequence) {
+  void publish_latest_frame(DirectFrameData frame, quint64 sequence, const redclaw::helper::PlaybackStateSnapshot& transition) {
     const auto generation = frame.playback_generation;
     const auto output_path = frame.output_path;
     const quint64 frame_id = frame.frame_id;
@@ -788,18 +871,24 @@ class DirectFramePipeServer::Impl final {
     DirectFrameData displaced_frame;
     {
       std::lock_guard<std::mutex> lock(frame_mutex_);
-      if (frame.playback_generation != playback_generation_.load()) return;
+      if (frame.playback_generation != playback_generation_.load() || !redclaw::helper::playback_output_is_current(transition, playback_state_)) {
+        std::lock_guard stats_lock(stats_mutex_);
+        ++stats_.stale_decoded_outputs;
+        return;
+      }
+      if (playback_state_.resynchronizing) {
+        playback_state_.resynchronizing = false;
+        publish_direct_frame_playback_state(shared_header_, playback_state_);
+      }
       displaced_frame = std::move(latest_frame_);
       latest_frame_ = std::move(frame);
       ++latest_frame_count_;
-    }
-    frame_buffer_pool_.release(std::move(displaced_frame));
 
-    {
-      std::lock_guard<std::mutex> lock(stats_mutex_);
+      std::lock_guard<std::mutex> stats_lock(stats_mutex_);
       if (generation != playback_generation_.load()) return;
       ++stats_.observed_sequences;
       ++stats_.published_frames;
+      redclaw::helper::direct_frame_atomic_increment_i64(&shared_header_->playback_progress);
       stats_.last_sequence = sequence;
       stats_.latest_displayable_frame_id = (std::max)(
           stats_.latest_displayable_frame_id, frame_id);
@@ -826,6 +915,7 @@ class DirectFramePipeServer::Impl final {
       }
     }
 
+    frame_buffer_pool_.release(std::move(displaced_frame));
     std::function<void()> notify;
     {
       std::lock_guard<std::mutex> lock(notify_mutex_);
@@ -845,7 +935,7 @@ class DirectFramePipeServer::Impl final {
   redclaw::helper::DirectFrameSharedMemoryHeader* shared_header_ = nullptr;
   std::thread worker_;
   quint64 observed_sequence_ = 0;
-  std::atomic_bool decoder_resync_needed_{false};
+  redclaw::render::DecoderReferenceRecovery decoder_reference_;
   std::atomic_bool session_reset_requested_{false};
   std::atomic<quint64> playback_generation_{1};
   std::atomic_bool cpu_decode_fallback_requested_{false};
@@ -853,13 +943,16 @@ class DirectFramePipeServer::Impl final {
   bool decoded_cpu_output_observed_ = false;
   quint64 consecutive_decode_failures_ = 0;
   quint64 decoded_encoded_frames_ = 0;
-  quint32 decoded_source_width_ = 0;
-  quint32 decoded_source_height_ = 0;
+  redclaw::helper::PlaybackStateSnapshot playback_state_;
+  quint64 playback_session_counter_ = 0;
+  bool desired_paused_ = false;
+  QString playback_reason_ = "initial";
+  quint64 worker_revision_ = 0;
 
   std::mutex notify_mutex_;
   std::function<void()> on_frame_notify_;
   mutable std::mutex keyframe_request_mutex_;
-  std::function<void(QString)> on_keyframe_request_;
+  std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> on_keyframe_request_;
   redclaw::render::KeyframeRequestLimiter keyframe_limiter_{500};
   QString pending_keyframe_reason_;
 
@@ -892,7 +985,9 @@ void DirectFramePipeServer::stop() { impl_->stop(); }
 bool DirectFramePipeServer::is_running() const { return impl_->is_running(); }
 QString DirectFramePipeServer::pipe_name() const { return impl_->pipe_name(); }
 void DirectFramePipeServer::set_on_frame_notify(std::function<void()> fn) { impl_->set_on_frame_notify(std::move(fn)); }
-void DirectFramePipeServer::set_on_keyframe_request(std::function<void(QString)> fn) { impl_->set_on_keyframe_request(std::move(fn)); }
+void DirectFramePipeServer::set_on_keyframe_request(std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> fn) { impl_->set_on_keyframe_request(std::move(fn)); }
+void DirectFramePipeServer::set_playback_paused(bool paused, const QString& reason) { impl_->set_playback_paused(paused, reason); }
+redclaw::helper::PlaybackStateSnapshot DirectFramePipeServer::playback_state() const { return impl_->playback_state(); }
 void DirectFramePipeServer::request_keyframe(const QString& reason) { impl_->request_keyframe(reason); }
 bool DirectFramePipeServer::take_latest_frame(DirectFrameData* frame, quint64* count) { return impl_->take_latest_frame(frame, count); }
 void DirectFramePipeServer::recycle_frame(DirectFrameData frame) { impl_->recycle_frame(std::move(frame)); }

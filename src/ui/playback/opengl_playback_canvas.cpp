@@ -1,5 +1,6 @@
 #if defined(REDCLAW_ENABLE_QT_OPENGL)
 #include "playback_backends.h"
+#include "playback_visibility.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
@@ -35,6 +36,11 @@ class OpenGLPlaybackWidget final : public QOpenGLWidget,
     vbo_.destroy();
     vao_.destroy();
     doneCurrent();
+  }
+
+  void set_playback_state_callback(std::function<void(bool, const QString&)> callback) override {
+    if (!visibility_) visibility_ = new PlaybackVisibility(this);
+    visibility_->set_callback(std::move(callback));
   }
 
   [[nodiscard]] QString backend_name() const override { return "opengl"; }
@@ -168,6 +174,7 @@ void main() { fragColor = texture(uTex, vUV); }
   }
 
  private:
+  PlaybackVisibility* visibility_ = nullptr;
   void upload_texture(const DirectFrameData& frame) {
     const quint32 content_x = frame.content_rect_x;
     const quint32 content_y = frame.content_rect_y;

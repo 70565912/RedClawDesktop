@@ -12,6 +12,8 @@
 #include <QPaintEngine>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QTimer>
+#include <QPointer>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -80,6 +82,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     setAutoFillBackground(false);
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    visibility_timer_ = new QTimer(this);
+    visibility_timer_->setInterval(250);
+    connect(visibility_timer_, &QTimer::timeout, this, [this] {
+      synchronize_visibility("visibility_timer");
+      if (presentation_gate_.occluded() && !presentation_gate_.hidden() && presentation_gate_.display_on())
+        (void)presentation_allowed();
+    });
+    visibility_timer_->start();
   }
   ~D3D11PlaybackWidget() override {
     unregister_display_power_notification();
@@ -123,8 +133,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (diagnostic_log_ && !adapter_description_.empty()) log_adapter_choice();
   }
 
-  void set_presentation_resumed_callback(std::function<void(const QString&)> callback) override {
-    presentation_resumed_ = std::move(callback);
+  void set_playback_state_callback(std::function<void(bool, const QString&)> callback) override {
+    playback_state_changed_ = std::move(callback);
+    last_notified_state_.clear();
+    synchronize_visibility("initial");
   }
 
   // Called at session start. The device outlives sessions, so re-check the
@@ -261,6 +273,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   PresentOutcome present_image(const QImage& image, QString* error_detail) override {
+    if (!presentation_allowed()) return PresentOutcome::kBusyDrop;
     if (image.isNull()) {
       if (error_detail != nullptr) {
         *error_detail = "Playback image is empty.";
@@ -291,7 +304,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         const bool on = state != 0;  // 0 off, 1 on, 2 dimmed
         if (on != presentation_gate_.display_on()) {
           presentation_gate_.set_display_on(on);
-          log_diagnostic(QString("D3D11 presenter display power state=%1; presentation %2 while decode continues")
+          log_diagnostic(QString("D3D11 presenter display power state=%1; presentation %2 and decode follow visibility")
               .arg(QString::fromLatin1(on ? "on" : "off"), QString::fromLatin1(on ? "resumed" : "paused")));
           notify_if_presentation_resumed("display_on");
         }
@@ -319,10 +332,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       unregister_display_power_notification();
       register_display_power_notification();
     }
-    return QWidget::event(event);
+    const bool result = QWidget::event(event);
+    if (event->type() == QEvent::Hide || event->type() == QEvent::Show || event->type() == QEvent::WinIdChange)
+      synchronize_visibility("window_event");
+    return result;
   }
 
   void resizeEvent(QResizeEvent*) override {
+    synchronize_visibility("resize");
+    if (presentation_gate_.paused()) return;
     // Only rebuild the swap chain when the physical pixel size actually changed.
     // Qt may deliver resize events with the same logical size (e.g. from layout
     // re-passes triggered by sibling widget text changes), which would cause
@@ -338,15 +356,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   void paintEvent(QPaintEvent*) override {
-    if (presentation_gate_.occluded() && swap_chain_) {
-      // Uncovering the window repaints it; a static remote desktop sends no
-      // frame that would run the occlusion probe.
-      D3DCallTimer timer(this, "Present(TEST)");
-      const HRESULT hr = swap_chain_->Present(0, DXGI_PRESENT_TEST);
-      timer.finish();
-      presentation_gate_.on_present_result(hr == DXGI_STATUS_OCCLUDED, steady_now_ms());
-      notify_if_presentation_resumed("repaint");
-    }
+    if (!presentation_allowed()) return;
     if (frame_texture_ && !latest_frame_is_surface_) {
       (void)render(nullptr, true);
     } else if (!frame_texture_ && !latest_frame_is_surface_) {
@@ -364,6 +374,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (parentWidget() && parentWidget()->layout()) {
       parentWidget()->layout()->activate();
     }
+    synchronize_visibility("shown");
+    if (presentation_gate_.paused()) return;
     const QSize phys = current_phys_size();
     if (!geometry_transaction_active_ && phys != last_phys_size_) {
       last_phys_size_ = phys;
@@ -378,13 +390,34 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
  private:
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (event->type() == QEvent::WindowStateChange || event->type() == QEvent::Show
+        || event->type() == QEvent::Hide) synchronize_visibility("window_state");
+    return QWidget::eventFilter(watched, event);
+  }
+
+  void synchronize_visibility(const char* trigger) {
+    if (window() != watched_window_) {
+      if (watched_window_) watched_window_->removeEventFilter(this);
+      watched_window_ = window();
+      if (watched_window_) watched_window_->installEventFilter(this);
+    }
+    presentation_gate_.set_hidden(!isVisible() || (window() && window()->isMinimized()));
+    notify_if_presentation_resumed(trigger);
+  }
+
   void notify_if_presentation_resumed(const char* trigger) {
-    if (!presentation_gate_.take_resume()) return;
-    log_diagnostic(QString("D3D11 presenter presentation resumed trigger=%1 presentation_skipped=%2; "
-                           "requesting a keyframe")
-        .arg(QString::fromLatin1(trigger))
-        .arg(presentation_gate_.skipped()));
-    if (presentation_resumed_) presentation_resumed_(QString::fromLatin1(trigger));
+    const auto state = QString::fromLatin1(presentation_gate_.state_name().data());
+    if (visibility_timer_) {
+      if (presentation_gate_.paused()) {
+        if (!visibility_timer_->isActive()) visibility_timer_->start();
+      } else if (visibility_timer_->isActive()) visibility_timer_->stop();
+    }
+    if (state == last_notified_state_) return;
+    last_notified_state_ = state;
+    (void)presentation_gate_.take_resume();
+    if (playback_state_changed_) playback_state_changed_(presentation_gate_.paused(),
+        presentation_gate_.paused() ? state : QString::fromLatin1(trigger));
   }
 
   // Times one D3D/DXGI call on the GUI thread; anything above 50 ms is logged
@@ -457,10 +490,18 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     case redclaw::render::PresentationGate::Decision::kTestOcclusion:
       break;
     }
-    if (!swap_chain_) return true;
+    if (!swap_chain_) {
+      QString error;
+      if (!ensure_device(&error) || !ensure_swap_chain(&error) || !sync_swap_chain_size(&error)) return false;
+    }
     D3DCallTimer timer(this, "Present(TEST)");
     const HRESULT hr = swap_chain_->Present(0, DXGI_PRESENT_TEST);
     timer.finish();
+    if (hr != S_OK && hr != DXGI_STATUS_OCCLUDED) {
+      log_diagnostic(QString("D3D11 occlusion probe failed: 0x%1; rebuilding output").arg(quint32(hr), 8, 16, QLatin1Char('0')));
+      release_device();
+      return false;
+    }
     const bool occluded = hr == DXGI_STATUS_OCCLUDED;
     presentation_gate_.on_present_result(occluded, now);
     notify_if_presentation_resumed("occlusion_probe");
@@ -1143,11 +1184,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     present_timer.finish();
     const bool occluded = present_hr == DXGI_STATUS_OCCLUDED;
     if (occluded != presentation_gate_.occluded()) {
-      log_diagnostic(QString("D3D11 presenter swap chain %1; presentation %2 while decode continues")
+      log_diagnostic(QString("D3D11 presenter swap chain %1; presentation %2 and decode follow visibility")
           .arg(QString::fromLatin1(occluded ? "occluded" : "visible"),
                QString::fromLatin1(occluded ? "throttled" : "resumed")));
     }
-    presentation_gate_.on_present_result(occluded, steady_now_ms());
+    if (present_hr == S_OK || present_hr == DXGI_STATUS_OCCLUDED) {
+      presentation_gate_.on_present_result(occluded, steady_now_ms());
+      notify_if_presentation_resumed("present");
+    }
     const auto outcome = classify_dxgi_present_result(present_hr);
     if (outcome == PresentOutcome::kBusyDrop) {
       if (error_detail != nullptr) {
@@ -1324,6 +1368,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   PresentOutcome render(QString* error_detail = nullptr, bool redraw = false) {
+    if (!presentation_allowed()) return PresentOutcome::kBusyDrop;
     GuiLatencyScope preparation(GuiStage::kPresentPrepare);
     if (!context_ || !swap_chain_ || !render_target_ || !frame_srv_) {
       if (error_detail) *error_detail = "CPU-transfer presentation resources are unavailable";
@@ -1400,7 +1445,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   redclaw::render::PresentationGate presentation_gate_;
   redclaw::render::SlowCallReporter slow_calls_;
   std::function<void(const QString&)> diagnostic_log_;
-  std::function<void(const QString&)> presentation_resumed_;
+  std::function<void(bool, const QString&)> playback_state_changed_;
+  QString last_notified_state_;
+  QTimer* visibility_timer_ = nullptr;
+  QPointer<QWidget> watched_window_;
   std::string adapter_description_;
   std::string adapter_reason_;
   HPOWERNOTIFY display_power_notification_ = nullptr;

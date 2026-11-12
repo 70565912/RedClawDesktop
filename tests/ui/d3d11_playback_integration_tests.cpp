@@ -8,6 +8,7 @@
 #include "ui/connection_overlay.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QMainWindow>
+#include <atomic>
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_control_hint_overlay.h"
@@ -482,7 +483,7 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
     ASSERT_NE(writer.event, nullptr);
     auto* shared = static_cast<DirectFrameSharedMemoryHeader*>(writer.view);
     std::uint64_t sequence = 0;
-    auto publish = [&](std::uint64_t frame_id) {
+    auto publish = [&](std::uint64_t frame_id, std::uint32_t format = kDirectFrameFormatBgra, std::uint64_t geometry = 1) {
         const auto next = sequence + 1;
         const auto slot_index = static_cast<std::uint32_t>((next - 1) % kDirectFrameSharedMemorySlotCount);
         auto* slot = direct_frame_shared_slot_header(writer.view, slot_index);
@@ -492,8 +493,8 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
         slot->frame = {};
         std::memcpy(slot->frame.magic, kDirectFrameChannelMagic, sizeof(kDirectFrameChannelMagic));
         slot->frame.width = slot->frame.height = 2; slot->frame.row_pitch = 8;
-        slot->frame.format = kDirectFrameFormatBgra; slot->frame.frame_id = frame_id;
-        slot->frame.capture_region_revision = 1;
+        slot->frame.format = format; slot->frame.frame_id = frame_id;
+        slot->frame.capture_region_revision = geometry;
         slot->frame.content_rect_width = slot->frame.content_rect_height = 2;
         slot->frame.payload_size = 16;
         std::memset(direct_frame_shared_slot_payload(slot), 128, 16);
@@ -522,7 +523,68 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
     EXPECT_EQ(receiver.stats_snapshot().playback_generation, generation);
     EXPECT_EQ(receiver.stats_snapshot().latest_displayable_frame_id, 1U);
     EXPECT_EQ(receiver.stats_snapshot().decode_failures, 0U);
+    std::atomic<unsigned> requests{0};
+    receiver.set_on_keyframe_request([&](QString reason, PlaybackStateSnapshot state) {
+        EXPECT_TRUE(reason.startsWith("presentation_resumed_"));
+        EXPECT_FALSE(state.paused);
+        ++requests;
+    });
+    receiver.set_playback_paused(true, "display_off");
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    const auto before_pause=receiver.stats_snapshot();
+    // Invalid encoded payloads must never reach FFmpeg while paused, even
+    // as codec/geometry metadata changes and the ring wraps repeatedly.
+    for (int i=0; i<50; ++i) publish(100+i, i%2 ? kDirectFrameFormatHevc : kDirectFrameFormatH264, 10+i);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (direct_frame_atomic_load_i64(&shared->reader_sequence)<static_cast<LONG64>(sequence)
+        && std::chrono::steady_clock::now()<deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->reader_sequence), static_cast<LONG64>(sequence));
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->reader_active_sequence), 0);
+    EXPECT_EQ(receiver.stats_snapshot().shared_snapshot_copies, before_pause.shared_snapshot_copies);
+    EXPECT_EQ(receiver.stats_snapshot().decode_failures, before_pause.decode_failures);
+    EXPECT_EQ(receiver.stats_snapshot().shared_dependency_gaps, before_pause.shared_dependency_gaps);
+    EXPECT_GE(receiver.stats_snapshot().pause_discarded_sequences, 50U);
+    EXPECT_EQ(requests.load(), 0U);
+    EXPECT_FALSE(receiver.take_latest_frame(&stale, &count));
+    receiver.set_playback_paused(false, "display_on");
+    const auto resume_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (!requests.load() && std::chrono::steady_clock::now()<resume_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_EQ(requests.load(), 1U); // zero-frame resume, after the drain boundary
+    EXPECT_GE(receiver.playback_state().boundary, sequence);
+    EXPECT_TRUE(await_frame(200, generation));
+    receiver.set_playback_paused(true, "hidden");
+    receiver.set_playback_paused(false, "shown");
+    receiver.set_playback_paused(true, "hidden");
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    const auto requests_when_paused = requests.load();
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+    EXPECT_TRUE(receiver.playback_state().paused);
+    EXPECT_EQ(requests.load(), requests_when_paused); // queued limiter work canceled by final pause
+    const auto stopped_session=receiver.playback_state();
     receiver.stop();
+    ASSERT_TRUE(receiver.start(channel+"-next", &error)) << error.toStdString();
+    EXPECT_NE(receiver.playback_state().session, stopped_session.session);
+    EXPECT_FALSE(playback_output_is_current(stopped_session, receiver.playback_state()));
+    receiver.stop();
+}
+
+
+TEST(PlaybackVisibility, D3D11TransitionsWithoutDecodedFramesAndKeepsOtherReasonsClosed) {
+    std::vector<bool> states;
+    QWidget owner;
+    auto renderer=redclaw::ui::try_create_d3d11_playback_renderer(&owner);
+    ASSERT_NE(renderer.canvas, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
+    ASSERT_FALSE(states.empty()); EXPECT_TRUE(states.back());
+    owner.resize(640,360); renderer.widget->resize(owner.size());
+    owner.show(); renderer.widget->show(); QCoreApplication::processEvents();
+    ASSERT_FALSE(states.empty()); EXPECT_FALSE(states.back());
+    owner.showMinimized(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
+    owner.showNormal(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    owner.hide(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
+    owner.show(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    renderer.canvas->set_playback_state_callback({});
 }
 
 int main(int argc, char** argv) {

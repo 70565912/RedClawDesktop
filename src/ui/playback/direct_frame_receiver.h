@@ -1,6 +1,7 @@
 #pragma once
 #if defined(_WIN32)
 #include "playback_canvas.h"
+#include "redclaw/helper/playback_state.h"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -8,6 +9,8 @@
 namespace redclaw::ui {
 struct DirectFrameTransportStats {
   quint64 playback_generation = 1;
+  quint64 pause_discarded_sequences = 0;
+  quint64 stale_decoded_outputs = 0;
   quint64 observed_sequences = 0;
   quint64 skipped_sequences = 0;
   quint64 published_frames = 0;
@@ -84,8 +87,10 @@ public:
     bool is_running() const;
     QString pipe_name() const;
     void set_on_frame_notify(std::function<void()> fn);
-    void set_on_keyframe_request(std::function<void(QString)> fn);
+    void set_on_keyframe_request(std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> fn);
     void request_keyframe(const QString& reason);
+    void set_playback_paused(bool paused, const QString& reason);
+    redclaw::helper::PlaybackStateSnapshot playback_state() const;
     bool take_latest_frame(DirectFrameData* frame, quint64* frame_count);
     void recycle_frame(DirectFrameData frame);
     bool has_pending_frame() const;

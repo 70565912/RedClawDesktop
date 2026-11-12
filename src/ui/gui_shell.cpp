@@ -2337,6 +2337,14 @@ bool launch_gui_shell(
   auto remote_input_state = redclaw::protocol::RemoteInputControlStateV1::kUnavailable;
   auto remote_input_reason = redclaw::protocol::RemoteInputStatusReasonV1::kNone;
   qint64 last_remote_input_metrics_log_ms = 0;
+#if defined(_WIN32)
+  DirectFramePipeServer direct_frame_pipe_server;
+  struct PlaybackCallbackScope final {
+    QPointer<QWidget> widget;
+    PlaybackCanvas* canvas;
+    ~PlaybackCallbackScope() { if (widget) canvas->set_playback_state_callback({}); }
+  } playback_callback_scope{playback_canvas_widget, playback_window_canvas};
+#endif
   auto send_displayable_stats = [&](bool force) {
     if (source_activity_revision == 0 || latest_displayable_frame_id == 0) {
       return false;
@@ -2353,6 +2361,13 @@ bool launch_gui_shell(
     stats.latest_displayable_frame_id = latest_displayable_frame_id;
     stats.latest_displayable_keyframe_id = latest_displayable_keyframe_id;
     stats.latest_presented_frame_id = latest_presented_frame_id;
+#if defined(_WIN32)
+    const auto playback = direct_frame_pipe_server.playback_state();
+    stats.playback_feedback_version = 1;
+    stats.playback_session = playback.session;
+    stats.playback_revision = playback.revision;
+    stats.playback_paused = playback.paused;
+#endif
     stats.received_frames = receiver_decoded_frames;
     stats.reassembled_frames = receiver_decoded_frames;
     stats.decoded_frames = receiver_decoded_frames;
@@ -3375,7 +3390,7 @@ bool launch_gui_shell(
   QSize last_popup_target_size;
   bool playback_window_presented = false;
 #if defined(_WIN32)
-  DirectFramePipeServer direct_frame_pipe_server;
+
   DirectFramePipeServer navigation_frame_pipe_server;
   bool direct_frame_stream_enabled = false;
   bool navigation_frame_stream_enabled = false;
@@ -3468,6 +3483,11 @@ bool launch_gui_shell(
     request.session_epoch = "local";
     request.message_id = ++gui_control_message_id;
     request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    const auto playback = direct_frame_pipe_server.playback_state();
+    if (playback.paused) return;
+    request.playback_feedback_version = 1;
+    request.playback_session = playback.session;
+    request.playback_revision = playback.revision;
     request.payload = reason.left(128).toStdString();
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
@@ -3902,6 +3922,10 @@ bool launch_gui_shell(
     const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
     const double window_seconds = (std::max)(0.001, static_cast<double>(now_ms - direct_frame_last_stats_log_ms) / 1000.0);
     const DirectFrameTransportStats transport = direct_frame_pipe_server.stats_snapshot();
+    append_log(QString("GUI playback pause telemetry discarded=%1 stale_outputs=%2 paused=%3 revision=%4")
+        .arg(transport.pause_discarded_sequences).arg(transport.stale_decoded_outputs)
+        .arg(direct_frame_pipe_server.playback_state().paused)
+        .arg(direct_frame_pipe_server.playback_state().revision));
     const quint64 writer_delta = delta(transport.writer_frames, direct_frame_last_transport_stats.writer_frames);
     const quint64 skipped_delta = delta(transport.skipped_sequences, direct_frame_last_transport_stats.skipped_sequences);
     const quint64 published_delta = delta(transport.published_frames, direct_frame_last_transport_stats.published_frames);
@@ -5214,11 +5238,6 @@ bool launch_gui_shell(
       QString pipe_error;
       QString decode_device_error;
       playback_window_canvas->set_diagnostic_log(&append_log);
-      playback_window_canvas->set_presentation_resumed_callback(
-          [&direct_frame_pipe_server, &direct_frame_stream_enabled](const QString& trigger) {
-            if (!direct_frame_stream_enabled) return;
-            direct_frame_pipe_server.request_keyframe("presentation_resumed_" + trigger);
-          });
       std::uint64_t presenter_adapter_luid = 0;
       const bool has_presentation_adapter =
           playback_window_canvas->d3d11_presentation_adapter(&presenter_adapter_luid, &decode_device_error);
@@ -5274,6 +5293,10 @@ bool launch_gui_shell(
       }
       reset_direct_frame_stats();
       direct_frame_stream_enabled = true;
+      playback_window_canvas->set_playback_state_callback(
+          [&direct_frame_pipe_server, &direct_frame_stream_enabled](bool paused, const QString& reason) {
+            if (direct_frame_stream_enabled) direct_frame_pipe_server.set_playback_paused(paused, reason);
+          });
       args << "--stream-frame-pipe" << pipe_name;
       append_log(QString("Direct frame shared-memory channel ready: %1").arg(pipe_name));
 
@@ -5285,10 +5308,12 @@ bool launch_gui_shell(
         schedule_direct_frame_update();
           });
       direct_frame_pipe_server.set_on_keyframe_request(
-          [session_page, &send_local_keyframe_request](QString reason) {
+          [session_page, &send_local_keyframe_request, &direct_frame_pipe_server](QString reason, redclaw::helper::PlaybackStateSnapshot state) {
             QMetaObject::invokeMethod(
                 session_page,
-                [&send_local_keyframe_request, reason = std::move(reason)]() {
+                [&send_local_keyframe_request, &direct_frame_pipe_server, state, reason = std::move(reason)]() {
+                  const auto current = direct_frame_pipe_server.playback_state();
+                  if (!redclaw::helper::playback_output_is_current(state, current)) return;
                   send_local_keyframe_request(reason);
                 },
                 Qt::QueuedConnection);
