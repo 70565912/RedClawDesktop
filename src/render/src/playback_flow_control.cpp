@@ -121,16 +121,18 @@ void PresentationGate::set_display_on(bool on) noexcept {
 void PresentationGate::on_present_result(bool occluded, std::uint64_t now_ms) noexcept {
     occluded_ = occluded;
     last_occlusion_probe_ms_ = now_ms;
-    // An occluded result drops the frame that triggered it.
-    if (occluded) skipped_while_closed_ = true;
     note_state_change();
 }
 
 void PresentationGate::note_state_change() noexcept {
-    if (skipped_while_closed_ && !hidden_ && display_on_ && !occluded_) {
-        skipped_while_closed_ = false;
+    // A transition itself invalidates decoder references, even with no frames.
+    if (paused()) {
+        resume_pending_ = false;
+    }
+    if (was_paused_ && !paused()) {
         resume_pending_ = true;
     }
+    was_paused_ = paused();
 }
 
 bool PresentationGate::take_resume() noexcept {
@@ -142,7 +144,6 @@ bool PresentationGate::take_resume() noexcept {
 PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexcept {
     if (hidden_ || !display_on_) {
         ++skipped_;
-        skipped_while_closed_ = true;
         return Decision::kSkip;
     }
     if (!occluded_) return Decision::kPresent;
@@ -151,7 +152,6 @@ PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexce
         return Decision::kTestOcclusion;
     }
     ++skipped_;
-    skipped_while_closed_ = true;
     return Decision::kSkip;
 }
 

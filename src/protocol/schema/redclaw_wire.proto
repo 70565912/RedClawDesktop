@@ -308,6 +308,12 @@ message StreamControlMessageV1 {
   // controller_hevc_decode_overload. Diagnostics only; receivers ignore it
   // when empty, oversized or malformed.
   string video_codec_change_reason = 95;
+  // Receiver feedback validity only; never a sender pause command.
+  uint32 playback_feedback_version = 96;
+  bool playback_paused = 97;
+  uint64 playback_revision = 98;
+  uint64 playback_session = 99;
+  bool decode_sample_valid = 100;
 }
 
 message WorkspaceControlV1 {

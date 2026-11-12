@@ -195,6 +195,11 @@ bool ControllerHevcDecodeOverloadMonitor::observe(const Observation& observation
         loss_seen_ = true;
         last_loss_total_ = observation.network_loss_total;
     }
+    if (!observation.playback_eligible || playback_revision_ != observation.playback_revision) {
+        clear_overrun_history();
+        playback_revision_ = observation.playback_revision;
+        return false;
+    }
     if (triggered_) return false;
     if (observation.codec != NegotiatedVideoCodec::kHevc || observation.ring_slots == 0) {
         in_overrun_ = false;
@@ -221,6 +226,61 @@ bool ControllerHevcDecodeOverloadMonitor::observe(const Observation& observation
     if (episodes_.size() >= config_.overrun_episodes) {
         triggered_ = true;
         return true;
+    }
+    return false;
+}
+
+void ControllerHevcDecodeOverloadMonitor::clear_overrun_history() noexcept {
+    episodes_.clear();
+    in_overrun_ = false;
+}
+
+void ControllerHevcDecodeOverloadMonitor::rearm() noexcept {
+    clear_overrun_history();
+    triggered_ = false;
+}
+
+void ControllerHevcTrialPolicy::on_fallback(std::uint64_t now_ms) noexcept {
+    withdrawn_ = true;
+    fallback_ms_ = now_ms;
+    stable_since_ms_ = trial_since_ms_ = 0;
+    trial_succeeded_ = false;
+}
+
+bool ControllerHevcTrialPolicy::observe(const Sample& sample) noexcept {
+    const auto now = sample.now_ms;
+    const bool progressed = sample.progress > progress_;
+    if (progressed) last_progress_ms_ = now;
+    const bool healthy = sample.playback_revision == playback_revision_
+        && sample.visible && sample.feedback_fresh && sample.backend_healthy
+        && !sample.recovering && sample.ring_slots != 0 && sample.backlog < sample.ring_slots
+        && sample.failures == failures_ && sample.recovery_breaks == breaks_
+        && last_sample_ms_ != 0 && now >= last_sample_ms_ && now - last_sample_ms_ <= 5000
+        && last_progress_ms_ != 0 && now >= last_progress_ms_ && now - last_progress_ms_ <= 5000;
+    last_sample_ms_ = now;
+    playback_revision_ = sample.playback_revision;
+    progress_ = sample.progress;
+    failures_ = sample.failures;
+    breaks_ = sample.recovery_breaks;
+    if (!healthy) {
+        stable_since_ms_ = trial_since_ms_ = 0;
+        return false;
+    }
+    if (!stable_since_ms_) stable_since_ms_ = now;
+    if (withdrawn_ && !attempted_ && sample.codec == NegotiatedVideoCodec::kH264
+        && now >= fallback_ms_ && now - fallback_ms_ >= 300000
+        && now - stable_since_ms_ >= 120000) {
+        attempted_ = true;
+        withdrawn_ = false;
+        attempt_progress_ = sample.progress;
+        return true;
+    }
+    if (attempted_ && !withdrawn_ && sample.codec == NegotiatedVideoCodec::kHevc
+        && sample.progress > attempt_progress_) {
+        if (!trial_since_ms_) trial_since_ms_ = now;
+        if (now - trial_since_ms_ >= 30000) trial_succeeded_ = true;
+    } else {
+        trial_since_ms_ = 0;
     }
     return false;
 }

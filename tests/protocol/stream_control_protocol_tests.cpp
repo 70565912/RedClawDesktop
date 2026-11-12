@@ -620,3 +620,33 @@ TEST(StreamControlProtocolTests, CaptureRegionMessagesAreBoundedAndVersioned) {
 }
 
 }  // namespace
+
+TEST(PlaybackCapacityFeedback, OptionalFieldsRoundTripAndLegacyDefaults) {
+    using namespace redclaw::protocol;
+    StreamControlMessageV1 current;
+    current.type = StreamControlMessageTypeV1::kReceiverNetworkStats;
+    current.session_epoch = "epoch"; current.message_id = 1; current.sent_at_ms = 1;
+    auto legacy = parse_stream_control_message_v1(serialize_stream_control_message_v1(current));
+    ASSERT_TRUE(legacy.ok) << legacy.error;
+    EXPECT_EQ(legacy.value.playback_feedback_version, 0U);
+    EXPECT_TRUE(decode_capacity_feedback_is_valid(legacy.value, legacy.value));
+    current.playback_feedback_version = 1; current.playback_session = 7;
+    current.playback_revision = 12; current.playback_paused = true;
+    current.received_frames = current.reassembled_frames = 900; current.decoded_frames = 10;
+    auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(current));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.reassembled_frames, 900U);
+    EXPECT_EQ(parsed.value.decoded_frames, 10U);
+    EXPECT_TRUE(parsed.value.playback_paused);
+    EXPECT_FALSE(decode_capacity_feedback_is_valid(parsed.value, parsed.value));
+    auto active = current; active.playback_paused = false; active.decode_sample_valid = true;
+    ++active.playback_revision;
+    EXPECT_FALSE(decode_capacity_feedback_is_valid(active, current));
+    EXPECT_TRUE(decode_capacity_feedback_is_valid(active, active));
+    auto toggled = active; toggled.playback_revision += 2;
+    EXPECT_FALSE(decode_capacity_feedback_is_valid(toggled, active));
+    ++toggled.playback_session;
+    EXPECT_FALSE(decode_capacity_feedback_is_valid(toggled, active));
+    toggled.playback_feedback_version = 2;
+    EXPECT_FALSE(decode_capacity_feedback_is_valid(toggled, active));
+}

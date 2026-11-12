@@ -67,7 +67,7 @@ TEST_F(DirectFrameReadPlanTest, BurstRetainsBothPredictiveDependenciesWithOneReu
     }
     EXPECT_EQ(select(102).sequence, 0U);
     EXPECT_EQ(header->slot_count, kSlots);
-    EXPECT_EQ(header->version, 4U);
+    EXPECT_EQ(header->version, 5U);
 }
 
 TEST_F(DirectFrameReadPlanTest, ReaderStallShorterThanTheRingCatchesUpWithoutAGap) {
@@ -218,3 +218,41 @@ TEST(DirectFrameSharedSnapshotTest, RejectsUnpreparedBufferWithoutClaimingSlot) 
 }  // namespace
 
 #endif
+
+#if defined(_WIN32)
+TEST(PlaybackDiscard, CapturesLatestWithoutInspectingInvalidOrHeldSlots) {
+    using namespace redclaw::helper;
+    DirectFrameSharedMemoryHeader header{};
+    initialize_direct_frame_shared_memory(&header);
+    direct_frame_atomic_store_i64(&header.latest_sequence, 100000);
+    std::uint64_t observed = 7;
+    EXPECT_EQ(discard_direct_frame_shared_latest(&header, observed), 99993U);
+    EXPECT_EQ(observed, 100000U);
+    EXPECT_EQ(direct_frame_atomic_load_i64(&header.reader_sequence), 100000);
+    EXPECT_EQ(direct_frame_atomic_load_i64(&header.reader_active_sequence), 0);
+    EXPECT_EQ(discard_direct_frame_shared_latest(&header, observed), 0U);
+    publish_direct_frame_playback_state(&header, {.session=9, .revision=12, .paused=true,
+        .reason=PlaybackPauseReason::kDisplayOff, .boundary=observed});
+    const auto paused = read_direct_frame_playback_state(&header);
+    EXPECT_TRUE(paused.paused); EXPECT_EQ(paused.session, 9U); EXPECT_EQ(paused.revision, 12U);
+    EXPECT_EQ(paused.boundary, observed);
+    direct_frame_atomic_increment_i64(&header.playback_guard);
+    EXPECT_FALSE(read_direct_frame_playback_state(&header).valid);
+    EXPECT_TRUE(read_direct_frame_playback_state(&header).paused);
+}
+#endif
+
+TEST(PlaybackTransitionFence, DelayedDecodeAndQueuedRequestStayInvalidAfterRapidResumeOrReconnect) {
+    using namespace redclaw::helper;
+    PlaybackStateSnapshot submitted{.session=1, .revision=2};
+    auto current=submitted;
+    EXPECT_TRUE(playback_output_is_current(submitted, current));
+    current.paused=true; ++current.revision;
+    EXPECT_FALSE(playback_output_is_current(submitted, current));
+    current.paused=false; ++current.revision;
+    EXPECT_FALSE(playback_output_is_current(submitted, current));
+    auto new_work=current;
+    EXPECT_TRUE(playback_output_is_current(new_work, current));
+    ++current.session;
+    EXPECT_FALSE(playback_output_is_current(new_work, current));
+}

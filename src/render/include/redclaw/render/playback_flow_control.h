@@ -119,9 +119,37 @@ private:
     std::uint64_t suppressed_ = 0;
 };
 
+// Decode-worker reference state. Successful IDR submission and displayable
+// output are separate events: buffered decoders must receive following P AUs.
+class DecoderReferenceRecovery final {
+public:
+    void invalidate() noexcept { needs_idr_ = true; accepted_idr_ = false; }
+    void clear() noexcept { needs_idr_ = false; accepted_idr_ = false; }
+    [[nodiscard]] bool needs_idr() const noexcept { return needs_idr_; }
+    [[nodiscard]] bool awaiting_output() const noexcept { return accepted_idr_; }
+    bool prepare(std::uint32_t codec, std::uint32_t width, std::uint32_t height,
+        std::uint64_t geometry, bool idr) noexcept {
+        if (codec != codec_ || width != width_ || height != height_ || geometry != geometry_) invalidate();
+        codec_ = codec; width_ = width; height_ = height; geometry_ = geometry;
+        return !needs_idr_ || idr;
+    }
+    void submitted(bool idr) noexcept {
+        if (idr) { needs_idr_ = false; accepted_idr_ = true; }
+    }
+    bool take_recovery_output() noexcept {
+        const bool accepted = accepted_idr_;
+        accepted_idr_ = false;
+        return accepted;
+    }
+private:
+    bool needs_idr_ = false, accepted_idr_ = false;
+    std::uint32_t codec_ = 0, width_ = 0, height_ = 0;
+    std::uint64_t geometry_ = 0;
+};
+
 // Decides whether the presenter may touch D3D for a frame. Hidden windows
 // and a powered-off display skip every D3D call; an occluded swap chain is
-// probed with DXGI_PRESENT_TEST at a low rate. Decode is not affected.
+// probed with DXGI_PRESENT_TEST at a low rate, independently of video delivery.
 class PresentationGate final {
 public:
     enum class Decision {
@@ -137,15 +165,13 @@ public:
     // Report the result of a real or test Present.
     void on_present_result(bool occluded, std::uint64_t now_ms) noexcept;
     Decision decide(std::uint64_t now_ms) noexcept;
-    // True once after presentation reopens (shown, restored, display on, no
-    // longer occluded) if a frame was skipped while it was closed. The
-    // skipped frames were decoded but never shown, and a static remote
-    // desktop may send nothing newer, so the caller asks for a keyframe.
+    // True once after all pause reasons clear, even without frame delivery.
     bool take_resume() noexcept;
 
     [[nodiscard]] bool hidden() const noexcept { return hidden_; }
     [[nodiscard]] bool display_on() const noexcept { return display_on_; }
     [[nodiscard]] bool occluded() const noexcept { return occluded_; }
+    [[nodiscard]] bool paused() const noexcept { return hidden_ || !display_on_ || occluded_; }
     [[nodiscard]] std::uint64_t skipped() const noexcept { return skipped_; }
     [[nodiscard]] std::string_view state_name() const noexcept;
 
@@ -156,8 +182,8 @@ private:
     bool hidden_ = false;
     bool display_on_ = true;
     bool occluded_ = false;
-    bool skipped_while_closed_ = false;
     bool resume_pending_ = false;
+    bool was_paused_ = false;
     std::uint64_t last_occlusion_probe_ms_ = 0;
     std::uint64_t skipped_ = 0;
 };

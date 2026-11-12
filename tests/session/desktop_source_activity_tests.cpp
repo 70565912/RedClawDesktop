@@ -216,7 +216,41 @@ void test_sparse_updates_preserve_predictive_chain() {
     require(tracker.on_capture_frame(61500, 1, 1).request_keyframe, "real recovery still requires IDR");
 }
 
+void test_playback_pause_suspends_and_restarts_one_recovery_generation() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    auto first=coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 1, 1000, 0);
+    require(first.request_keyframe, "initial dependency break requests IDR");
+    coordinator.on_keyframe_submitted(2, 1001, 0);
+    coordinator.set_playback_state(1, 1, true);
+    for (std::uint64_t now=2000; now<20000; now+=500) {
+        require(!coordinator.tick(now, 0).request_keyframe, "pause cancels runtime retries");
+        require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 3, now, 0).request_keyframe,
+            "pause suppresses gaps even when draining stalls");
+        coordinator.on_keyframe_submitted(4, now, 0);
+        require(coordinator.should_accept_frame(false), "network and shared ring continue while paused");
+    }
+    coordinator.set_playback_state(1, 2, false);
+    require(!coordinator.tick(21000, 0).request_keyframe, "receiver owns initial resume request");
+    auto resumed=coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 21000, 0);
+    require(resumed.request_keyframe && resumed.snapshot.generation == first.snapshot.generation+1,
+        "resume starts exactly one generation");
+    require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kDependencyFrame, 5, 21001, 0).request_keyframe,
+        "duplicate initial request coalesces");
+    require(!coordinator.tick(21499, 0).request_keyframe, "retry observes minimum interval");
+    require(coordinator.tick(21500, 0).request_keyframe, "failed delivery gets bounded-delay retry");
+    coordinator.on_keyframe_submitted(6, 21501, 0);
+    require(coordinator.should_accept_frame(false), "submitted IDR permits dependencies awaiting output");
+    coordinator.on_displayable_ack(6);
+    require(!coordinator.tick(30000, 0).request_keyframe, "displayable output stops retries");
+    coordinator.set_playback_state(1, 3, true);
+    coordinator.set_playback_state(2, 4, true);
+    coordinator.reset();
+    require(!coordinator.tick(40000, 0).request_keyframe, "reset cannot revive a paused session");
+}
+
 int main() {
+    test_playback_pause_suspends_and_restarts_one_recovery_generation();
     test_sparse_updates_preserve_predictive_chain();
     test_static_requires_healthy_timeouts_and_displayable_keyframe();
     test_stall_is_unknown_and_frame_change_reactivates();

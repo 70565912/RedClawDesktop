@@ -362,3 +362,105 @@ TEST(VideoCodecNegotiation, RunningH264EncoderUpgradesOncePerNegotiationChange) 
 }
 
 }  // namespace
+
+TEST(ControllerHevcPlayback, StalledDrainAndTransitionBacklogCannotTripButSecondVisibleOverloadCan) {
+    using namespace redclaw::protocol;
+    ControllerHevcDecodeOverloadMonitor monitor({1, 30000, 5000});
+    ControllerHevcDecodeOverloadMonitor::Observation sample;
+    sample.codec = NegotiatedVideoCodec::kHevc; sample.ring_slots = 6;
+    sample.playback_eligible = false; sample.playback_revision = 1;
+    for (int i=0; i<100; ++i) {
+        sample.now_ms += 100; sample.ring_backlog += 100;
+        EXPECT_FALSE(monitor.observe(sample));
+    }
+    EXPECT_EQ(monitor.counted_episodes(), 0U);
+    sample.playback_eligible = true; sample.playback_revision = 2;
+    EXPECT_FALSE(monitor.observe(sample)); // stale resume-boundary observation
+    sample.ring_backlog = 0; EXPECT_FALSE(monitor.observe(sample));
+    sample.ring_backlog = 6; EXPECT_TRUE(monitor.observe(sample));
+    monitor.clear_overrun_history(); EXPECT_TRUE(monitor.triggered());
+    monitor.rearm(); EXPECT_FALSE(monitor.triggered());
+    EXPECT_TRUE(monitor.observe(sample));
+}
+
+TEST(ControllerHevcTrial, WaitsFiveMinutesAnd120SecondsThenObservesActualHevcAndExhaustsBudget) {
+    using namespace redclaw::protocol;
+    ControllerHevcTrialPolicy policy;
+    policy.on_fallback(1000);
+    ControllerHevcTrialPolicy::Sample sample;
+    sample.visible = sample.feedback_fresh = sample.backend_healthy = true;
+    int attempts = 0;
+    for (sample.now_ms=1000; sample.now_ms<=301000; sample.now_ms+=1000) {
+        ++sample.progress;
+        const bool attempt = policy.observe(sample);
+        if (sample.now_ms<301000) EXPECT_FALSE(attempt);
+        attempts += attempt;
+    }
+    EXPECT_EQ(attempts, 1); EXPECT_TRUE(policy.attempted());
+    for (; sample.now_ms<350000; sample.now_ms+=1000) {
+        ++sample.progress; EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_FALSE(policy.trial_succeeded()); // old Host stays on H.264
+    sample.codec = NegotiatedVideoCodec::kHevc;
+    for (; sample.now_ms<=381000; sample.now_ms+=1000) {
+        ++sample.progress; EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_TRUE(policy.trial_succeeded());
+    policy.on_fallback(sample.now_ms);
+    for (int i=0; i<700; ++i) {
+        sample.now_ms+=1000; ++sample.progress; sample.codec=NegotiatedVideoCodec::kH264;
+        EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_FALSE(policy.trial_succeeded());
+}
+
+TEST(ControllerHevcTrial, PauseFailuresStallsAndSoftwareBackendResetStableEligibility) {
+    using namespace redclaw::protocol;
+    for (int failure=0; failure<5; ++failure) {
+        ControllerHevcTrialPolicy policy; policy.on_fallback(1);
+        ControllerHevcTrialPolicy::Sample sample;
+        sample.feedback_fresh = sample.backend_healthy = true;
+        for (sample.now_ms=1000; sample.now_ms<450000; sample.now_ms+=1000) {
+            ++sample.progress;
+            if (sample.now_ms%100000 == 0) {
+                if (failure==0) sample.visible=false;
+                if (failure==1) ++sample.failures;
+                if (failure==2) ++sample.recovery_breaks;
+                if (failure==3) sample.feedback_fresh=false;
+            }
+            if (failure==4) sample.backend_healthy=false;
+            EXPECT_FALSE(policy.observe(sample));
+            sample.visible = sample.feedback_fresh = true;
+        }
+    }
+}
+
+TEST(ControllerHevcPlayback, PausedNetworkLossSurvivesHistoryClearAndRearm) {
+    using namespace redclaw::protocol;
+    ControllerHevcDecodeOverloadMonitor monitor({1,30000,5000});
+    ControllerHevcDecodeOverloadMonitor::Observation s;
+    s.codec=NegotiatedVideoCodec::kHevc; s.ring_slots=6; s.now_ms=1;
+    EXPECT_FALSE(monitor.observe(s));
+    s.playback_eligible=false; s.playback_revision=1; s.network_loss_total=1; s.now_ms=2;
+    EXPECT_FALSE(monitor.observe(s));
+    monitor.rearm();
+    s.playback_eligible=true; s.playback_revision=2; s.ring_backlog=6; s.now_ms=3;
+    EXPECT_FALSE(monitor.observe(s));
+    s.now_ms=4; EXPECT_FALSE(monitor.observe(s));
+    EXPECT_EQ(monitor.ignored_lossy_episodes(),1U);
+    s.ring_backlog=0; s.now_ms=6000; EXPECT_FALSE(monitor.observe(s));
+    s.ring_backlog=6; ++s.now_ms; EXPECT_TRUE(monitor.observe(s));
+}
+
+TEST(ControllerHevcTrial, ZeroFrameRapidToggleStillResetsContinuousVisibleTime) {
+    using namespace redclaw::protocol;
+    ControllerHevcTrialPolicy policy; policy.on_fallback(1);
+    ControllerHevcTrialPolicy::Sample sample;
+    sample.feedback_fresh=sample.backend_healthy=true;
+    for (sample.now_ms=1000; sample.now_ms<420000; sample.now_ms+=1000) {
+        ++sample.progress;
+        if (sample.now_ms%100000==0) sample.playback_revision+=2;
+        EXPECT_FALSE(policy.observe(sample));
+    }
+    EXPECT_FALSE(policy.attempted());
+}

@@ -164,6 +164,7 @@ enum class ControllerDecoderBreakReason : std::uint32_t {
     kSharedSequenceGap = 1U << 7U,
     kSharedSequenceChanged = 1U << 8U,
     kDecodeFailure = 1U << 9U,
+    kPresentationResumed = 1U << 10U,
 };
 
 struct ControllerDecoderRecoveryConfig {
@@ -201,6 +202,7 @@ public:
         ControllerDecoderRecoveryConfig config = {});
 
     void reset();
+    void set_playback_state(std::uint64_t session, std::uint64_t revision, bool paused);
     ControllerDecoderRecoveryUpdate on_dependency_break(
         ControllerDecoderBreakReason reason,
         std::uint64_t frame_id,
@@ -232,6 +234,9 @@ private:
     ControllerDecoderRecoveryConfig config_ {};
     mutable std::mutex mutex_;
     ControllerDecoderRecoverySnapshot snapshot_ {};
+    bool playback_paused_ = false;
+    bool awaiting_resume_request_ = false;
+    std::uint64_t playback_session_ = 0, playback_revision_ = 0;
 };
 
 enum class IncomingHandshakeDecision {

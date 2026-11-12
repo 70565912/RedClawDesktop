@@ -207,6 +207,11 @@ wire::StreamControlMessageV1 to_wire(const StreamControlMessageV1& message) {
     encoded.set_video_decode_codecs(message.video_decode_codecs);
     encoded.set_video_hardware_decode_codecs(message.video_hardware_decode_codecs);
     encoded.set_video_codec_change_reason(message.video_codec_change_reason);
+    encoded.set_playback_feedback_version(message.playback_feedback_version);
+    encoded.set_playback_paused(message.playback_paused);
+    encoded.set_playback_revision(message.playback_revision);
+    encoded.set_playback_session(message.playback_session);
+    encoded.set_decode_sample_valid(message.decode_sample_valid);
     if (message.workspace) {
         const auto& data = *message.workspace;
         auto* nested = encoded.mutable_workspace();
@@ -340,6 +345,11 @@ bool from_wire(const wire::StreamControlMessageV1& encoded, StreamControlMessage
     message.video_decode_codecs = encoded.video_decode_codecs();
     message.video_hardware_decode_codecs = encoded.video_hardware_decode_codecs();
     message.video_codec_change_reason = encoded.video_codec_change_reason();
+    message.playback_feedback_version = encoded.playback_feedback_version();
+    message.playback_paused = encoded.playback_paused();
+    message.playback_revision = encoded.playback_revision();
+    message.playback_session = encoded.playback_session();
+    message.decode_sample_valid = encoded.decode_sample_valid();
     if (encoded.has_workspace()) {
         const auto& nested = encoded.workspace();
         if (nested.action() > static_cast<std::uint32_t>(WorkspaceActionV1::kClipboardMoveReceipt)

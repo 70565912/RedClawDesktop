@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "redclaw/helper/playback_state.h"
 
 namespace redclaw::helper {
 
@@ -53,6 +54,17 @@ struct alignas(8) DirectFrameSharedMemoryHeader {
     volatile LONG64 writer_frame_count = 0;
     volatile LONG64 writer_oversize_drop_count = 0;
     volatile LONG64 writer_busy_drop_count = 0;
+    // Single GUI/worker owner under its playback mutex. Odd guard = updating.
+    volatile LONG64 playback_guard = 0;
+    volatile LONG64 playback_session = 1;
+    volatile LONG64 playback_revision = 0;
+    volatile LONG64 playback_paused = 0;
+    volatile LONG64 playback_reason = 0;
+    volatile LONG64 playback_boundary = 0;
+    volatile LONG64 playback_resynchronizing = 0;
+    volatile LONG64 playback_progress = 0;
+    volatile LONG64 playback_failures = 0;
+    volatile LONG64 playback_software_fallback = 0;
 };
 
 struct alignas(8) DirectFrameSharedMemorySlotHeader {
@@ -68,7 +80,7 @@ constexpr std::uint32_t kDirectFrameFormatH264 = 2;
 constexpr std::uint32_t kDirectFrameFormatHevc = 3;
 constexpr std::uint32_t kDirectFrameFormatJpeg = 4;
 
-constexpr std::uint32_t kDirectFrameSharedMemoryVersion = 4;
+constexpr std::uint32_t kDirectFrameSharedMemoryVersion = 5;
 // Six slots absorb ~200 ms of 30 fps reader stalls without losing a reference
 // frame. The mapping is committed but pages are touched only when written.
 constexpr std::uint32_t kDirectFrameSharedMemorySlotCount = 6;
@@ -116,6 +128,47 @@ inline LONG64 direct_frame_atomic_increment_i64(volatile LONG64* value) {
     return InterlockedIncrement64(value);
 }
 
+inline void publish_direct_frame_playback_state(DirectFrameSharedMemoryHeader* header,
+    const PlaybackStateSnapshot& state) {
+    direct_frame_atomic_increment_i64(&header->playback_guard);
+    direct_frame_atomic_store_i64(&header->playback_session, static_cast<LONG64>(state.session));
+    direct_frame_atomic_store_i64(&header->playback_revision, static_cast<LONG64>(state.revision));
+    direct_frame_atomic_store_i64(&header->playback_paused, state.paused ? 1 : 0);
+    direct_frame_atomic_store_i64(&header->playback_reason, static_cast<LONG64>(state.reason));
+    direct_frame_atomic_store_i64(&header->playback_boundary, static_cast<LONG64>(state.boundary));
+    direct_frame_atomic_store_i64(&header->playback_resynchronizing, state.resynchronizing ? 1 : 0);
+    direct_frame_atomic_increment_i64(&header->playback_guard);
+}
+
+inline PlaybackStateSnapshot read_direct_frame_playback_state(const DirectFrameSharedMemoryHeader* header) {
+    if (!header) return {};
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto guard = direct_frame_atomic_load_i64(&header->playback_guard);
+        if (guard & 1) continue;
+        PlaybackStateSnapshot state;
+        state.session = direct_frame_atomic_load_i64(&header->playback_session);
+        state.revision = direct_frame_atomic_load_i64(&header->playback_revision);
+        state.paused = direct_frame_atomic_load_i64(&header->playback_paused) != 0;
+        state.reason = static_cast<PlaybackPauseReason>(direct_frame_atomic_load_i64(&header->playback_reason));
+        state.boundary = direct_frame_atomic_load_i64(&header->playback_boundary);
+        state.resynchronizing = direct_frame_atomic_load_i64(&header->playback_resynchronizing) != 0;
+        if (guard == direct_frame_atomic_load_i64(&header->playback_guard)) return state;
+    }
+    return {.paused = true, .reason = PlaybackPauseReason::kRecovery, .valid = false};
+}
+
+// Reader-worker only, after any snapshot lease has been released. Capture the
+// upper bound once: O(1), no slot inspection, payload copy or decoder work.
+inline std::uint64_t discard_direct_frame_shared_latest(DirectFrameSharedMemoryHeader* header,
+    std::uint64_t& observed_sequence) {
+    const auto latest = static_cast<std::uint64_t>(direct_frame_atomic_load_i64(&header->latest_sequence));
+    const auto discarded = latest > observed_sequence ? latest - observed_sequence : 0;
+    if (latest > observed_sequence) observed_sequence = latest;
+    direct_frame_atomic_store_i64(&header->reader_active_sequence, 0);
+    direct_frame_atomic_store_i64(&header->reader_sequence, static_cast<LONG64>(observed_sequence));
+    return discarded;
+}
+
 inline std::size_t direct_frame_shared_slot_stride() {
     return sizeof(DirectFrameSharedMemorySlotHeader)
         + static_cast<std::size_t>(kDirectFrameSharedMemorySlotPayloadBytes);
@@ -143,6 +196,11 @@ inline void initialize_direct_frame_shared_memory(DirectFrameSharedMemoryHeader*
     direct_frame_atomic_store_i64(&header->writer_frame_count, 0);
     direct_frame_atomic_store_i64(&header->writer_oversize_drop_count, 0);
     direct_frame_atomic_store_i64(&header->writer_busy_drop_count, 0);
+    direct_frame_atomic_store_i64(&header->playback_guard, 0);
+    publish_direct_frame_playback_state(header, {.session = 1});
+    direct_frame_atomic_store_i64(&header->playback_progress, 0);
+    direct_frame_atomic_store_i64(&header->playback_failures, 0);
+    direct_frame_atomic_store_i64(&header->playback_software_fallback, 0);
 }
 
 inline DirectFrameSharedMemorySlotHeader* direct_frame_shared_slot_header(void* mapping_view, std::uint32_t slot_index) {

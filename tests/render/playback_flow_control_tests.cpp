@@ -273,10 +273,10 @@ TEST(SlowCallReporter, ReportsCallsAboveThresholdWithRateLimit) {
 TEST(PresentationGate, RestoreAfterSkippedFramesAsksForOneKeyframe) {
     PresentationGate gate(250);
     EXPECT_FALSE(gate.take_resume());
-    // Hidden and shown again with no frame in between: nothing was lost.
+    // Resume is independent of frame delivery.
     gate.set_hidden(true);
     gate.set_hidden(false);
-    EXPECT_FALSE(gate.take_resume());
+    EXPECT_TRUE(gate.take_resume());
 
     gate.set_hidden(true);
     EXPECT_EQ(gate.decide(10), PresentationGate::Decision::kSkip);
@@ -324,3 +324,52 @@ TEST(DecoderHwBackendOrder, PinnedDecodeUsesOnlyThePresenterAdapter) {
 }
 
 }  // namespace
+
+TEST(PlaybackDecodeRecovery, BufferedIdrAcceptsDependenciesBeforeFirstOutput) {
+    redclaw::render::DecoderReferenceRecovery recovery;
+    recovery.invalidate();
+    EXPECT_FALSE(recovery.prepare(3, 1920, 1080, 10, false));
+    EXPECT_TRUE(recovery.prepare(3, 1920, 1080, 10, true));
+    EXPECT_TRUE(recovery.needs_idr());
+    recovery.submitted(true); // decode succeeded, no output yet
+    EXPECT_FALSE(recovery.needs_idr());
+    EXPECT_TRUE(recovery.prepare(3, 1920, 1080, 10, false));
+    recovery.submitted(false);
+    EXPECT_TRUE(recovery.awaiting_output()); // preserve ACK across a busy surface bridge
+    EXPECT_TRUE(recovery.take_recovery_output());
+    EXPECT_FALSE(recovery.take_recovery_output());
+    recovery.invalidate();
+    EXPECT_FALSE(recovery.prepare(2, 1280, 720, 11, false));
+    EXPECT_TRUE(recovery.prepare(2, 1280, 720, 11, true));
+    recovery.submitted(true);
+    EXPECT_FALSE(recovery.prepare(2, 1280, 720, 12, false));
+    EXPECT_FALSE(recovery.take_recovery_output());
+}
+
+TEST(PresentationGate, ZeroFrameOcclusionResumeWaitsForEveryReason) {
+    redclaw::render::PresentationGate gate;
+    gate.on_present_result(true, 1);
+    gate.set_hidden(true);
+    gate.set_display_on(false);
+    EXPECT_EQ(gate.decide(1000), redclaw::render::PresentationGate::Decision::kSkip);
+    gate.set_display_on(true);
+    EXPECT_TRUE(gate.paused());
+    gate.set_hidden(false);
+    EXPECT_EQ(gate.decide(1250), redclaw::render::PresentationGate::Decision::kTestOcclusion);
+    gate.on_present_result(false, 1250); // timer, no decoded frames
+    EXPECT_FALSE(gate.paused());
+    EXPECT_TRUE(gate.take_resume());
+    EXPECT_FALSE(gate.take_resume());
+}
+
+TEST(PlaybackRecoveryRequest, PauseCancelsPendingButPreserves500msCoalescingAcrossRapidToggle) {
+    redclaw::render::KeyframeRequestLimiter limiter;
+    EXPECT_TRUE(limiter.request(1000));
+    EXPECT_FALSE(limiter.request(1100));
+    limiter.satisfied(); // entering pause
+    EXPECT_FALSE(limiter.poll(2000));
+    EXPECT_FALSE(limiter.request(1200)); // initial resume request coalesced
+    EXPECT_FALSE(limiter.poll(1499));
+    EXPECT_TRUE(limiter.poll(1500));
+    EXPECT_FALSE(limiter.poll(2000));
+}

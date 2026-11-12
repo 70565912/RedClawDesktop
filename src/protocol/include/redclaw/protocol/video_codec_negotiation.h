@@ -161,8 +161,8 @@ inline constexpr std::string_view kControllerHevcDecodeOverloadReason = "control
 // Controller-side safety net: HEVC frames that the local decoder cannot keep
 // up with show as shared-memory ring overruns (the reader is a full ring
 // behind). When that happens repeatedly while the network is clean, the
-// Controller withdraws HEVC from its decode report for the rest of the
-// session so the Host renegotiates to H.264. Ring overruns while frames are
+// Controller withdraws HEVC so the Host renegotiates to H.264. A separate
+// bounded trial policy may explicitly rearm the monitor. Ring overruns while frames are
 // being lost on the network are attributed to the network and ignored.
 // Not thread-safe; the owner serializes calls.
 class ControllerHevcDecodeOverloadMonitor final {
@@ -182,6 +182,8 @@ public:
         // Monotonic count of frames lost on the network; see
         // controller_network_loss_total.
         std::uint64_t network_loss_total = 0;
+        bool playback_eligible = true;
+        std::uint64_t playback_revision = 0;
     };
 
     ControllerHevcDecodeOverloadMonitor() noexcept : ControllerHevcDecodeOverloadMonitor(Config{}) {}
@@ -189,6 +191,9 @@ public:
 
     // Returns true exactly once, on the observation that trips the fallback.
     bool observe(const Observation& observation);
+    // Preserve real loss history and an already latched fallback on pause.
+    void clear_overrun_history() noexcept;
+    void rearm() noexcept;
 
     [[nodiscard]] bool triggered() const noexcept { return triggered_; }
     [[nodiscard]] std::uint64_t counted_episodes() const noexcept { return total_counted_; }
@@ -207,6 +212,43 @@ private:
     std::uint64_t last_loss_change_ms_ = 0;
     std::uint64_t total_counted_ = 0;
     std::uint64_t ignored_lossy_ = 0;
+    std::uint64_t playback_revision_ = 0;
+};
+
+// One automatic trial per runtime. Publication is an attempt; only actual
+// HEVC output followed by 30 seconds of healthy playback completes a trial.
+class ControllerHevcTrialPolicy final {
+public:
+    struct Sample {
+        std::uint64_t now_ms = 0;
+        NegotiatedVideoCodec codec = NegotiatedVideoCodec::kH264;
+        bool visible = true;
+        bool feedback_fresh = false;
+        bool backend_healthy = false;
+        bool recovering = false;
+        std::uint64_t backlog = 0;
+        std::uint32_t ring_slots = 6;
+        std::uint64_t progress = 0;
+        std::uint64_t failures = 0;
+        std::uint64_t recovery_breaks = 0;
+        std::uint64_t playback_revision = 0;
+    };
+    void on_fallback(std::uint64_t now_ms) noexcept;
+    // True once when the original eligible report may be restored.
+    bool observe(const Sample& sample) noexcept;
+    void cancel_unpublished_attempt() noexcept {
+        attempted_ = false;
+        withdrawn_ = true;
+        stable_since_ms_ = trial_since_ms_ = 0;
+    }
+    [[nodiscard]] bool attempted() const noexcept { return attempted_; }
+    [[nodiscard]] bool trial_succeeded() const noexcept { return trial_succeeded_; }
+private:
+    bool withdrawn_ = false, attempted_ = false, trial_succeeded_ = false;
+    std::uint64_t fallback_ms_ = 0, stable_since_ms_ = 0, trial_since_ms_ = 0;
+    std::uint64_t last_sample_ms_ = 0, last_progress_ms_ = 0;
+    std::uint64_t progress_ = 0, failures_ = 0, breaks_ = 0, attempt_progress_ = 0;
+    std::uint64_t playback_revision_ = 0;
 };
 
 }  // namespace redclaw::protocol

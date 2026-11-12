@@ -439,3 +439,26 @@ TEST(MediaTransportTiming, PeriodicLogIsNumericSingleLineAndFitsRemoteSnapshotCh
         std::string::npos);
 }
 } // namespace redclaw::net
+
+TEST(PlaybackCapacityFeedback, PauseIntervalsAndFirstResumeIntervalCannotReduceFps) {
+    using namespace redclaw::net;
+    ReceiverDecodeCapacityController controller;
+    ReceiverDecodeCapacitySample sample;
+    sample.current_target_fps = sample.maximum_target_fps = 30;
+    sample.window_ms=1000; sample.reassembled_frames=30;
+    sample.revision_consistent=sample.source_active=sample.network_stable=true;
+    sample.rate_revision=sample.source_revision=1;
+    sample.playback_sample_valid=false;
+    for (int i=0; i<300; ++i) {
+        auto decision=controller.update(sample);
+        EXPECT_FALSE(decision.valid); EXPECT_FALSE(decision.target_changed);
+    }
+    sample.playback_sample_valid=true; sample.decoded_frames=30;
+    for (int i=0; i<10; ++i) EXPECT_FALSE(controller.update(sample).target_changed);
+    // Legacy Host behavior is retained for old Controllers: the missing
+    // validity field still assesses zero decoded frames as pressure.
+    controller.reset(); sample.decoded_frames=0;
+    bool reduced=false;
+    for (int i=0; i<20; ++i) reduced = controller.update(sample).target_changed || reduced;
+    EXPECT_TRUE(reduced);
+}

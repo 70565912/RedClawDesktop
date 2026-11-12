@@ -126,6 +126,7 @@ struct ReceiverAssemblyQuality {
 };
 
 struct ReceiverDecodeCapacitySample {
+    bool playback_sample_valid = true;
     std::uint64_t reassembled_frames = 0;
     std::uint64_t decoded_frames = 0;
     std::uint64_t window_ms = 0;

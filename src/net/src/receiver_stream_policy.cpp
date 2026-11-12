@@ -54,7 +54,7 @@ ReceiverDecodeCapacityDecision ReceiverDecodeCapacityController::update(
     decision.decrease_total = decrease_total_;
     decision.increase_total = increase_total_;
 
-    if (!sample.revision_consistent || !sample.source_active
+    if (!sample.playback_sample_valid || !sample.revision_consistent || !sample.source_active
         || sample.rate_revision != rate_revision_ || sample.source_revision != source_revision_) {
         pressure_windows_ = 0;
         stable_windows_ = 0;
@@ -62,7 +62,7 @@ ReceiverDecodeCapacityDecision ReceiverDecodeCapacityController::update(
         rate_revision_ = sample.rate_revision;
         source_revision_ = sample.source_revision;
     }
-    if (!sample.revision_consistent || !sample.source_active || sample.window_ms == 0
+    if (!sample.playback_sample_valid || !sample.revision_consistent || !sample.source_active || sample.window_ms == 0
         || sample.window_ms > 10000 || sample.reassembled_frames > 100000
         || sample.decoded_frames > 100000) {
         return decision;
