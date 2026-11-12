@@ -168,12 +168,58 @@ TEST_F(D3D11SharedSurfaceBridgeTest, SlotsHeldByPresenterAreSkippedAndAllBusyDro
     }
     D3D11DecodedSurface dropped;
     EXPECT_EQ(publish(bridge, source.Get(), &dropped), D3D11SharedSurfaceBridge::PublishStatus::kAllSlotsBusy);
+    // Presented and recycled: the presenter drops both the mutex and the frame.
     ASSERT_EQ(held[1].mutex->ReleaseSync(0), S_OK);
+    surfaces[1] = {};
     D3D11DecodedSurface next;
     ASSERT_EQ(publish(bridge, source.Get(), &next), D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
     EXPECT_EQ(next.shared_slot, 1U);
     EXPECT_EQ(held[0].mutex->ReleaseSync(0), S_OK);
     EXPECT_EQ(held[2].mutex->ReleaseSync(0), S_OK);
+}
+
+// A pending frame holds no keyed mutex. Its slot must still survive a decode
+// wrap, or the presenter would show newer pixels under the old frame's id,
+// capture-region revision and content rect.
+TEST_F(D3D11SharedSurfaceBridgeTest, PendingFrameSlotIsNotOverwrittenBeforeRecycle) {
+    D3D11SharedSurfaceBridge bridge(devices.producer.Get());
+    const auto first = make_source(devices.producer.Get(), devices.producer_context.Get(), 32, 32, 0xff0000ffU);
+    const auto later = make_source(devices.producer.Get(), devices.producer_context.Get(), 32, 32, 0xffff0000U);
+    ASSERT_TRUE(first && later);
+    D3D11DecodedSurface pending;
+    const auto status = publish(bridge, first.Get(), &pending);
+    if (skipped) GTEST_SKIP() << last_error;
+    ASSERT_EQ(status, D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
+
+    std::array<D3D11DecodedSurface, D3D11SharedSurfaceBridge::kSlotCount> newer;
+    std::uint32_t published = 0;
+    for (auto& surface : newer) {
+        const auto result = publish(bridge, later.Get(), &surface);
+        if (result == D3D11SharedSurfaceBridge::PublishStatus::kPublished) {
+            EXPECT_NE(surface.shared_slot, pending.shared_slot);
+            ++published;
+        } else {
+            EXPECT_EQ(result, D3D11SharedSurfaceBridge::PublishStatus::kAllSlotsBusy) << last_error;
+        }
+    }
+    EXPECT_EQ(published, D3D11SharedSurfaceBridge::kSlotCount - 1);
+
+    auto opened = open_slot(devices.consumer.Get(), pending);
+    ASSERT_TRUE(opened.mutex);
+    ASSERT_EQ(opened.mutex->AcquireSync(0, 2000), S_OK);
+    EXPECT_EQ(read_first_pixel(devices.consumer.Get(), devices.consumer_context.Get(), opened.texture.Get()), 0xff0000ffU);
+    EXPECT_EQ(opened.mutex->ReleaseSync(0), S_OK);
+
+    // A copy of the frame keeps the lease; only the last release frees it.
+    const auto pending_slot = pending.shared_slot;
+    D3D11DecodedSurface copy = pending;
+    pending = {};
+    D3D11DecodedSurface blocked;
+    EXPECT_EQ(publish(bridge, later.Get(), &blocked), D3D11SharedSurfaceBridge::PublishStatus::kAllSlotsBusy);
+    copy = {};
+    D3D11DecodedSurface reused;
+    ASSERT_EQ(publish(bridge, later.Get(), &reused), D3D11SharedSurfaceBridge::PublishStatus::kPublished) << last_error;
+    EXPECT_EQ(reused.shared_slot, pending_slot);
 }
 
 TEST_F(D3D11SharedSurfaceBridgeTest, SizeChangeStartsNewGenerationWhileOldFramesStayValid) {

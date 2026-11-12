@@ -38,8 +38,11 @@ struct SelectedGpuAdapter {
 // on the decode thread, copies the decoder's array slice into a free slot on
 // the GPU (a GPU-local copy, not zero-copy), and lets the decoder's surface
 // pool slice go immediately, so a stalled presenter cannot hold decoder
-// surfaces or the decode device lock. A slot the presenter is reading is
-// skipped; with every slot busy the frame is dropped for display only.
+// surfaces or the decode device lock. A slot stays leased from publish until
+// the last copy of its D3D11DecodedSurface (frame_lifetime) is released, and a
+// slot whose keyed mutex the presenter holds is also skipped. With every slot
+// busy the frame is dropped for display only; a published frame's pixels are
+// never overwritten before the presenter recycles it.
 class D3D11SharedSurfaceBridge final {
 public:
     static constexpr std::uint32_t kSlotCount = 3;

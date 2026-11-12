@@ -7,6 +7,7 @@
 #include "redclaw/render/d3d11_video_device.h"
 
 #include <array>
+#include <atomic>
 #include <cstdio>
 
 #include <Windows.h>
@@ -200,10 +201,14 @@ VideoInputViewProbe probe_shared_video_input_view(ID3D11Device* device, ID3D11Te
 
 // Owned jointly by the bridge and every published frame so a presenter can
 // finish with a slot after the bridge has moved to a new format or size.
+// The keyed mutex only serialises the copy against a Blt in progress. A slot
+// whose frame is published but not yet presented holds no mutex, so `leased`
+// keeps decode from overwriting it until the frame's last reference is gone.
 struct SharedSlotSet {
     std::array<ComPtr<ID3D11Texture2D>, D3D11SharedSurfaceBridge::kSlotCount> textures;
     std::array<ComPtr<IDXGIKeyedMutex>, D3D11SharedSurfaceBridge::kSlotCount> mutexes;
     std::array<HANDLE, D3D11SharedSurfaceBridge::kSlotCount> handles{};
+    std::array<std::atomic<bool>, D3D11SharedSurfaceBridge::kSlotCount> leased{};
     UINT width = 0;
     UINT height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
@@ -236,6 +241,7 @@ public:
         }
         for (std::uint32_t attempt = 0; attempt < kSlotCount; ++attempt) {
             const std::uint32_t slot = (next_slot_ + attempt) % kSlotCount;
+            if (slots_->leased[slot].load(std::memory_order_acquire)) continue;
             const HRESULT acquire = slots_->mutexes[slot]->AcquireSync(0, 0);
             if (acquire == static_cast<HRESULT>(WAIT_TIMEOUT)) continue;
             if (acquire != S_OK) {
@@ -257,7 +263,10 @@ public:
             output->shared_handle = slots_->handles[slot];
             output->shared_generation = slots_->generation;
             output->shared_slot = slot;
-            output->frame_lifetime = slots_;
+            slots_->leased[slot].store(true, std::memory_order_release);
+            output->frame_lifetime = std::shared_ptr<void>(slots_.get(), [slots = slots_, slot](void*) {
+                slots->leased[slot].store(false, std::memory_order_release);
+            });
             return PublishStatus::kPublished;
         }
         return PublishStatus::kAllSlotsBusy;
