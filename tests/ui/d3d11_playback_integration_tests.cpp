@@ -413,6 +413,7 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
             show();
         }
     } window;
+    window.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
     auto* layout = new QVBoxLayout(&window);
     layout->setContentsMargins(0, 0, 0, 0);
     const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
@@ -420,6 +421,7 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     layout->addWidget(renderer.widget);
     window.resize(640, 360);
     window.show();
+    window.raise();
     QCoreApplication::processEvents();
     QString error;
     auto* decoder_device = renderer.canvas->d3d11_presentation_device(&error);
@@ -471,12 +473,14 @@ TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput)
         using QWidget::create;
         using QWidget::destroy;
     } window;
+    window.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
     const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
     ASSERT_NE(renderer.widget, nullptr);
     renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     window.resize(640, 360);
     renderer.widget->resize(window.size());
     window.show();
+    window.raise();
     QCoreApplication::processEvents();
     ASSERT_FALSE(states.empty());
     ASSERT_FALSE(states.back());
@@ -663,17 +667,18 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
 TEST(PlaybackVisibility, D3D11TransitionsWithoutDecodedFramesAndKeepsOtherReasonsClosed) {
     std::vector<bool> states;
     QWidget owner;
+    owner.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
     auto renderer=redclaw::ui::try_create_d3d11_playback_renderer(&owner);
     ASSERT_NE(renderer.canvas, nullptr);
     renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     ASSERT_FALSE(states.empty()); EXPECT_TRUE(states.back());
     owner.resize(640,360); renderer.widget->resize(owner.size());
-    owner.show(); renderer.widget->show(); QCoreApplication::processEvents();
+    owner.show(); owner.raise(); renderer.widget->show(); QCoreApplication::processEvents();
     ASSERT_FALSE(states.empty()); EXPECT_FALSE(states.back());
     owner.showMinimized(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
-    owner.showNormal(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    owner.showNormal(); owner.raise(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
     owner.hide(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
-    owner.show(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    owner.show(); owner.raise(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
     const auto before_recreation = states.size();
     QEvent recreated(QEvent::WinIdChange);
     QCoreApplication::sendEvent(renderer.widget, &recreated);
