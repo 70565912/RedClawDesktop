@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-11-12 — Pause Controller decode with presentation (M02-T03, PR #10 local follow-up)
+
+- Base `0c96a109`; local branch `codex/pause-decode-while-hidden`. Implements the supplied design review; no push/PR/merge, no edits to other worktrees, no application process start/stop.
+- P1-1: canvas transitions are independent of decoded frames, with initial visibility, top-level minimize/restore, hide/show, native HWND power re-registration, and a 250 ms DXGI occlusion timer. Failed tests rebuild output and retain occlusion. Qt/OpenGL explicitly handle hide/minimize; their other detection is excluded in D10/checklist.
+- P1-2: GUI worker performs O(1) captured-latest acknowledgement without payload reads/decoder calls during pause. Local shared layout v5 has a guarded typed session/revision/state/reason/boundary snapshot plus recovery/progress/backend telemetry. Runtime continues writing; pause and resume resynchronization clear current overload history, preserving latched fallback and real loss history. A post-sample transition check rejects an unpublished racing trip. Pause discards and stale outputs are separate counters.
+- P1-3: pause cancels GUI coalesced work and runtime retries. Queued callbacks/messages are session/revision fenced. Receiver drains through its resume boundary before one initial coalesced `presentation_resumed_<trigger>` notification arms a fresh runtime recovery generation. Existing retries retain bounded 500–2000 ms delays; displayable ACK ends recovery.
+- P1-4: a decode-worker reference component distinguishes successful IDR submission from output, accepting dependencies while output is buffered. It invalidates on codec/size/geometry changes, rejects pre-boundary work, and resets once at recovery IDR. Output revision is checked under the publication mutex, including displayability statistics; shared texture lease ownership remains intact.
+- P1-5 interface change: optional StreamControl v1 fields 96–100 are feedback validity, not sender commands. Host capacity assessment requires valid active snapshots at both ends of the same transition interval. Network counters stay truthful; missing fields retain legacy behavior. Old-Host temporary FPS reduction is explicitly an unrun mixed-binary acceptance item.
+- P1-6 / D10 amendment: monitor rearm plus one automatic hardware HEVC trial, only from the original eligible report, with forced-H.264/current-backend constraints. Minimum 5 min cooldown, 120 s visible stable fresh progress, then 30 s actual HEVC output observation; the second overload is sticky for the runtime. Publication alone does not prove codec change/success. A software fallback forbids automatic recovery.
+- 4.4 is deferred. The typed local snapshot and runtime integration point do not pause or throttle a sender. Audio, terminal, Agent traffic, network feedback and input authorization retain their contracts.
+- Focused validation: VS2022 Debug build passed, 8/8 focused CTest suites and 2/2 receiver/visibility cases passed; seven security tests and docs-guard equivalent checks passed. Final results are recorded in [PROGRESS](../../PROGRESS.md#2026-11-12--pause-controller-decode-while-presentation-is-paused-m02-t03). On-device performance, actual display-off/full-occlusion and mixed-binary checks remain unchecked in the [PR #10 checklist](../testing/hevc-bitrate-measurement.md#pr-10-playback-pause-acceptance-checklist).
+
+
 ## 2026-11-12 — Codex review fixes on the HEVC branch (M02-T03)
 
 - Ryan approved fixing all seven findings of the Codex find-only review of PR #10 at head `838bf86`.

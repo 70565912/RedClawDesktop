@@ -2,7 +2,7 @@
 
 Audience: operator Ryan and the dedicated agent 小龙虾 · RedClawDesktop.
 
-Status date: 2026-11-06 (Asia/Shanghai). Surveyed `main` at `40b80cc`. Codec items updated 2026-11-11 for D10.
+Status date: 2026-11-06 (Asia/Shanghai). Surveyed `main` at `40b80cc`. Codec items updated 2026-11-12 for D10 and the local playback-pause amendment.
 
 This file is the product-intent source for that pair. It cites documents already in the repo and does not add requirements. Unknowns are marked. Publishing this file does not change runtime behavior.
 
@@ -37,6 +37,10 @@ Product version metadata is 0.1.12. The last published package remains the v0.1.
 6. Control, Media, and Agent channels. Codex and Cursor providers run on the Host inside registered projects. See [remote Agent bridge](docs/architecture/remote-development-agent-bridge-v1.md).
 7. Capabilities already described for v0.1.12, enabled only by the common negotiated set: paste-time clipboard, confirmed file transfer, remote system audio, embedded terminal, directory upgrade, and Host update-restart protection. A paste-time clipboard request either completes or ends with a visible error; it never waits silently ([D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly)).
 8. Cross-version interoperability. DHT, session, media, control, Agent, and Debug Bridge protocols are versioned. Still-supported releases connect through the common capability set. The same Git commit, product version, or binary is not a connection requirement. See root [AGENTS.md](AGENTS.md) and the protocol contract in the solution architecture.
+
+## Controller playback pause amendment (PR #10 local follow-up)
+
+The D10 amendment pauses decode as well as presentation and keeps the shared ring drained. Resume requires a fresh post-boundary IDR and worker-owned reference reset, with coalesced recovery and bounded-delay retries. Pause/resume intervals are excluded from overload and capable-Host decode-capacity assessment. HEVC has at most one conservative hardware trial after fallback. Display-adapter-only probing, audio, remote input and input authorization retain their existing contracts. Sender pause/throttle (4.4) remains deferred. Backend limits and the trial policy are recorded in [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback); [PR #10 acceptance checklist](docs/testing/hevc-bitrate-measurement.md#pr-10-playback-pause-acceptance-checklist) tracks the unrun device checks.
 
 ## Acceptance already defined in the repo
 
