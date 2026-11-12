@@ -390,9 +390,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (frame_texture_ && !latest_frame_is_surface_) {
       (void)render(nullptr, true);
     }
-    const QWidget* top = window();
-    presentation_gate_.set_hidden(!isVisible() || (top != nullptr && top->isMinimized()));
-    notify_if_presentation_resumed("shown");
+    synchronize_visibility("shown");
   }
 
  private:
@@ -408,7 +406,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       watched_window_ = window();
       if (watched_window_) watched_window_->installEventFilter(this);
     }
-    presentation_gate_.set_hidden(!isVisible() || (window() && window()->isMinimized()));
+    // QWidget can remain logically visible between native destroy()/create().
+    // Keep decode and the occlusion probe paused until an HWND exists again.
+    presentation_gate_.set_hidden(!internalWinId() || !isVisible() || (window() && window()->isMinimized()));
     notify_if_presentation_resumed(trigger);
   }
 
@@ -471,8 +471,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
 
   void register_display_power_notification() {
     if (display_power_notification_ != nullptr) return;
+    // WinIdChange also arrives after Qt has cleared the HWND during destroy().
+    // winId() would recreate the native child inside its parent's teardown.
+    const auto hwnd = reinterpret_cast<HWND>(internalWinId());
+    if (hwnd == nullptr) return;
     display_power_notification_ = RegisterPowerSettingNotification(
-        reinterpret_cast<HWND>(winId()), &kConsoleDisplayStateGuid, DEVICE_NOTIFY_WINDOW_HANDLE);
+        hwnd, &kConsoleDisplayStateGuid, DEVICE_NOTIFY_WINDOW_HANDLE);
   }
 
   void unregister_display_power_notification() {
@@ -484,9 +488,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   // Hidden, minimized or display-off windows skip every D3D call. Occluded
   // swap chains are probed with DXGI_PRESENT_TEST at a low rate.
   bool presentation_allowed() {
-    const QWidget* top = window();
-    presentation_gate_.set_hidden(!isVisible() || (top != nullptr && top->isMinimized()));
-    notify_if_presentation_resumed("visible");
+    synchronize_visibility("visible");
     const auto now = steady_now_ms();
     switch (presentation_gate_.decide(now)) {
     case redclaw::render::PresentationGate::Decision::kPresent:

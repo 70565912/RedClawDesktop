@@ -464,6 +464,46 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     }
 }
 
+TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput) {
+    std::vector<bool> states;
+    class RecreatingWindow : public QWidget {
+    public:
+        using QWidget::create;
+        using QWidget::destroy;
+    } window;
+    const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
+    ASSERT_NE(renderer.widget, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
+    window.resize(640, 360);
+    renderer.widget->resize(window.size());
+    window.show();
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(states.empty());
+    ASSERT_FALSE(states.back());
+
+    window.destroy();
+    EXPECT_EQ(window.internalWinId(), WId(0));
+    EXPECT_EQ(renderer.widget->internalWinId(), WId(0));
+    EXPECT_TRUE(states.back());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["swap_chain_ready"].toBool());
+
+    // Let the 250 ms visibility timer fire with no native window or frames.
+    QEventLoop wait;
+    QTimer::singleShot(600, &wait, &QEventLoop::quit);
+    wait.exec();
+    EXPECT_EQ(window.internalWinId(), WId(0));
+    EXPECT_EQ(renderer.widget->internalWinId(), WId(0));
+    EXPECT_TRUE(states.back());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["swap_chain_ready"].toBool());
+
+    window.create();
+    window.show();
+    QCoreApplication::processEvents();
+    EXPECT_NE(renderer.widget->internalWinId(), WId(0));
+    EXPECT_FALSE(states.back()); // resume without a decoded frame
+    renderer.canvas->set_playback_state_callback({});
+}
+
 TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWatermarks) {
     using namespace redclaw::helper;
     redclaw::ui::DirectFramePipeServer receiver;
