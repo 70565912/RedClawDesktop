@@ -49,7 +49,7 @@ Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardwar
 
 - Wire: optional `StreamControlMessageV1` fields 92–94 (`video_codec_version`, `video_decode_codecs`, `video_hardware_decode_codecs`; bit 0 H.264, bit 1 HEVC). Missing fields mean an older peer, which gets H.264.
 - Controller: probes FFmpeg decoders and D3D11VA H.264/HEVC decode profiles at startup and advertises them on every Hello/Capabilities. Log: `Runtime video decode capabilities`.
-- Host: waits up to the existing 3 s viewport grace for the report, then selects the codec (`HostVideoCodecNegotiatorV1`, `src/protocol/src/video_codec_negotiation.cpp`). Log: `Runtime video codec negotiated ... codec= reason=`. If the HEVC hardware encoder fails to open, the Host falls back to H.264 for the rest of the process. If a reconnecting peer cannot decode HEVC, it rebuilds as H.264 (`Runtime video codec renegotiation`).
+- Host: waits up to the existing 3 s viewport grace for the report, then selects the codec (`HostVideoCodecNegotiatorV1`, `src/protocol/src/video_codec_negotiation.cpp`). Log: `Runtime video codec negotiated ... codec= reason=`. If the HEVC hardware encoder fails to open, the Host falls back to H.264 for the rest of the process. If a reconnecting peer cannot decode HEVC, it rebuilds as H.264 (`Runtime video codec renegotiation`). If a later report makes HEVC eligible, it rebuilds as HEVC (`from=h264 to=hevc`).
 - Encoder: automatic HEVC never opens libx265. HEVC target and floor = 70% of H.264 (unmeasured). Requested HEVC keyframes are forced to IDR; on x265 this needs `open-gop=0` too, otherwise x265 emits CRA. The new integration test caught that.
 - Rollback: `--stream-video-codec h264`, profile `stream_video_codec=h264`, or the GUI "Video codec" selector. Or redeploy the previous build on either side; mixed versions negotiate H.264.
 - Checks run in the Linux authoring environment, with scratch builds against Ubuntu FFmpeg 6.1 (not MSVC):
@@ -71,6 +71,15 @@ Decision: [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardwar
   - Linux checks: flow-control tests 12/12, codec negotiation 19/19, stream control 24/24. Windows-only code passed a MinGW syntax check only. The Windows build, the ring tests and the shared-texture test rely on CI. Nothing in this round has run on Ryan's machines yet.
 - Adapter rule changed the same day (Ryan, 2026-11-11, after `c4fb829`): HEVC is probed only on the adapter that owns the window. If it cannot hardware-decode HEVC, no other adapter is tried and HEVC is left out of the decode report, so the Host sends H.264 (`peer_no_hevc_decoder`). The GUI passes the window adapter as `--present-adapter-luid`. Moving the window to another adapter's monitor does not renegotiate; restart the session. There is no cross-adapter copy. Linux: flow-control tests 20/20 and the negotiation test that covers the report. Not yet run on Ryan's machines. Details in [DEVLOG](docs/logs/DEVLOG.md).
 - Shared-surface present on the same laptop (`b89a396e`, Intel HD 530): `CreateVideoProcessorInputView(shared)` returned `0x80070057` because the NV12 slot used `D3D11_BIND_SHADER_RESOURCE` only, and the GUI stayed on the CPU transfer path. The bridge now prefers render-target plus shader-resource, then render-target, then no bind flags, and keeps the first set whose video-processor input view succeeds. The 5 s stats line logs `shared_texture_bind`. A first-present `CreateVideoProcessor` of 53.7 ms stays over the 50 ms log line; the threshold is unchanged. Not yet rerun on the laptop.
+- Codex review of `838bf86` (2026-11-12, Ryan approved all seven fixes):
+  - A published shared decode slot is not overwritten until the presenter releases that frame. Before, a GUI stall could show newer pixels under the old frame id.
+  - Frames discarded locally while waiting for an IDR no longer count as network loss, so the HEVC overload fallback can fire.
+  - A shared-texture failure keeps decode on the display adapter with CPU transfer, instead of FFmpeg's default device.
+  - Each session start rebuilds the presenter device if the window's adapter changed.
+  - A running H.264 encoder is rebuilt as HEVC when a later peer report allows it.
+  - Restoring a hidden, minimized, occluded or display-off window after skipped frames requests a keyframe.
+  - HEVC takes 70% after the 20,000 kbps H.264 ceiling, so its maximum is 14,000 kbps.
+  - Linux: flow-control 24/24, negotiation 21/21, encoder profile tests pass. Not yet run on Ryan's machines. Details in [DEVLOG](docs/logs/DEVLOG.md).
 - Needs Ryan's machines: the on-device checklist in the pull request and [HEVC bitrate measurement](docs/testing/hevc-bitrate-measurement.md), including the laptop Controller checks for this round.
 
 ## Mainline

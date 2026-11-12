@@ -25,11 +25,11 @@ FFmpeg source-CI compatibility (2026-10-18): use the public pixel-format capabil
 
 ## M02 Codec
 
-Updated: 2026-11-11
+Updated: 2026-11-12
 
 - `M02-T01` H.264/HEVC encode/decode pipeline with hardware selection — done.
 - `M02-T02` Broader hardware/driver compatibility matrix — in-progress.
-- `M02-T03` HEVC preferred with negotiated H.264 fallback ([D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)) — in-review. Implementation and automated tests are on branch `cursor/hevc-preferred-codec-5649`. The pacing fix passed Ryan's retest. The Controller decode/present decoupling, the HEVC decode-overload fallback, the display-adapter-only HEVC probe, and the HD 530 shared-texture bind-flag fix are on the branch but have not run on his laptop yet. On-device checks and the [bitrate measurement](../testing/hevc-bitrate-measurement.md) are still pending.
+- `M02-T03` HEVC preferred with negotiated H.264 fallback ([D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)) — in-review. Implementation and automated tests are on branch `cursor/hevc-preferred-codec-5649`. The pacing fix passed Ryan's retest. The Controller decode/present decoupling, the HEVC decode-overload fallback, the display-adapter-only HEVC probe, the HD 530 shared-texture bind-flag fix, and the fixes for the seven Codex review findings (2026-11-12) are on the branch but have not run on his laptop yet. On-device checks and the [bitrate measurement](../testing/hevc-bitrate-measurement.md) are still pending.
 
 ## M03 Security
 
