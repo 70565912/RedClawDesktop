@@ -123,6 +123,21 @@ What that means in the implementation:
 
 Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The assessment it accepts is PR #3 (https://github.com/70565912/RedClawDesktop/pull/3).
 
+## D11 — Merges are gated on local build/tests; GitHub build-and-test is advisory
+
+Made 2026-11-12. Ryan decided that GitHub ruleset 27011669 requires only `docs-guard`. The `build-and-test` workflow may still run, but it is not a required check.
+
+A merge into `main` needs all of the following at the final head:
+
+- Local build and unit tests passing on both of Ryan's machines (the desktop and the laptop).
+- A clean Codex CLI re-review in a fresh read-only find-issues session, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
+- On-device acceptance passing when the change needs device evaluation.
+- `docs-guard` green on GitHub.
+
+`build-and-test` is advisory. A failure already visible there should be noted, but the merge does not wait for that job to finish.
+
+Source: Ryan, 2026-11-12.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).

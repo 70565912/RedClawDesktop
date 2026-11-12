@@ -6,6 +6,7 @@
 - A Controller resume or recovery request moves `kStatic` to `kStaticPending` so the Host can encode a reference IDR from its retained capture. The resume reason survives dependency requests and visibility-boundary cancellation is synchronized. Runtime retries start after a bounded wait if the GUI notification is missing.
 - D3D11 polls DWM cloaking and window coverage, preserving the DXGI status path. HEVC requires an explicit presenter LUID, a matching hardware probe and a decoder pin. LUID 0, unknown adapters and GUI fallback advertise H.264. A changed selection discards a stale encoder open, and running automatic HEVC responds to hardware capability withdrawal.
 - A local-only backpressure latch allows one escalation on confirmed network evidence. The post-sample frame-pipe check is Windows-only. The bitrate comparator rejects unmatched workloads. The 70% HEVC budget continues to honor the 400 kbps interactive floor. See [PROGRESS](../../PROGRESS.md#pr-10-review-fixes-at-cd81b23) for validation.
+- D11: merges into `main` are gated on local builds/tests on both machines, a clean Codex re-review, on-device acceptance when needed, and GitHub `docs-guard`. GitHub `build-and-test` is advisory.
 
 ## 2026-11-12 — Pause Controller decode with presentation (M02-T03, PR #10 local follow-up)
 
