@@ -325,7 +325,7 @@ TEST(FfmpegRoundtripIntegration, HevcSoftwareRecoveryProducesStandaloneIdr) {
     expect_hevc_recovery_produces_standalone_idr(true);
 }
 
-// Developer-selected hardware check (NVENC/QSV/AMF HEVC); not part of the
+// Developer-selected hardware check (NVENC/QSV HEVC); not part of the
 // portable CTest/release gate.
 TEST(FfmpegHevcHardwareRecoveryIntegration, RequestProducesStandaloneIdr) {
     expect_hevc_recovery_produces_standalone_idr(false);

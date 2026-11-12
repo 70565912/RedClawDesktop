@@ -85,7 +85,9 @@ struct EncodedVideoReassemblyResult {
     bool abandoned_incomplete_frame = false;
     bool started_frame = false;
     std::uint32_t dropped_incomplete_frames = 0;
-    std::uint32_t dropped_dependency_frames = 0;
+    // Fully received but discarded locally while waiting for a keyframe.
+    // `frame` carries metadata only for this result.
+    bool discarded_complete_dependency = false;
     std::uint32_t dropped_keyframes = 0;
     std::uint64_t dropped_frame_id = 0;
     bool keyframe_required = false;
@@ -836,6 +838,7 @@ private:
     std::uint16_t next_fragment_index_ = 0;
     std::uint16_t fragment_count_ = 0;
     std::uint32_t total_payload_bytes_ = 0;
+    std::size_t received_payload_bytes_ = 0;
     std::uint64_t started_at_ms_ = 0;
     std::uint64_t last_progress_ms_ = 0;
     std::uint64_t discarded_frame_id_ = 0;

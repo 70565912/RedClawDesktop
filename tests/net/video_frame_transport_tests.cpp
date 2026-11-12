@@ -885,28 +885,59 @@ bool test_reassembler_drops_dependent_frames_until_latest_keyframe_completes() {
     frame.timestamp_ms = 10002;
     const auto newer_delta = push_fragment(0, 4001);
     ok = expect_true(
-        newer_delta.status == redclaw::net::EncodedVideoReassemblyStatus::kDiscarded,
-        "a newer dependent frame should be discarded after abandoning an incomplete delta") && ok;
+        newer_delta.status == redclaw::net::EncodedVideoReassemblyStatus::kIncomplete,
+        "a dependent replacement must be tracked until its delivery is known") && ok;
     ok = expect_true(
         newer_delta.dropped_incomplete_frames == 1
-            && newer_delta.dropped_dependency_frames == 1
+            && !newer_delta.discarded_complete_dependency
             && newer_delta.dropped_frame_id == 81,
-        "both the incomplete frame and its dependent replacement should be counted") && ok;
+        "the superseded incomplete frame counts as loss even during reference recovery") && ok;
     ok = expect_true(
         newer_delta.keyframe_required && reassembler.requires_keyframe(),
         "the receiver should wait for a keyframe after any incomplete delta") && ok;
 
-    const auto ignored_delta_tail = push_fragment(1, 4002);
+    redclaw::net::EncodedVideoReassemblyResult discarded_delta;
+    for (std::uint16_t index = 1; index < plan.fragment_count; ++index) {
+        discarded_delta = push_fragment(index, 4001 + index);
+    }
     ok = expect_true(
-        ignored_delta_tail.status == redclaw::net::EncodedVideoReassemblyStatus::kDiscarded
-            && ignored_delta_tail.error.empty(),
-        "remaining fragments from a rejected dependent frame should be ignored once") && ok;
+        discarded_delta.status == redclaw::net::EncodedVideoReassemblyStatus::kDiscarded
+            && discarded_delta.discarded_complete_dependency
+            && discarded_delta.dropped_incomplete_frames == 0 && discarded_delta.error.empty()
+            && discarded_delta.frame.frame_id == 82 && discarded_delta.frame.payload.empty(),
+        "a fully received multi-fragment delta should be discarded locally without copying payload") && ok;
 
     frame.frame_id = 83;
     frame.timestamp_ms = 10003;
+    const auto multi_fragment_plan = plan;
+    frame.payload = std::span<const std::uint8_t>(payload).first(20);
+    if (!redclaw::net::build_encoded_video_fragment_plan(frame, 4096, &plan, &error)) {
+        return expect_true(false, "single-fragment plan should succeed: " + error);
+    }
+    const auto single_fragment_delta = push_fragment(0, 4005);
+    ok = expect_true(
+        plan.fragment_count == 1
+            && single_fragment_delta.status == redclaw::net::EncodedVideoReassemblyStatus::kDiscarded
+            && single_fragment_delta.discarded_complete_dependency
+            && single_fragment_delta.dropped_incomplete_frames == 0
+            && single_fragment_delta.frame.frame_id == 83 && single_fragment_delta.frame.payload.empty()
+            && reassembler.requires_keyframe(),
+        "a complete one-fragment delta should be discarded locally without reporting loss or restoring references") && ok;
+
+    frame.frame_id = 84;
+    frame.timestamp_ms = 10004;
+    frame.payload = payload;
+    plan = multi_fragment_plan;
+    ok = expect_true(push_fragment(0, 4006).started_frame,
+        "track incomplete dependent frames while waiting for a keyframe") && ok;
+
+    frame.frame_id = 85;
+    frame.timestamp_ms = 10005;
     frame.keyframe = true;
-    redclaw::net::EncodedVideoReassemblyResult recovered;
-    for (std::uint16_t index = 0; index < plan.fragment_count; ++index) {
+    auto recovered = push_fragment(0, 5000);
+    ok = expect_true(recovered.dropped_incomplete_frames == 1 && recovered.dropped_frame_id == 84,
+        "a dependent frame missing fragments during recovery still counts as network loss") && ok;
+    for (std::uint16_t index = 1; index < plan.fragment_count; ++index) {
         recovered = push_fragment(index, 5000 + index);
     }
     ok = expect_true(

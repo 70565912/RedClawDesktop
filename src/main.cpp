@@ -2962,9 +2962,7 @@ int run_runtime_mode(
     std::optional<PendingIncompleteMediaFeedback> stream_qa_pending_incomplete_feedback;
     std::uint64_t stream_encoded_frames_reassembled = 0;
     std::uint64_t stream_incomplete_frames_dropped = 0;
-    std::uint64_t stream_dependency_frames_dropped = 0;
-    // Subset of stream_dependency_frames_dropped discarded while waiting for
-    // an IDR the Controller itself requested (ring gap, busy drop).
+    // Complete AUs discarded locally while waiting for an IDR.
     std::uint64_t stream_local_dependency_frames_dropped = 0;
     std::uint64_t stream_completed_keyframes = 0;
     std::uint64_t stream_dropped_keyframes = 0;
@@ -3456,6 +3454,15 @@ int run_runtime_mode(
         return message;
     };
 
+    using PlaybackRuntime = redclaw::runtime::ControllerPlaybackRuntime;
+    PlaybackRuntime controller_playback(stream_decoder_recovery_coordinator, [&]() {
+#ifdef _WIN32
+        return direct_frame_pipe.stats_snapshot().playback;
+#else
+        return redclaw::helper::PlaybackStateSnapshot{};
+#endif
+    });
+
     auto send_control_message = [&](redclaw::protocol::StreamControlMessageV1 message,
                                     std::string* error_detail) {
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendBegin, message);
@@ -3496,6 +3503,12 @@ int run_runtime_mode(
             return false;
         }
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendEncoded, message);
+        if (options.role == RuntimeRole::kController
+            && message.type == redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats
+            && !PlaybackRuntime::matches_feedback(message, controller_playback.synchronize())) {
+            // Consume stale feedback so neither the first attempt nor a retry requeues it.
+            return true;
+        }
         const bool sent = ice_wrapper.sendDataChannelBinaryMessage(
             redclaw::net::DataChannelKind::kControl,
             {reinterpret_cast<const std::uint8_t*>(serialized.data()), serialized.size()},
@@ -3861,16 +3874,6 @@ int run_runtime_mode(
         }
     });
 
-    redclaw::runtime::ControllerPlaybackRuntime controller_playback(
-        stream_decoder_recovery_coordinator, [&]() {
-#ifdef _WIN32
-            return direct_frame_pipe.stats_snapshot().playback;
-#else
-            return redclaw::helper::PlaybackStateSnapshot{};
-#endif
-        });
-
-    using PlaybackRuntime = redclaw::runtime::ControllerPlaybackRuntime;
     auto send_remote_keyframe_request = [&](std::string_view reason,
                                             const redclaw::helper::PlaybackStateSnapshot& playback) {
         if (!redclaw::helper::playback_output_is_current(playback, controller_playback.synchronize())) return false;
@@ -4659,8 +4662,7 @@ int run_runtime_mode(
                     observation.ring_slots = kControllerFrameRingSlots;
                     observation.network_loss_total = redclaw::protocol::controller_network_loss_total(
                         stream_incomplete_frames_dropped,
-                        stream_dependency_frames_dropped,
-                        0, // Complete frames discarded locally are tracked separately.
+                        0, 0, // Complete frames discarded locally are tracked separately.
                         stream_dropped_keyframes,
                         stream_reassembly_timeout_total);
                     observation.playback_eligible = playback.valid && !playback.paused && !playback.resynchronizing
@@ -5466,11 +5468,9 @@ int run_runtime_mode(
             reassembly_result = stream_video_reassembly.push(fragment, now_steady_ms());
         }
         if (reassembly_result.dropped_incomplete_frames > 0
-            || reassembly_result.dropped_dependency_frames > 0
             || reassembly_result.dropped_keyframes > 0) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_incomplete_frames_dropped += reassembly_result.dropped_incomplete_frames;
-            stream_dependency_frames_dropped += reassembly_result.dropped_dependency_frames;
             stream_dropped_keyframes += reassembly_result.dropped_keyframes;
         }
         if (reassembly_result.dropped_incomplete_frames > 0) {
@@ -5502,18 +5502,20 @@ int run_runtime_mode(
             return;
         }
         if (reassembly_result.keyframe_required) {
-            const bool dependency_frame = reassembly_result.dropped_dependency_frames > 0;
+            const bool dependency_frame = reassembly_result.dropped_incomplete_frames == 0;
             (void)report_decoder_dependency_break(
                 dependency_frame
                     ? redclaw::session::ControllerDecoderBreakReason::kDependencyFrame
                     : redclaw::session::ControllerDecoderBreakReason::kFragmentReassembly,
-                reassembly_result.dropped_frame_id,
+                dependency_frame ? fragment.frame_id : reassembly_result.dropped_frame_id,
                 dependency_frame
                     ? "dependency_frame_discarded"
                     : "incomplete_frame_abandoned");
         }
 
-        if (reassembly_result.status != redclaw::net::EncodedVideoReassemblyStatus::kComplete) {
+        const bool locally_discarded = reassembly_result.discarded_complete_dependency;
+        if (!locally_discarded
+            && reassembly_result.status != redclaw::net::EncodedVideoReassemblyStatus::kComplete) {
             return;
         }
 
@@ -5577,6 +5579,10 @@ int run_runtime_mode(
                         "media recovery keyframe completed frame_id="
                             + std::to_string(reassembly_result.frame.frame_id));
                 }
+            }
+            if (locally_discarded) {
+                ++stream_local_dependency_frames_dropped;
+                return;
             }
         }
         (void)controller_playback.synchronize();
@@ -7097,13 +7103,19 @@ int run_runtime_mode(
                 &encoded_packet,
                 &encode_error)) {
             const auto encoder_diagnostics = stream_encoder_session.diagnostics();
-            const bool output_not_ready =
-                encoder_diagnostics.last_failure
-                == redclaw::capture::EncoderExecutionFailureCategory::kOutputNotReady;
+            using EncoderFailure = redclaw::capture::EncoderExecutionFailureCategory;
+            const auto failure = encoder_diagnostics.last_failure;
+            const bool forced_idr_unavailable = failure == EncoderFailure::kForcedIdrUnavailable;
+            const bool restart_encoder = redclaw::capture::encoder_execution_requires_restart(
+                failure, stream_encoder_session.is_running());
             stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
-            if (encoder_diagnostics.last_failure
-                    == redclaw::capture::EncoderExecutionFailureCategory::kForcedIdrUnavailable) {
-                video_codec_negotiator.record_hevc_encoder_open_failure();
+            if (restart_encoder) {
+                if (stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc) {
+                    video_codec_negotiator.record_hevc_encoder_open_failure();
+                    std::cout << "Runtime video codec renegotiation role=" << role_name
+                              << " from=hevc reason=" << (forced_idr_unavailable
+                                    ? "host_hevc_forced_idr_unavailable" : "host_hevc_encoder_open_failed") << '\n';
+                }
                 stream_encoder_session.stop();
                 stream_encoder_started = false;
                 redclaw::session::DesktopSourceActivityUpdate activity_update;
@@ -7112,12 +7124,10 @@ int run_runtime_mode(
                     activity_update = stream_source_activity_tracker.on_keyframe_request();
                 }
                 apply_source_activity_update(activity_update);
-                std::cout << "Runtime video codec renegotiation role=" << role_name
-                          << " from=hevc reason=host_hevc_forced_idr_unavailable" << '\n';
             }
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
-            if (output_not_ready) {
+            if (!restart_encoder && failure == EncoderFailure::kOutputNotReady) {
                 stream_last_encoded_capture_sequence = capture_sequence;
                 ++stream_host_stage_telemetry_snapshot.encode_output_not_ready_count;
                 return;
@@ -7642,8 +7652,7 @@ int run_runtime_mode(
                     command.reassembled_frames = stream_encoded_frames_reassembled;
                     command.completed_keyframes = stream_completed_keyframes;
                     command.dropped_keyframes = stream_dropped_keyframes;
-                    command.dropped_frames =
-                        stream_incomplete_frames_dropped + stream_dependency_frames_dropped;
+                    command.dropped_frames = stream_incomplete_frames_dropped;
                     command.received_frames = command.reassembled_frames + command.dropped_frames;
                     command.decoded_frames = stream_gui_decoded_frames;
                     command.rendered_frames = stream_gui_rendered_frames;
@@ -8835,7 +8844,7 @@ int run_runtime_mode(
                         : stream_dropped_keyframes;
                     stats.dropped_frames = qa_hold_loss_stats_for_expired_feedback
                         ? 0
-                        : stream_incomplete_frames_dropped + stream_dependency_frames_dropped;
+                        : stream_incomplete_frames_dropped;
                     stats.received_frames = stats.reassembled_frames + stats.dropped_frames;
                     stats.decoded_frames = stream_gui_decoded_frames;
                     stats.rendered_frames = stream_gui_rendered_frames;
@@ -11370,7 +11379,6 @@ int run_runtime_mode(
                 std::uint64_t encoded_frames_reassembled = 0;
                 std::uint64_t local_recovery_discarded_frames = 0;
                 std::uint64_t incomplete_frames_dropped = 0;
-                std::uint64_t dependency_frames_dropped = 0;
                 std::uint64_t completed_keyframes = 0;
                 std::uint64_t dropped_keyframes = 0;
                 std::uint64_t keyframe_requests_sent = 0;
@@ -11428,7 +11436,6 @@ int run_runtime_mode(
                     encoded_frames_reassembled = stream_encoded_frames_reassembled;
                     local_recovery_discarded_frames = stream_local_dependency_frames_dropped;
                     incomplete_frames_dropped = stream_incomplete_frames_dropped;
-                    dependency_frames_dropped = stream_dependency_frames_dropped;
                     completed_keyframes = stream_completed_keyframes;
                     dropped_keyframes = stream_dropped_keyframes;
                     keyframe_requests_sent = stream_keyframe_request_sent_total;
@@ -11803,7 +11810,6 @@ int run_runtime_mode(
                            << " encoded_frames_reassembled=" << encoded_frames_reassembled
                            << " local_recovery_discarded_frames=" << local_recovery_discarded_frames
                            << " incomplete_frames_dropped=" << incomplete_frames_dropped
-                           << " dependency_frames_dropped=" << dependency_frames_dropped
                            << " completed_keyframes=" << completed_keyframes
                            << " dropped_keyframes=" << dropped_keyframes
                            << " incomplete_frame_feedback_sent_total="

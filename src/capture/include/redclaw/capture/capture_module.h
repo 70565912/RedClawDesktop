@@ -127,6 +127,12 @@ enum class EncoderExecutionFailureCategory {
 	kForcedIdrUnavailable,
 };
 
+[[nodiscard]] constexpr bool encoder_execution_requires_restart(
+	EncoderExecutionFailureCategory failure, bool running) noexcept {
+	return !running || failure == EncoderExecutionFailureCategory::kEncoderInitFailed
+		|| failure == EncoderExecutionFailureCategory::kForcedIdrUnavailable;
+}
+
 enum class EncoderRateControlUpdateStatus {
 	kApplied,
 	kUnsupported,

@@ -123,6 +123,14 @@ D11 was recorded in `cdc01b3`; the previous review head `2748350` adjusted the v
 - Rechecked the previous findings: the resume reason and missed-notification deadline, requested static refresh, monitor pin/failure gate, encoder-open revision recheck, 400 kbps floor, network escalation and non-Windows guard remain in place. The non-Windows build and full CTest sweep were not run.
 - D11 remains open at the final head: both machines' local builds and unit gates, a fresh independent read-only re-review, mixed-version and hardware acceptance (including idle resume and refresh IDRs), and GitHub `docs-guard`. Bitrate/quality and performance remain unmeasured for this round. No push, publication or live RedClaw process changes.
 
+### PR #10 final review fixes on `efb8950` (M02-T03)
+
+- D3D11 rebuilds the replacement HWND's output before redrawing its retained CPU or GPU picture. Native-window recovery still requests an IDR. A missing native parent client rectangle during mapping no longer registers as full coverage. The poll still clips to valid parent rectangles and counts opaque click-through layered covers.
+- Receiver feedback is checked against current playback session, revision and pause state at every reliable-channel send attempt. The reassembler validates all fragments during IDR wait without copying dependent payloads. Complete local discards count as reassembled and genuine incomplete AUs still count as network loss. An HEVC reopen failure or stopped context schedules an H.264 restart through the existing reference-refresh path.
+- The four reported D3D11 tests now raise topmost fixtures and wait up to two seconds for the mapped, exposed client and the active playback callback. The desktop baseline passed at `efb8950`. The laptop-specific failure and the fix on that machine remain unverified.
+- VS2022 x64 Debug built with `build.ps1 -SkipConfigure -ConfigurePreset ninja-x64-local -Target redclaw_desktop -NoPublish`. Focused `ctest --test-dir build/ninja-x64 -C Debug --output-on-failure` passed all 13 selected suites, including all 13 D3D11 UI cases. The four reported cases passed five consecutive repetitions (20/20). Evidence is in `build/reports/pr10-final-desktop.log`, `pr10-final-ctest.log` and `pr10-final-d3d11-repeat.log`.
+- The encoder tests cover restart classification, including a failed reopen and a stopped encoder. Hardware reopen fault injection, live feedback retry, mixed-version/device acceptance and the laptop rerun remain open. The existing D10 and D11 decisions apply.
+
 ## Mainline
 
 - PR #4 (`eca4b31`) is merged: root `SPEC.md`, `PROGRESS.md`, `DECISIONS.md`, and the root `AGENTS.md` onboarding gate.

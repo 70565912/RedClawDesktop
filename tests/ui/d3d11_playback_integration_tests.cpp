@@ -43,6 +43,32 @@
 #include <thread>
 #include <QUuid>
 
+namespace {
+
+void show_playback_test_window(QWidget& window, QWidget& canvas) {
+    window.move(window.screen()->availableGeometry().center() - window.rect().center());
+    window.show();
+    canvas.show();
+    window.raise();
+}
+
+template <class Ready>
+bool wait_for_visible_playback(QWidget& window, QWidget& canvas, Ready ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        QCoreApplication::processEvents();
+        const auto hwnd = reinterpret_cast<HWND>(canvas.internalWinId());
+        RECT client{};
+        if (window.windowHandle() && window.windowHandle()->isExposed()
+            && hwnd && IsWindowVisible(hwnd) && GetClientRect(hwnd, &client) && !IsRectEmpty(&client)
+            && ready()) return true;
+        QThread::msleep(10);
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+}
+
+}  // namespace
+
 TEST(D3D11Playback, NativeEmptyBackgroundIsDarkBeforeFirstFrameAndAfterClear) {
     QWidget owner; owner.resize(640, 400);
     const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&owner);
@@ -405,6 +431,7 @@ TEST(D3D11Playback, NewFramesDuringDeferredGeometryUseTheActualOutputResource) {
 }
 
 TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDecoder) {
+    std::vector<bool> states;
     class RecreatingWindow : public QWidget {
     public:
         void recreate_native_window() {
@@ -418,11 +445,12 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     layout->setContentsMargins(0, 0, 0, 0);
     const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
     ASSERT_NE(renderer.widget, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     layout->addWidget(renderer.widget);
     window.resize(640, 360);
-    window.show();
-    window.raise();
-    QCoreApplication::processEvents();
+    show_playback_test_window(window, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
     QString error;
     auto* decoder_device = renderer.canvas->d3d11_presentation_device(&error);
     ASSERT_NE(decoder_device, nullptr) << error.toStdString();
@@ -454,9 +482,22 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     for (int i = 0; i < 6; ++i) {
         SCOPED_TRACE(i);
         const auto old_window = renderer.widget->winId();
+        const auto before_recreation = states.size();
+        const auto before_redraw = renderer.canvas->diagnostic_snapshot()["cpu_redraws"].toInteger();
         window.recreate_native_window();
-        QCoreApplication::processEvents();
+        window.raise();
+        ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, [&] {
+            if (!active()) return false;
+            return i != 0 || renderer.canvas->diagnostic_snapshot()["cpu_redraws"].toInteger() > before_redraw;
+        }));
         ASSERT_NE(renderer.widget->winId(), old_window);
+        if (i == 0) {
+            // Only the initial CPU image exists. The replacement HWND must
+            // receive that picture before any new frame is submitted.
+            EXPECT_TRUE(renderer.canvas->diagnostic_snapshot()["output_window_matches_canvas"].toBool());
+            ASSERT_GT(states.size(), before_recreation);
+            EXPECT_TRUE(states[before_recreation]);
+        }
         error.clear();
         const auto outcome = i % 2 == 0 ? renderer.canvas->present_frame(frame, &error)
                                        : renderer.canvas->present_image(image, &error);
@@ -479,9 +520,9 @@ TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput)
     renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     window.resize(640, 360);
     renderer.widget->resize(window.size());
-    window.show();
-    window.raise();
-    QCoreApplication::processEvents();
+    show_playback_test_window(window, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
     ASSERT_FALSE(states.empty());
     ASSERT_FALSE(states.back());
 
@@ -502,7 +543,8 @@ TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput)
 
     window.create();
     window.show();
-    QCoreApplication::processEvents();
+    window.raise();
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
     EXPECT_NE(renderer.widget->internalWinId(), WId(0));
     EXPECT_FALSE(states.back()); // resume without a decoded frame
     renderer.canvas->set_playback_state_callback({});
@@ -520,8 +562,9 @@ TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) 
         paused = value;
         reason = trigger;
     });
-    window.show();
-    QCoreApplication::processEvents();
+    show_playback_test_window(window, *renderer.widget);
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, [&] { return !paused; }))
+        << reason.toStdString();
     ASSERT_FALSE(paused);
 
     // Model a settled old Host: present once, release the caller's frame,
@@ -591,6 +634,15 @@ TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) 
     SetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
     ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 128, LWA_ALPHA));
     ASSERT_TRUE(cover_width(width + 10));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 255, LWA_ALPHA));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    SetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    ASSERT_EQ(GetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT, WS_EX_TRANSPARENT);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, RGB(255, 0, 0), 255, LWA_ALPHA | LWA_COLORKEY));
     poll_visibility();
     EXPECT_FALSE(paused);
     ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 255, LWA_ALPHA));
@@ -727,12 +779,18 @@ TEST(PlaybackVisibility, D3D11TransitionsWithoutDecodedFramesAndKeepsOtherReason
     renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     ASSERT_FALSE(states.empty()); EXPECT_TRUE(states.back());
     owner.resize(640,360); renderer.widget->resize(owner.size());
-    owner.show(); owner.raise(); renderer.widget->show(); QCoreApplication::processEvents();
+    show_playback_test_window(owner, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
     ASSERT_FALSE(states.empty()); EXPECT_FALSE(states.back());
     owner.showMinimized(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
-    owner.showNormal(); owner.raise(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    owner.showNormal(); owner.raise();
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
+    EXPECT_FALSE(states.back());
     owner.hide(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
-    owner.show(); owner.raise(); QCoreApplication::processEvents(); EXPECT_FALSE(states.back());
+    owner.show(); owner.raise();
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
+    EXPECT_FALSE(states.back());
     const auto before_recreation = states.size();
     QEvent recreated(QEvent::WinIdChange);
     QCoreApplication::sendEvent(renderer.widget, &recreated);

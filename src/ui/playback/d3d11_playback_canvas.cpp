@@ -66,7 +66,10 @@ bool is_playback_window_occluded(HWND hwnd) {
   for (auto parent = hwnd; parent != root;) {
     parent = GetAncestor(parent, GA_PARENT);
     if (!parent) return false;
-    bounds &= client_rect_on_screen(parent);
+    const auto parent_bounds = client_rect_on_screen(parent);
+    // During native creation the parent may not have a client area yet.
+    if (parent_bounds.isEmpty()) return false;
+    bounds &= parent_bounds;
   }
   if (bounds.isEmpty()) return true;
 
@@ -80,13 +83,13 @@ bool is_playback_window_occluded(HWND hwnd) {
     if (!above || above == root) break;
     if (!IsWindowVisible(above) || IsIconic(above)) continue;
     const auto style = GetWindowLongPtrW(above, GWL_EXSTYLE);
-    if (style & WS_EX_TRANSPARENT) continue;
     if (style & WS_EX_LAYERED) {
+      // A layered window can be click-through and still paint opaque pixels.
       BYTE alpha = 0;
       DWORD flags = 0;
       if (!GetLayeredWindowAttributes(above, nullptr, &alpha, &flags)
           || !(flags & LWA_ALPHA) || (flags & LWA_COLORKEY) || alpha != 255) continue;
-    }
+    } else if (style & WS_EX_TRANSPARENT) continue;
     RECT frame{};
     if (FAILED(DwmGetWindowAttribute(above, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame)))
         && !GetWindowRect(above, &frame)) continue;
@@ -167,6 +170,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return {{"backend", "d3d11"}, {"last_presented_surface", bool(retained_surface_.d3d11_surface)},
       {"retained_surface_frame_id", qint64(retained_surface_.frame_id)},
       {"surface_redraws", qint64(surface_redraws_)},
+      {"cpu_redraws", qint64(cpu_redraws_)},
       {"swap_chain_ready", has_output},
       {"output_window_matches_canvas", has_output && output.OutputWindow == reinterpret_cast<HWND>(internalWinId())},
       {"widget_x", x()}, {"widget_y", y()}, {"widget_width", width()}, {"widget_height", height()},
@@ -412,6 +416,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       context_->Flush();
     }
     if (event->type() == QEvent::WinIdChange) {
+      redraw_pending_ = cpu_frame_.texture || retained_surface_.d3d11_surface;
       // A new HWND also needs a fresh frame on a static desktop. Publish a
       // fenced recovery transition even when visibility itself did not change.
       if (playback_state_changed_) {
@@ -1139,14 +1144,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   }
 
   bool redraw_last_picture() {
-    if (!retained_surface_.d3d11_surface) {
-      return !cpu_frame_.texture || render(cpu_frame_, nullptr, true) == PresentOutcome::kPresented;
+    if (!retained_surface_.d3d11_surface && !cpu_frame_.texture) return true;
+    if (!ensure_swap_chain(nullptr) || !sync_swap_chain_size()) return false;
+    if (retained_surface_.d3d11_surface) {
+      if (present_d3d11_surface(retained_surface_, nullptr, true) != PresentOutcome::kPresented) return false;
+      ++surface_redraws_;
+    } else {
+      if (render(cpu_frame_, nullptr, true) != PresentOutcome::kPresented) return false;
+      ++cpu_redraws_;
     }
-    if (!ensure_swap_chain(nullptr) || !sync_swap_chain_size()
-        || present_d3d11_surface(retained_surface_, nullptr, true) != PresentOutcome::kPresented) {
-      return false;
-    }
-    ++surface_redraws_;
     return true;
   }
 
@@ -1539,6 +1545,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   QSize video_output_size_;
   DirectFrameData retained_surface_;
   std::uint64_t surface_redraws_ = 0;
+  std::uint64_t cpu_redraws_ = 0;
   bool redraw_pending_ = false;
   bool geometry_transaction_active_ = false;
   std::uint64_t swap_chain_resize_count_ = 0;

@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-11-12 — PR #10 final review fixes on `efb8950` (M02-T03)
+
+- D3D11 rebinds output and redraws the retained CPU picture after native recreation. Coverage distinguishes unavailable parent geometry from a valid clipped area and includes opaque click-through layered windows. The four affected fixtures wait for a mapped, active topmost canvas. The regressions cover zero-frame CPU redraw and layered opacity and color-key behavior.
+- The reliable-channel send path drops stale receiver feedback on first send and retry. Complete dependent AUs received during IDR wait contribute to reassembly totals, with only incomplete AUs feeding loss accounting. Encoder reopen failure or a dead encoder triggers restart and latches H.264 when the failed encoder was HEVC. Validation and laptop follow-up are recorded in [PROGRESS](../../PROGRESS.md#pr-10-final-review-fixes-on-efb8950-m02-t03).
+
 ## 2026-11-12 — PR #10 second-round re-review fixes (M02-T03)
 
 - Base `2748350`, after the first review fixes in `4aa8df8` and the D11 decision. The Controller redraws its last successful surface or CPU picture on resume without marking it as new output. It still discards unpresented frames and requests a post-boundary reference. The Host schedules eligible codec changes through the existing static-reference tracker, with no ordinary P-frame refresh on a quiet source.

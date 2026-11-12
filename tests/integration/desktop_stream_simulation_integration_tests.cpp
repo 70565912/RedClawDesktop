@@ -27,7 +27,6 @@ struct DeliveredFrameSummary {
     bool keyframe = false;
     std::uint64_t frame_id = 0;
     std::uint32_t incomplete_drops = 0;
-    std::uint32_t dependency_drops = 0;
 };
 
 class DeterministicMediaLink final {
@@ -116,7 +115,6 @@ public:
             feedback.arrivals.push_back({sequence, arrival_us});
             const auto reassembly = reassembler_.push(fragment, arrival_us / 1000);
             summary.incomplete_drops += reassembly.dropped_incomplete_frames;
-            summary.dependency_drops += reassembly.dropped_dependency_frames;
             if (reassembly.status == redclaw::net::EncodedVideoReassemblyStatus::kComplete) {
                 summary.complete = true;
                 summary.keyframe = reassembly.frame.keyframe;
@@ -395,7 +393,7 @@ TEST(DesktopStreamSimulation, SeededRandomFragmentLossRecoversAtLatestCompleteId
     DeterministicMediaLink link;
     std::mt19937 random(0x5EED1234U);
     std::bernoulli_distribution drop(0.12);
-    std::uint64_t incomplete_or_dependency_drops = 0;
+    std::uint64_t incomplete_drops = 0;
 
     for (std::uint64_t frame_id = 1; frame_id <= 48; ++frame_id) {
         const auto delivered = link.send_frame(
@@ -405,8 +403,7 @@ TEST(DesktopStreamSimulation, SeededRandomFragmentLossRecoversAtLatestCompleteId
             [&](std::uint64_t, std::uint16_t, std::uint16_t) {
                 return drop(random);
             });
-        incomplete_or_dependency_drops +=
-            delivered.incomplete_drops + delivered.dependency_drops;
+        incomplete_drops += delivered.incomplete_drops;
     }
 
     const auto recovery = link.send_frame(
@@ -416,7 +413,7 @@ TEST(DesktopStreamSimulation, SeededRandomFragmentLossRecoversAtLatestCompleteId
         [](std::uint64_t, std::uint16_t, std::uint16_t) { return false; });
 
     EXPECT_GT(link.dropped_fragments(), 0U);
-    EXPECT_GT(incomplete_or_dependency_drops, 0U);
+    EXPECT_GT(incomplete_drops, 0U);
     EXPECT_TRUE(recovery.complete);
     EXPECT_TRUE(recovery.keyframe);
     EXPECT_EQ(link.latest_complete_frame_id(), 49U);
