@@ -318,14 +318,15 @@ struct LocalVideoDecodeProbe {
 	std::uint64_t present_adapter_luid = 0;
 	// The display adapter again when it can hardware-decode HEVC, otherwise
 	// empty/0. `hevc_decode_reason` is `display_adapter`,
-	// `display_adapter_no_hevc` or `present_adapter_not_enumerated`.
+	// `display_adapter_no_hevc`, `present_adapter_unspecified`, or
+	// `present_adapter_not_enumerated`.
 	std::string hevc_decode_adapter;
 	std::uint64_t hevc_decode_adapter_luid = 0;
 	std::string hevc_decode_reason;
 };
 
-// `present_adapter_luid` is the adapter the presenter actually uses; 0 means
-// the adapter that owns the primary monitor (the runtime has no window yet).
+// Hardware capabilities require the explicit adapter the presenter uses.
+// An unspecified (0) or unenumerated LUID yields no hardware capabilities.
 [[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support(std::uint64_t present_adapter_luid = 0);
 
 [[nodiscard]] bool should_fallback_to_software_decode(

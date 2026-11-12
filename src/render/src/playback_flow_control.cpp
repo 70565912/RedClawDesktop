@@ -1,6 +1,7 @@
 #include "redclaw/render/playback_flow_control.h"
 
 #include <cstdio>
+#include <utility>
 
 namespace redclaw::render {
 
@@ -80,31 +81,32 @@ bool KeyframeRequestLimiter::due(std::uint64_t now_ms) const noexcept {
     return !has_sent_ || now_ms < last_sent_ms_ || now_ms - last_sent_ms_ >= min_interval_ms_;
 }
 
-bool KeyframeRequestLimiter::request(std::uint64_t now_ms) noexcept {
-    if (due(now_ms)) {
-        has_sent_ = true;
-        last_sent_ms_ = now_ms;
-        pending_ = false;
-        ++sent_;
-        return true;
+std::optional<std::string> KeyframeRequestLimiter::request(std::uint64_t now_ms, std::string reason) {
+    if (!pending_reason_ || reason.starts_with("presentation_resumed_")) {
+        pending_reason_ = std::move(reason);
     }
-    pending_ = true;
-    ++suppressed_;
-    return false;
+    auto ready = poll(now_ms);
+    if (!ready) ++suppressed_;
+    return ready;
 }
 
-bool KeyframeRequestLimiter::poll(std::uint64_t now_ms) noexcept {
-    if (!pending_ || !due(now_ms)) return false;
+std::optional<std::string> KeyframeRequestLimiter::poll(std::uint64_t now_ms) noexcept {
+    if (!pending_reason_ || !due(now_ms)) return std::nullopt;
     has_sent_ = true;
     last_sent_ms_ = now_ms;
-    pending_ = false;
     ++sent_;
-    return true;
+    return std::exchange(pending_reason_, std::nullopt);
+}
+
+void KeyframeRequestLimiter::satisfied() noexcept {
+    // Runtime recovery still needs the resume notification if an unsolicited
+    // displayable IDR beats the coalescer.
+    if (!pending_reason_ || !pending_reason_->starts_with("presentation_resumed_")) cancel_pending();
 }
 
 void KeyframeRequestLimiter::reset() noexcept {
     has_sent_ = false;
-    pending_ = false;
+    cancel_pending();
     last_sent_ms_ = 0;
 }
 
@@ -118,8 +120,13 @@ void PresentationGate::set_display_on(bool on) noexcept {
     note_state_change();
 }
 
+void PresentationGate::set_window_occluded(bool occluded) noexcept {
+    window_occluded_ = occluded;
+    note_state_change();
+}
+
 void PresentationGate::on_present_result(bool occluded, std::uint64_t now_ms) noexcept {
-    occluded_ = occluded;
+    swap_chain_occluded_ = occluded;
     last_occlusion_probe_ms_ = now_ms;
     note_state_change();
 }
@@ -142,11 +149,11 @@ bool PresentationGate::take_resume() noexcept {
 }
 
 PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexcept {
-    if (hidden_ || !display_on_) {
+    if (hidden_ || !display_on_ || window_occluded_) {
         ++skipped_;
         return Decision::kSkip;
     }
-    if (!occluded_) return Decision::kPresent;
+    if (!swap_chain_occluded_) return Decision::kPresent;
     if (now_ms < last_occlusion_probe_ms_ || now_ms - last_occlusion_probe_ms_ >= occlusion_probe_interval_ms_) {
         last_occlusion_probe_ms_ = now_ms;
         return Decision::kTestOcclusion;
@@ -158,7 +165,7 @@ PresentationGate::Decision PresentationGate::decide(std::uint64_t now_ms) noexce
 std::string_view PresentationGate::state_name() const noexcept {
     if (!display_on_) return "display_off";
     if (hidden_) return "hidden";
-    if (occluded_) return "occluded";
+    if (occluded()) return "occluded";
     return "visible";
 }
 

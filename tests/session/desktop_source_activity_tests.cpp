@@ -90,6 +90,36 @@ void test_static_viewport_change_and_bounded_retry() {
         "retry must request a bounded replacement reference");
 }
 
+void test_keyframe_request_reopens_settled_static_reference() {
+    using namespace redclaw::session;
+    DesktopSourceActivityTracker tracker({.static_quiet_ms = 500, .minimum_timeout_polls = 1});
+    tracker.on_capture_frame(10, 1, 1);
+    const auto pending = tracker.on_capture_timeout(510);
+    tracker.on_reference_submitted(1, 1, 510, 1);
+    tracker.on_displayable_ack(pending.snapshot.revision, 1);
+    const auto quiet = tracker.on_capture_timeout(520);
+    require(quiet.snapshot.state == DesktopSourceActivityState::kStatic
+        && !quiet.request_keyframe && !quiet.request_reference_frame,
+        "settled static desktop must stay quiet without a request");
+
+    const auto refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending
+        && refresh.state_changed && refresh.request_keyframe && refresh.request_reference_frame,
+        "static source must request an IDR from its retained capture");
+    require(refresh.snapshot.last_frame_ms == quiet.snapshot.last_frame_ms,
+        "the reference must be requested without new capture");
+    tracker.on_reference_submitted(2, 2, 530, 1);
+    const auto replacement = tracker.on_keyframe_request();
+    require(replacement.request_reference_frame && replacement.snapshot.reference_keyframe_id == 0
+        && replacement.snapshot.revision > refresh.snapshot.revision,
+        "a new request must supersede an older pending reference");
+    require(tracker.on_displayable_ack(refresh.snapshot.revision, 2).snapshot.state
+        == DesktopSourceActivityState::kStaticPending, "a stale ACK must not settle the source");
+    tracker.on_reference_submitted(3, 3, 540, 1);
+    require(tracker.on_displayable_ack(replacement.snapshot.revision, 3).snapshot.state
+        == DesktopSourceActivityState::kStatic, "the replacement IDR must settle the source");
+}
+
 void test_work_coordinator_coalesces_typed_reasons() {
     redclaw::session::HostStreamWorkCoordinator coordinator;
     const auto initial = coordinator.snapshot();
@@ -249,12 +279,37 @@ void test_playback_pause_suspends_and_restarts_one_recovery_generation() {
     require(!coordinator.tick(40000, 0).request_keyframe, "reset cannot revive a paused session");
 }
 
+void test_resume_notification_timeout_arms_recovery() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    coordinator.set_playback_state(1, 1, true);
+    coordinator.set_playback_state(1, 2, false);
+    require(!coordinator.tick(1000, 0).request_keyframe, "give the coalescer the first opportunity");
+    coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 5, 1100, 0);
+    require(!coordinator.tick(1499, 0).request_keyframe, "honor the resume notification grace");
+    const auto first = coordinator.tick(1500, 0);
+    require(first.request_keyframe && first.snapshot.state == ControllerDecoderRecoveryState::kAwaitingIdr,
+        "a missing dedicated resume notification must still arm recovery");
+    require(!coordinator.on_dependency_break(
+        ControllerDecoderBreakReason::kPresentationResumed, 0, 1600, 0).request_keyframe,
+        "a delayed notification must coalesce into the existing recovery");
+    require(coordinator.tick(2000, 0).request_keyframe, "an unanswered request must retry");
+    coordinator.on_keyframe_submitted(6, 2001, 0);
+    require(!coordinator.on_dependency_break(
+        ControllerDecoderBreakReason::kPresentationResumed, 0, 2002, 0).request_keyframe,
+        "a delayed notification must preserve the submitted IDR");
+    coordinator.on_displayable_ack(6);
+    require(!coordinator.tick(3000, 0).request_keyframe, "displayable IDR must end retries");
+}
+
 int main() {
     test_playback_pause_suspends_and_restarts_one_recovery_generation();
     test_sparse_updates_preserve_predictive_chain();
     test_static_requires_healthy_timeouts_and_displayable_keyframe();
     test_stall_is_unknown_and_frame_change_reactivates();
     test_static_viewport_change_and_bounded_retry();
+    test_keyframe_request_reopens_settled_static_reference();
+    test_resume_notification_timeout_arms_recovery();
     test_work_coordinator_coalesces_typed_reasons();
     test_decoder_recovery_coalesces_breaks_and_waits_for_displayable_idr();
     test_decoder_recovery_retries_invalidates_and_resets();

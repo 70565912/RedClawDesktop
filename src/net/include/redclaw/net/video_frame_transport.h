@@ -466,7 +466,8 @@ private:
     std::uint32_t recovery_probe_original_rate_ = 0;
     std::uint64_t last_backoff_sample_ms_ = 0;
     std::uint64_t last_network_drain_ms_ = 0;
-    bool pressure_backoff_latched_ = false;
+    enum class PressureBackoff { kNone, kLocal, kNetwork };
+    PressureBackoff pressure_backoff_ = PressureBackoff::kNone;
 };
 
 // Independent constraints use the same previous cadence, never sequential

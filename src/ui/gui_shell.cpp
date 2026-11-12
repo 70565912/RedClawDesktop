@@ -5271,18 +5271,14 @@ bool launch_gui_shell(
         append_log(
             QString("D3D11 decoded-surface output unavailable; CPU frame fallback remains enabled: %1")
                 .arg(decode_device_error.isEmpty() ? "non-D3D11 playback backend" : decode_device_error));
-        if (has_presentation_adapter) {
-          // HEVC was probed on the presenter adapter, but decode cannot be
-          // pinned there. Advertise H.264 only so HEVC never decodes on
-          // another GPU's default device (D10).
-          const int codec_arg = args.indexOf("--stream-video-codec");
-          if (codec_arg >= 0 && codec_arg + 1 < args.size()) {
-            args[codec_arg + 1] = "h264";
-          } else {
-            args << "--stream-video-codec" << "h264";
-          }
-          append_log("Controller advertises H.264 only: no decode device on the presenter adapter.");
+        // D10 requires a decode device on the presenter's adapter for HEVC.
+        const int codec_arg = args.indexOf("--stream-video-codec");
+        if (codec_arg >= 0 && codec_arg + 1 < args.size()) {
+          args[codec_arg + 1] = "h264";
+        } else {
+          args << "--stream-video-codec" << "h264";
         }
+        append_log("Controller advertises H.264 only: no decode device on the presenter adapter.");
       }
       if (!direct_frame_pipe_server.start(pipe_name, &pipe_error)) {
         reject_session_start(

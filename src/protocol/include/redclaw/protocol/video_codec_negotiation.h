@@ -131,6 +131,8 @@ public:
     [[nodiscard]] VideoCodecPreference preference() const noexcept { return preference_; }
     [[nodiscard]] Snapshot snapshot() const;
     [[nodiscard]] VideoCodecSelection select(HostVideoEncodeCapabilities host) const;
+    [[nodiscard]] VideoCodecSelection select(
+        HostVideoEncodeCapabilities host, const Snapshot& state) const noexcept;
 
 private:
     const VideoCodecPreference preference_;

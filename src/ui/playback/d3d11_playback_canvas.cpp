@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QLayout>
 #include <QPaintEngine>
+#include <QRegion>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTimer>
@@ -28,6 +29,7 @@
 #include <dxgi1_4.h>
 #include <wrl/client.h>
 #include <Windows.h>
+#include <dwmapi.h>
 namespace redclaw::ui {
 PresentOutcome classify_dxgi_present_result(std::int32_t result) {
   if (result == DXGI_ERROR_WAS_STILL_DRAWING || (SUCCEEDED(result) && result != S_OK))
@@ -40,6 +42,54 @@ using Microsoft::WRL::ComPtr;
 // GUID_CONSOLE_DISPLAY_STATE; a local copy avoids INITGUID/uuid.lib.
 constexpr GUID kConsoleDisplayStateGuid =
     {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}};
+
+bool is_cloaked(HWND hwnd) {
+  DWORD cloaked = 0;
+  return SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked)))
+      && cloaked != 0;
+}
+
+QRect client_rect_on_screen(HWND hwnd) {
+  RECT client{};
+  if (!GetClientRect(hwnd, &client)) return {};
+  POINT origin{client.left, client.top};
+  if (!ClientToScreen(hwnd, &origin)) return {};
+  return {origin.x, origin.y, client.right - client.left, client.bottom - client.top};
+}
+
+bool is_playback_window_occluded(HWND hwnd) {
+  const auto root = GetAncestor(hwnd, GA_ROOT);
+  if (!root) return false;
+  if (is_cloaked(root)) return true;
+  auto bounds = client_rect_on_screen(hwnd);
+  if (bounds.isEmpty()) return false;
+  for (auto parent = hwnd; parent != root;) {
+    parent = GetAncestor(parent, GA_PARENT);
+    if (!parent) return false;
+    bounds &= client_rect_on_screen(parent);
+  }
+  if (bounds.isEmpty()) return true;
+
+  // Flip-model Present does not report occlusion. Subtract the rectangles of
+  // opaque top-level windows above the playback window in desktop Z order.
+  // Bound traversal in case windows are reordered during the scan.
+  QRegion uncovered(bounds);
+  auto above = root;
+  for (int i = 0; i < 256; ++i) {
+    above = GetWindow(above, GW_HWNDPREV);
+    if (!above || above == root) break;
+    if (!IsWindowVisible(above) || IsIconic(above)
+        || (GetWindowLongPtrW(above, GWL_EXSTYLE) & (WS_EX_LAYERED | WS_EX_TRANSPARENT))) continue;
+    RECT frame{};
+    if (FAILED(DwmGetWindowAttribute(above, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame)))
+        && !GetWindowRect(above, &frame)) continue;
+    const QRect covered(frame.left, frame.top, frame.right - frame.left, frame.bottom - frame.top);
+    if (!bounds.intersects(covered) || is_cloaked(above)) continue;
+    uncovered -= covered;
+    if (uncovered.isEmpty()) return true;
+  }
+  return false;
+}
 
 std::uint64_t steady_now_ms() {
   return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -82,14 +132,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     setAutoFillBackground(false);
     setMinimumSize(320, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    visibility_timer_ = new QTimer(this);
-    visibility_timer_->setInterval(250);
-    connect(visibility_timer_, &QTimer::timeout, this, [this] {
+    auto* visibility_timer = new QTimer(this);
+    visibility_timer->setInterval(250);
+    connect(visibility_timer, &QTimer::timeout, this, [this] {
       synchronize_visibility("visibility_timer");
-      if (presentation_gate_.occluded() && !presentation_gate_.hidden() && presentation_gate_.display_on())
+      if (presentation_gate_.needs_occlusion_probe())
         (void)presentation_allowed();
     });
-    visibility_timer_->start();
+    visibility_timer->start();
   }
   ~D3D11PlaybackWidget() override {
     unregister_display_power_notification();
@@ -306,7 +356,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
           presentation_gate_.set_display_on(on);
           log_diagnostic(QString("D3D11 presenter display power state=%1; presentation %2 and decode follow visibility")
               .arg(QString::fromLatin1(on ? "on" : "off"), QString::fromLatin1(on ? "resumed" : "paused")));
-          notify_if_presentation_resumed("display_on");
+          synchronize_visibility("display_on");
         }
       }
     }
@@ -400,7 +450,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return QWidget::eventFilter(watched, event);
   }
 
-  void synchronize_visibility(const char* trigger) {
+  void synchronize_visibility(const char* trigger, bool check_coverage = true) {
     if (window() != watched_window_) {
       if (watched_window_) watched_window_->removeEventFilter(this);
       watched_window_ = window();
@@ -408,17 +458,16 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     }
     // QWidget can remain logically visible between native destroy()/create().
     // Keep decode and the occlusion probe paused until an HWND exists again.
-    presentation_gate_.set_hidden(!internalWinId() || !isVisible() || (window() && window()->isMinimized()));
+    const auto hwnd = reinterpret_cast<HWND>(internalWinId());
+    const bool hidden = !hwnd || !isVisible() || (window() && window()->isMinimized());
+    presentation_gate_.set_hidden(hidden);
+    if (check_coverage && !hidden && presentation_gate_.display_on())
+      presentation_gate_.set_window_occluded(is_playback_window_occluded(hwnd));
     notify_if_presentation_resumed(trigger);
   }
 
   void notify_if_presentation_resumed(const char* trigger) {
     const auto state = QString::fromLatin1(presentation_gate_.state_name().data());
-    if (visibility_timer_) {
-      if (presentation_gate_.paused()) {
-        if (!visibility_timer_->isActive()) visibility_timer_->start();
-      } else if (visibility_timer_->isActive()) visibility_timer_->stop();
-    }
     if (state == last_notified_state_) return;
     last_notified_state_ = state;
     (void)presentation_gate_.take_resume();
@@ -488,7 +537,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   // Hidden, minimized or display-off windows skip every D3D call. Occluded
   // swap chains are probed with DXGI_PRESENT_TEST at a low rate.
   bool presentation_allowed() {
-    synchronize_visibility("visible");
+    synchronize_visibility("visible", false);
     const auto now = steady_now_ms();
     switch (presentation_gate_.decide(now)) {
     case redclaw::render::PresentationGate::Decision::kPresent:
@@ -1455,7 +1504,6 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   std::function<void(const QString&)> diagnostic_log_;
   std::function<void(bool, const QString&)> playback_state_changed_;
   QString last_notified_state_;
-  QTimer* visibility_timer_ = nullptr;
   QPointer<QWidget> watched_window_;
   std::string adapter_description_;
   std::string adapter_reason_;

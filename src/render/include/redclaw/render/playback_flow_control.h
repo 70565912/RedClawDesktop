@@ -97,14 +97,15 @@ public:
     explicit KeyframeRequestLimiter(std::uint64_t min_interval_ms = 500) noexcept
         : min_interval_ms_(min_interval_ms) {}
 
-    // Returns true when the caller should send a request now.
-    bool request(std::uint64_t now_ms) noexcept;
-    // Returns true when a coalesced request is due now.
-    bool poll(std::uint64_t now_ms) noexcept;
-    void satisfied() noexcept { pending_ = false; }
+    // Return the reason to send when due. A pending resume notification
+    // takes priority over a dependency request.
+    std::optional<std::string> request(std::uint64_t now_ms, std::string reason = {});
+    std::optional<std::string> poll(std::uint64_t now_ms) noexcept;
+    void satisfied() noexcept;
+    void cancel_pending() noexcept { pending_reason_.reset(); }
     void reset() noexcept;
 
-    [[nodiscard]] bool pending() const noexcept { return pending_; }
+    [[nodiscard]] bool pending() const noexcept { return pending_reason_.has_value(); }
     [[nodiscard]] std::uint64_t sent() const noexcept { return sent_; }
     [[nodiscard]] std::uint64_t suppressed() const noexcept { return suppressed_; }
 
@@ -113,7 +114,7 @@ private:
 
     std::uint64_t min_interval_ms_;
     bool has_sent_ = false;
-    bool pending_ = false;
+    std::optional<std::string> pending_reason_;
     std::uint64_t last_sent_ms_ = 0;
     std::uint64_t sent_ = 0;
     std::uint64_t suppressed_ = 0;
@@ -148,8 +149,8 @@ private:
 };
 
 // Decides whether the presenter may touch D3D for a frame. Hidden windows
-// and a powered-off display skip every D3D call; an occluded swap chain is
-// probed with DXGI_PRESENT_TEST at a low rate, independently of video delivery.
+// and a powered-off display skip every D3D call, as does explicit window
+// coverage. DXGI occlusion is probed separately at a low rate.
 class PresentationGate final {
 public:
     enum class Decision {
@@ -162,6 +163,7 @@ public:
 
     void set_hidden(bool hidden) noexcept;
     void set_display_on(bool on) noexcept;
+    void set_window_occluded(bool occluded) noexcept;
     // Report the result of a real or test Present.
     void on_present_result(bool occluded, std::uint64_t now_ms) noexcept;
     Decision decide(std::uint64_t now_ms) noexcept;
@@ -170,8 +172,11 @@ public:
 
     [[nodiscard]] bool hidden() const noexcept { return hidden_; }
     [[nodiscard]] bool display_on() const noexcept { return display_on_; }
-    [[nodiscard]] bool occluded() const noexcept { return occluded_; }
-    [[nodiscard]] bool paused() const noexcept { return hidden_ || !display_on_ || occluded_; }
+    [[nodiscard]] bool occluded() const noexcept { return window_occluded_ || swap_chain_occluded_; }
+    [[nodiscard]] bool needs_occlusion_probe() const noexcept {
+        return swap_chain_occluded_ && !window_occluded_ && !hidden_ && display_on_;
+    }
+    [[nodiscard]] bool paused() const noexcept { return hidden_ || !display_on_ || occluded(); }
     [[nodiscard]] std::uint64_t skipped() const noexcept { return skipped_; }
     [[nodiscard]] std::string_view state_name() const noexcept;
 
@@ -181,7 +186,8 @@ private:
     std::uint64_t occlusion_probe_interval_ms_;
     bool hidden_ = false;
     bool display_on_ = true;
-    bool occluded_ = false;
+    bool window_occluded_ = false;
+    bool swap_chain_occluded_ = false;
     bool resume_pending_ = false;
     bool was_paused_ = false;
     std::uint64_t last_occlusion_probe_ms_ = 0;

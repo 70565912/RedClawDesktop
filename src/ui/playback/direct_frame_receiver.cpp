@@ -186,7 +186,7 @@ class DirectFramePipeServer::Impl final {
       std::lock_guard lock(frame_mutex_);
       playback_state_.paused = true;
       playback_state_.reason = redclaw::helper::PlaybackPauseReason::kRecovery;
-      ++playback_state_.revision;
+      advance_playback_revision_locked();
       if (shared_header_) publish_direct_frame_playback_state(shared_header_, playback_state_);
     }
     HANDLE data_event = nullptr;
@@ -278,7 +278,7 @@ class DirectFramePipeServer::Impl final {
           && (playback_reason_ == reason || (!paused && !playback_state_.paused)))) return;
       desired_paused_ = paused;
       playback_reason_ = reason;
-      ++playback_state_.revision;
+      advance_playback_revision_locked();
       // Resume stays ineligible until the worker has discarded retained work.
       playback_state_.paused = true;
       playback_state_.resynchronizing = true;
@@ -290,60 +290,47 @@ class DirectFramePipeServer::Impl final {
       latest_frame_ = {};
       delivered_frame_count_ = latest_frame_count_;
     }
-    {
-      std::lock_guard lock(keyframe_request_mutex_);
-      keyframe_limiter_.satisfied();
-      pending_keyframe_reason_.clear();
-    }
     std::lock_guard lock(handle_mutex_);
     if (data_event_) SetEvent(data_event_);
   }
 
   // Every dependent frame after a gap asks for a keyframe; the limiter turns
   // that burst into one request now and at most one per interval after.
-  void request_keyframe(const QString& reason) {
-    const auto state = playback_state();
-    if (state.paused) return;
+  void request_keyframe(const QString& reason, std::optional<std::uint64_t> resume_revision = std::nullopt) {
+    redclaw::helper::PlaybackStateSnapshot state;
     std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> notify;
+    std::optional<std::string> ready;
     {
-      std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
-      if (!keyframe_limiter_.request(steady_now_ms())) {
-        if (pending_keyframe_reason_.isEmpty() || reason.startsWith("presentation_resumed_"))
-          pending_keyframe_reason_ = reason;
-        return;
-      }
+      std::lock_guard frame_lock(frame_mutex_);
+      state = playback_state_;
+      if (state.paused || (resume_revision && *resume_revision != state.revision)) return;
+      std::lock_guard request_lock(keyframe_request_mutex_);
+      ready = keyframe_limiter_.request(steady_now_ms(), reason.toStdString());
+      if (!ready) return;
       notify = on_keyframe_request_;
-      pending_keyframe_reason_.clear();
     }
-    if (notify) {
-      notify(reason, state);
-    }
+    if (notify) notify(QString::fromStdString(*ready), state);
   }
 
   void poll_coalesced_keyframe_request() {
-    const auto state = playback_state();
-    if (state.paused) return;
+    redclaw::helper::PlaybackStateSnapshot state;
     std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> notify;
-    QString reason;
+    std::optional<std::string> ready;
     {
-      std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
-      if (!keyframe_limiter_.poll(steady_now_ms())) return;
+      std::lock_guard frame_lock(frame_mutex_);
+      state = playback_state_;
+      if (state.paused) return;
+      std::lock_guard request_lock(keyframe_request_mutex_);
+      ready = keyframe_limiter_.poll(steady_now_ms());
+      if (!ready) return;
       notify = on_keyframe_request_;
-      reason = pending_keyframe_reason_;
-      pending_keyframe_reason_.clear();
     }
-    if (notify) {
-      notify(reason, state);
-    }
+    if (notify) notify(QString::fromStdString(*ready), state);
   }
 
   void keyframe_request_satisfied() {
     std::lock_guard<std::mutex> lock(keyframe_request_mutex_);
-    // Resume has one initial notification even if an unsolicited IDR beats
-    // the coalescer; runtime recovery is armed by that notification.
-    if (keyframe_limiter_.pending() && pending_keyframe_reason_.startsWith("presentation_resumed_")) return;
     keyframe_limiter_.satisfied();
-    pending_keyframe_reason_.clear();
   }
 
   bool take_latest_frame(DirectFrameData* frame, quint64* frame_count) {
@@ -384,7 +371,7 @@ class DirectFramePipeServer::Impl final {
       delivered_frame_count_ = latest_frame_count_;
       playback_state_.session = ++playback_session_counter_;
       if (!desired_paused_) playback_reason_ = "session_reset";
-      ++playback_state_.revision;
+      advance_playback_revision_locked();
       playback_state_.paused = true;
       playback_state_.resynchronizing = true;
       if (shared_header_) publish_direct_frame_playback_state(shared_header_, playback_state_);
@@ -428,6 +415,12 @@ class DirectFramePipeServer::Impl final {
   }
 
  private:
+  void advance_playback_revision_locked() {
+    ++playback_state_.revision;
+    std::lock_guard request_lock(keyframe_request_mutex_);
+    keyframe_limiter_.cancel_pending();
+  }
+
   static bool has_frame_content(const DirectFrameData& frame) {
     return !frame.pixels.empty() || frame.d3d11_surface != nullptr;
   }
@@ -494,7 +487,7 @@ class DirectFramePipeServer::Impl final {
           resume_reason = "presentation_resumed_" + playback_reason_;
         }
       }
-      if (!resume_reason.isEmpty()) request_keyframe(resume_reason);
+      if (!resume_reason.isEmpty()) request_keyframe(resume_reason, worker_revision_);
       const auto before_consume = observed_sequence_;
       consume_latest_frame();
       poll_coalesced_keyframe_request();
@@ -957,7 +950,6 @@ class DirectFramePipeServer::Impl final {
   mutable std::mutex keyframe_request_mutex_;
   std::function<void(QString, redclaw::helper::PlaybackStateSnapshot)> on_keyframe_request_;
   redclaw::render::KeyframeRequestLimiter keyframe_limiter_{500};
-  QString pending_keyframe_reason_;
 
   mutable std::mutex stats_mutex_;
   DirectFrameTransportStats stats_;

@@ -133,14 +133,14 @@ struct AdapterDecodeProfiles {
     std::string detail;
 };
 
-// Opens a real D3D11VA device on `adapter` (nullptr: FFmpeg's default) and
-// lists its H.264 and HEVC decode profiles with NV12 output.
-AdapterDecodeProfiles probe_d3d11va_decoder_profiles(const GpuAdapterCandidate* adapter) {
+// Opens a D3D11VA device for the requested adapter and verifies its LUID
+// before trusting the H.264 and HEVC profiles with NV12 output.
+AdapterDecodeProfiles probe_d3d11va_decoder_profiles(const GpuAdapterCandidate& adapter) {
     AdapterDecodeProfiles profiles;
-    const std::string adapter_index = adapter != nullptr ? std::to_string(adapter->enum_index) : std::string();
+    const std::string adapter_index = std::to_string(adapter.enum_index);
     AVBufferRef* device_ref = nullptr;
     const int result = av_hwdevice_ctx_create(&device_ref, AV_HWDEVICE_TYPE_D3D11VA,
-        adapter_index.empty() ? nullptr : adapter_index.c_str(), nullptr, 0);
+        adapter_index.c_str(), nullptr, 0);
     if (result < 0 || device_ref == nullptr) {
         profiles.detail = "d3d11va_unavailable: " + ffmpeg_error_to_string(result);
         return profiles;
@@ -148,7 +148,9 @@ AdapterDecodeProfiles probe_d3d11va_decoder_profiles(const GpuAdapterCandidate* 
     const auto* device_context = reinterpret_cast<const AVHWDeviceContext*>(device_ref->data);
     const auto* d3d11 = static_cast<const AVD3D11VADeviceContext*>(device_context->hwctx);
     ID3D11VideoDevice* video_device = d3d11 != nullptr ? d3d11->video_device : nullptr;
-    if (video_device == nullptr) {
+    if (d3d11 == nullptr || d3d11_device_adapter_luid(d3d11->device) != adapter.luid) {
+        profiles.detail = "d3d11va_adapter_mismatch";
+    } else if (video_device == nullptr) {
         profiles.detail = "d3d11va_video_device_unavailable";
     } else {
         const UINT profile_count = video_device->GetVideoDecoderProfileCount();
@@ -177,18 +179,19 @@ AdapterDecodeProfiles probe_d3d11va_decoder_profiles(const GpuAdapterCandidate* 
 }
 
 void probe_hardware_decode_adapters(std::uint64_t present_adapter_luid, LocalVideoDecodeProbe* probe) {
-    const auto adapters = enumerate_gpu_adapters(nullptr);
-    std::uint64_t display_luid = present_adapter_luid;
-    if (display_luid == 0) {
-        const auto chosen = choose_gpu_adapter(adapters);
-        probe->adapter_reason = std::string(chosen.reason);
-        if (chosen.index) display_luid = adapters[*chosen.index].luid;
-    } else {
-        probe->adapter_reason = "presenter_adapter";
+    if (present_adapter_luid == 0) {
+        probe->adapter_reason = "present_adapter_unspecified";
+        probe->hevc_decode_reason = probe->adapter_reason;
+        return;
     }
+    const auto adapters = enumerate_gpu_adapters(nullptr);
+    probe->adapter_reason = "presenter_adapter";
     const GpuAdapterCandidate* display = nullptr;
     for (const auto& candidate : adapters) {
-        if (display_luid != 0 && candidate.luid == display_luid) display = &candidate;
+        if (candidate.luid == present_adapter_luid && !candidate.software) {
+            display = &candidate;
+            break;
+        }
     }
 
     probe->present_adapter_luid = display != nullptr ? display->luid : 0;
@@ -199,7 +202,7 @@ void probe_hardware_decode_adapters(std::uint64_t present_adapter_luid, LocalVid
         probe->hevc_decode_reason = "present_adapter_not_enumerated";
         return;
     }
-    const AdapterDecodeProfiles display_profiles = probe_d3d11va_decoder_profiles(display);
+    const AdapterDecodeProfiles display_profiles = probe_d3d11va_decoder_profiles(*display);
     probe->h264_hardware = display_profiles.h264;
     probe->detail = display_profiles.detail;
 

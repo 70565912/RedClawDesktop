@@ -221,6 +221,43 @@ TEST(KeyframeRequestLimiter, ResetAllowsImmediateRequestForNewSession) {
     EXPECT_TRUE(limiter.request(120));
 }
 
+TEST(KeyframeRequestLimiter, ResumeReasonSurvivesDependencyRequestsUntilDue) {
+    for (bool dependency_when_due : {false, true}) {
+        KeyframeRequestLimiter limiter(500);
+        ASSERT_TRUE(limiter.request(1000, "shared_memory_sequence_gap"));
+        EXPECT_FALSE(limiter.request(1200, "presentation_resumed_visibility_timer"));
+        EXPECT_FALSE(limiter.request(1400, "latest_frame_missing_keyframe_dependency"));
+        limiter.satisfied();
+        EXPECT_FALSE(limiter.poll(1499));
+        const auto ready = dependency_when_due
+            ? limiter.request(1500, "gui_decode_failure")
+            : limiter.poll(1500);
+        ASSERT_TRUE(ready);
+        EXPECT_EQ(*ready, "presentation_resumed_visibility_timer");
+        EXPECT_FALSE(limiter.poll(2000));
+        EXPECT_EQ(limiter.sent(), 2U);
+    }
+}
+
+TEST(PresentationGate, WindowCoveragePausesEvenWhenDxgiReportsVisible) {
+    PresentationGate gate(250);
+    gate.set_window_occluded(true);
+    gate.on_present_result(false, 1000);
+    EXPECT_EQ(gate.state_name(), "occluded");
+    EXPECT_EQ(gate.decide(1250), PresentationGate::Decision::kSkip);
+    EXPECT_FALSE(gate.needs_occlusion_probe());
+    EXPECT_FALSE(gate.take_resume());
+
+    gate.on_present_result(true, 1300);
+    gate.set_window_occluded(false);
+    EXPECT_TRUE(gate.needs_occlusion_probe());
+    EXPECT_FALSE(gate.take_resume());
+    EXPECT_EQ(gate.decide(1550), PresentationGate::Decision::kTestOcclusion);
+    gate.on_present_result(false, 1550);
+    EXPECT_TRUE(gate.take_resume());
+    EXPECT_EQ(gate.decide(1551), PresentationGate::Decision::kPresent);
+}
+
 TEST(PresentationGate, HiddenOrDisplayOffSkipsEveryPresent) {
     PresentationGate gate(250);
     EXPECT_EQ(gate.decide(0), PresentationGate::Decision::kPresent);

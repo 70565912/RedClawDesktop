@@ -65,8 +65,8 @@ struct RuntimeOptions {
     // auto prefers HEVC when both sides have it; h264 is the rollback switch.
     redclaw::protocol::VideoCodecPreference stream_video_codec =
         redclaw::protocol::VideoCodecPreference::kAuto;
-    // Adapter that owns the playback window. 0 probes the primary monitor.
-    // HEVC hardware decode is considered only on this adapter.
+    // Adapter that owns the playback window. 0 leaves the adapter unspecified.
+    // HEVC advertisement requires an explicit matching adapter and decoder pin.
     std::uint64_t present_adapter_luid = 0;
     std::string stream_frame_pipe;
     std::string stream_navigation_pipe;

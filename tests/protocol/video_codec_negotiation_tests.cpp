@@ -361,6 +361,27 @@ TEST(VideoCodecNegotiation, RunningH264EncoderUpgradesOncePerNegotiationChange) 
         NegotiatedVideoCodec::kH264, forced_start, forced.snapshot().revision, forced.select(host)));
 }
 
+TEST(VideoCodecNegotiation, SelectionTracksTheSnapshotTakenBeforeEncoderOpen) {
+    HostVideoCodecNegotiatorV1 negotiator(VideoCodecPreference::kAuto);
+    const auto host = hevc_hardware_host();
+    const auto opening = negotiator.snapshot();
+    ASSERT_EQ(negotiator.select(host, opening).codec, NegotiatedVideoCodec::kH264);
+
+    ASSERT_TRUE(negotiator.observe_peer(1, kKnownVideoCodecMask, kKnownVideoCodecMask));
+    const auto opened = negotiator.snapshot();
+    EXPECT_EQ(negotiator.select(host, opening).codec, NegotiatedVideoCodec::kH264);
+    EXPECT_TRUE(should_upgrade_running_encoder_to_hevc(NegotiatedVideoCodec::kH264,
+        opening.revision, opened.revision, negotiator.select(host, opened)));
+
+    ASSERT_TRUE(negotiator.observe_peer(1, kKnownVideoCodecMask, kVideoCodecMaskH264));
+    const auto withdrawn = negotiator.snapshot();
+    EXPECT_NE(opened.revision, withdrawn.revision);
+    EXPECT_EQ(negotiator.select(host, opened).codec, NegotiatedVideoCodec::kHevc);
+    const auto selection = negotiator.select(host, withdrawn);
+    EXPECT_EQ(selection.codec, NegotiatedVideoCodec::kH264);
+    EXPECT_EQ(selection.reason, "peer_hevc_decode_not_hardware");
+}
+
 }  // namespace
 
 TEST(ControllerHevcPlayback, StalledDrainAndTransitionBacklogCannotTripButSecondVisibleOverloadCan) {

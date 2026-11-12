@@ -165,7 +165,11 @@ HostVideoCodecNegotiatorV1::Snapshot HostVideoCodecNegotiatorV1::snapshot() cons
 }
 
 VideoCodecSelection HostVideoCodecNegotiatorV1::select(HostVideoEncodeCapabilities host) const {
-    const auto state = snapshot();
+    return select(host, snapshot());
+}
+
+VideoCodecSelection HostVideoCodecNegotiatorV1::select(
+    HostVideoEncodeCapabilities host, const Snapshot& state) const noexcept {
     host.hevc_encoder_open_failed = host.hevc_encoder_open_failed || state.hevc_encoder_open_failed;
     return select_video_codec(preference_, state.peer, host);
 }

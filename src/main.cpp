@@ -34,6 +34,9 @@
 #include <ws2tcpip.h>
 #include <winhttp.h>
 #include <Windows.h>
+#include <d3d11.h>
+#include <wrl/client.h>
+#include "redclaw/render/d3d11_video_device.h"
 #endif
 
 #include "redclaw/core/core_module.h"
@@ -3372,7 +3375,23 @@ int run_runtime_mode(
     redclaw::protocol::ControllerHevcTrialPolicy controller_hevc_trial;
     redclaw::protocol::PeerVideoDecodeCapabilities original_video_decode;
     if (options.role == RuntimeRole::kController) {
-        const auto probe = redclaw::render::probe_local_video_decode_support(options.present_adapter_luid);
+        auto probe = redclaw::render::probe_local_video_decode_support(options.present_adapter_luid);
+#ifdef _WIN32
+        if (probe.hevc_hardware && !direct_frame_pipe.enabled()
+            && options.stream_video_codec != redclaw::protocol::VideoCodecPreference::kH264) {
+            std::string device_error;
+            Microsoft::WRL::ComPtr<ID3D11Device> device;
+            device.Attach(redclaw::render::create_d3d11_video_device(probe.present_adapter_luid, &device_error));
+            if (device) {
+                stream_video_decoder.configure_d3d11_surface_output(device.Get());
+                stream_video_decoder.set_d3d11_surface_output_enabled(false);
+            } else {
+                probe.h264_hardware = probe.hevc_hardware = false;
+                probe.hevc_decode_reason = "present_adapter_pin_failed";
+                probe.detail += " " + device_error;
+            }
+        }
+#endif
         local_video_decode = redclaw::protocol::build_local_video_decode_capabilities(
             {probe.h264_decoder, probe.hevc_decoder, probe.h264_hardware, probe.hevc_hardware},
             options.stream_video_codec);
@@ -4677,6 +4696,7 @@ int run_runtime_mode(
                         "encoded desktop video shared-memory delivery failed: " + direct_pipe_error);
                 }
             }
+#ifdef _WIN32
             // Discard a provisional observation if visibility changed during
             // sampling. Rearm only an unpublished trip; keep prior fallbacks.
             const auto current_playback_stats = direct_frame_pipe.stats_snapshot();
@@ -4687,6 +4707,7 @@ int run_runtime_mode(
                 if (hevc_trial_eligible) controller_hevc_trial.cancel_unpublished_attempt();
                 hevc_decode_overloaded = hevc_trial_eligible = false;
             }
+#endif
             if (direct_pipe_written && encoded_frame.keyframe && !playback.paused) {
                 std::uint32_t srtt_ms = 0;
                 {
@@ -5225,13 +5246,18 @@ int run_runtime_mode(
                 const auto pacer = stream_media_pacer.telemetry();
                 // Receiver retries must not replace a normally progressing IDR
                 // or reset the admission cooldown for the same recovery.
-                if (!pacer.keyframe_required
-                    && stream_keyframe_refresh_request_generation.load()
-                        <= stream_keyframe_refresh_completed_generation.load()) {
-                    stream_encoder_session.request_keyframe();
-                    stream_keyframe_refresh_request_generation.fetch_add(1);
-                    stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kKeyframe);
+                redclaw::session::DesktopSourceActivityUpdate activity_update;
+                {
+                    std::lock_guard source_lock(stream_source_activity_mutex);
+                    if (stream_source_activity_tracker.snapshot().state
+                            == redclaw::session::DesktopSourceActivityState::kStatic
+                        || (!pacer.keyframe_required
+                            && stream_keyframe_refresh_request_generation.load()
+                                <= stream_keyframe_refresh_completed_generation.load())) {
+                        activity_update = stream_source_activity_tracker.on_keyframe_request();
+                    }
                 }
+                apply_source_activity_update(activity_update);
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     ++stream_keyframe_request_received_total;
@@ -6516,16 +6542,18 @@ int run_runtime_mode(
                 HostStreamWorkerStage::kWaitingForViewport);
             return;
         }
+        const auto running_codec_selection = video_codec_negotiator.select(host_video_encode, codec_negotiation);
         if (stream_encoder_started
             && stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
-            && !redclaw::protocol::peer_accepts_video_codec(
-                codec_negotiation.peer, redclaw::protocol::NegotiatedVideoCodec::kHevc)) {
-            // A reconnect may bring a peer that cannot decode the preserved
-            // HEVC session. Correct output outranks keeping the driver session.
+            && running_codec_selection.codec != redclaw::protocol::NegotiatedVideoCodec::kHevc) {
+            // A reconnect or a capability update can withdraw HEVC eligibility.
             const std::string reason = !codec_negotiation.peer_report_received
                 ? std::string("peer_video_codec_report_timeout")
                 : !codec_negotiation.peer_change_reason.empty() ? codec_negotiation.peer_change_reason
-                                                                : std::string("peer_cannot_decode_hevc");
+                    : redclaw::protocol::peer_accepts_video_codec(
+                          codec_negotiation.peer, redclaw::protocol::NegotiatedVideoCodec::kHevc)
+                        ? std::string(running_codec_selection.reason)
+                        : std::string("peer_cannot_decode_hevc");
             std::cout << "Runtime video codec renegotiation role=" << role_name
                       << " from=hevc reason=" << reason << '\n';
             {
@@ -6541,18 +6569,17 @@ int run_runtime_mode(
         if (stream_encoder_started
             && now_ms >= stream_encoder_started_at_ms
             && now_ms - stream_encoder_started_at_ms >= kDesktopStreamCodecUpgradeMinEncoderAgeMs) {
-            const auto upgrade_selection = video_codec_negotiator.select(host_video_encode);
             if (redclaw::protocol::should_upgrade_running_encoder_to_hevc(
                     stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
                         ? redclaw::protocol::NegotiatedVideoCodec::kHevc
                         : redclaw::protocol::NegotiatedVideoCodec::kH264,
                     stream_encoder_codec_negotiation_revision,
                     codec_negotiation.revision,
-                    upgrade_selection)) {
+                    running_codec_selection)) {
                 // A late, post-grace or reconnect peer report made HEVC
                 // eligible. The rebuilt encoder starts on an IDR, so the
                 // Controller switches decoders at a keyframe boundary.
-                const std::string reason(upgrade_selection.reason);
+                const std::string reason(running_codec_selection.reason);
                 std::cout << "Runtime video codec renegotiation role=" << role_name
                           << " from=h264 to=hevc reason=" << reason << '\n';
                 {
@@ -6816,7 +6843,8 @@ int run_runtime_mode(
             stream_encoder_width = encode_width;
             stream_encoder_height = encode_height;
 
-            const auto codec_selection = video_codec_negotiator.select(host_video_encode);
+            const auto opening_negotiation = video_codec_negotiator.snapshot();
+            const auto codec_selection = video_codec_negotiator.select(host_video_encode, opening_negotiation);
             redclaw::capture::EncoderCodec selected_codec =
                 codec_selection.codec == redclaw::protocol::NegotiatedVideoCodec::kHevc
                 ? redclaw::capture::EncoderCodec::kHevc
@@ -6893,14 +6921,26 @@ int run_runtime_mode(
                 return;
             }
 
+            const auto opened_negotiation = video_codec_negotiator.snapshot();
+            const auto opened_selection = video_codec_negotiator.select(host_video_encode, opened_negotiation);
+            const auto opened_codec = selected_codec == redclaw::capture::EncoderCodec::kHevc
+                ? redclaw::protocol::NegotiatedVideoCodec::kHevc
+                : redclaw::protocol::NegotiatedVideoCodec::kH264;
+            if (opened_negotiation.revision != opening_negotiation.revision
+                && opened_selection.codec != opened_codec) {
+                // Capabilities changed during the open. Re-select on the next
+                // tick before consuming the retained frame or publishing output.
+                stream_encoder_session.stop();
+                return;
+            }
             stream_encoder_started = true;
             stream_encoder_codec = selected_codec;
-            stream_encoder_codec_negotiation_revision = video_codec_negotiator.snapshot().revision;
-            stream_encoder_started_at_ms = now_ms;
+            stream_encoder_codec_negotiation_revision = opening_negotiation.revision;
+            stream_encoder_started_at_ms = now_steady_ms();
             stream_encoder_start_retry_after_ms = 0;
             const auto encoder_diagnostics = stream_encoder_session.diagnostics();
             {
-                const auto negotiated = video_codec_negotiator.snapshot();
+                const auto& negotiated = opening_negotiation;
                 const std::string codec_name = selected_codec == redclaw::capture::EncoderCodec::kHevc ? "hevc" : "h264";
                 std::string summary = "codec=" + codec_name
                     + " reason=" + codec_reason

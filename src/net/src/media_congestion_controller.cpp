@@ -138,16 +138,18 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
 
     // Receiver arrival timestamps can expose forward-path queuing, but one
     // aggregated or clock-adjusting feedback batch is not enough to reduce the
-    // path rate. Require consecutive usable delivery samples, then apply at
-    // most one drain decision until the measured pressure has cleared.
+    // path rate. Allow confirmed network pressure to escalate a local drain
+    // once even when the pressure episode has not cleared.
     const bool new_network_evidence
         = (new_feedback && (confirmed_media_pressure || sustained_loss))
         || (new_rtt && rtt_pressure_rounds_ >= 2);
     const bool new_pressure_evidence = sample.local_backpressure || new_network_evidence;
     if (!pressure) {
-        pressure_backoff_latched_ = false;
+        pressure_backoff_ = PressureBackoff::kNone;
     }
-    if (pressure && new_pressure_evidence && !pressure_backoff_latched_
+    const bool can_back_off = pressure_backoff_ == PressureBackoff::kNone
+        || (pressure_backoff_ == PressureBackoff::kLocal && new_network_evidence);
+    if (pressure && new_pressure_evidence && can_back_off
         && (!probe_cancelled_for_pressure || sample.local_backpressure || sustained_loss)
         && (last_backoff_sample_ms_ == 0
             || sample.now_steady_ms >= last_backoff_sample_ms_ + (horizon + 999) / 1000)) {
@@ -183,7 +185,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
         last_backoff_sample_ms_ = sample.now_steady_ms;
         next_probe_ms_ = sample.now_steady_ms + (horizon + queue_us + 999) / 1000;
         ++backoff_count_;
-        pressure_backoff_latched_ = true;
+        pressure_backoff_ = new_network_evidence ? PressureBackoff::kNetwork : PressureBackoff::kLocal;
         d.backoff = true;
         d.reduce_fps = !sample.demand.resource_limited;
         d.reason = "measured_congestion_drain";
@@ -298,6 +300,6 @@ void MediaCongestionController::reset() {
     recovery_probe_ = {};
     recovery_probe_started_ms_ = last_backoff_sample_ms_ = last_network_drain_ms_ = 0;
     recovery_probe_original_rate_ = 0;
-    pressure_backoff_latched_ = false;
+    pressure_backoff_ = PressureBackoff::kNone;
 }
 }  // namespace redclaw::net

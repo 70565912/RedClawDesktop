@@ -33,6 +33,8 @@ Updated: 2026-11-12
 
 Local pause-decode follow-up for M02-T03 — implemented, local Debug build + 8 focused CTest suites + 2 receiver/visibility cases passed. Native-window teardown regression fixed: final Debug product/UI builds, all 12 D3D11 UI cases and 10 repetitions of the crash case plus both visibility cases passed; device evaluation pending. Review P1 1–6, optional capacity validity, deferred 4.4 hook and one conservative HEVC trial remain intact. See [PROGRESS](../../PROGRESS.md#2026-11-12--pause-controller-decode-while-presentation-is-paused-m02-t03) and [PR #10 checklist](../testing/hevc-bitrate-measurement.md#pr-10-playback-pause-acceptance-checklist).
 
+Local PR #10 review fixes for M02-T03 cover static-desktop reference IDR on resume, D3D11 window coverage, explicit presenter-adapter HEVC eligibility, codec startup and pacing. The 400 kbps interactive floor remains in effect. See [PROGRESS](../../PROGRESS.md#pr-10-review-fixes-at-cd81b23) for validation and device gaps.
+
 ## M03 Security
 
 - `M03-T01` Identity, protected local secrets, and trust-store baseline — done.

@@ -20,9 +20,12 @@ def window(name, keyframe_bytes, ordinary_bytes):
             "processes": {"runtime": {"cpu_percent_one_core": 50.0}}}
 
 
-def write_report(root, codec_lines, keyframe_bytes, ordinary_bytes, contract=None):
+def write_report(root, codec_lines, keyframe_bytes, ordinary_bytes, contract=None, **workload):
     root.mkdir()
-    (root / "plan.json").write_text(json.dumps({"contract": contract or {"encode_width": 1920}}))
+    plan = {"contract": contract or {"encode_width": 1920},
+            "repetitions": 1, "scenarios": ["Dynamic"], "random_seed": 2700}
+    plan.update(workload)
+    (root / "plan.json").write_text(json.dumps(plan))
     (root / "analysis.json").write_text(json.dumps(
         {"windows": [window("Dynamic-1", keyframe_bytes, ordinary_bytes)]}))
     (root / "host-video-codec.txt").write_text("\n".join(codec_lines))
@@ -62,6 +65,16 @@ class CompareTests(unittest.TestCase):
             problems = comparison.compare(h264, hevc)["problems"]
             self.assertTrue(any("no 'Runtime video codec negotiated'" in p for p in problems))
             self.assertTrue(any("contracts differ" in p for p in problems))
+
+    def test_refuses_unmatched_workload_fields(self):
+        for field, value in (("repetitions", 2), ("scenarios", ["Static"]), ("random_seed", 2701)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                h264 = write_report(Path(tmp) / "a", [NEGOTIATED.format("h264")], 1, 1)
+                hevc = write_report(Path(tmp) / "b", [NEGOTIATED.format("hevc")], 1, 1,
+                                    **{field: value})
+                result = comparison.compare(h264, hevc)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["problems"], [f"plan workloads differ in {field}"])
 
 
 if __name__ == "__main__":

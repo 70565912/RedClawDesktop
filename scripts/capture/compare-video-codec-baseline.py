@@ -3,7 +3,7 @@
 Both reports must already contain analysis.json (analyze-video-link-baseline.py).
 The comparison refuses mislabeled runs: every encoder start recorded in
 host-video-codec.txt must carry the expected codec, and both plans must use the
-same geometry/network contract. Visual quality is not measured here.
+same geometry/network contract and workload. Visual quality is not measured here.
 """
 import argparse
 import json
@@ -67,9 +67,14 @@ def compare(h264_report, hevc_report):
             problems.append(f"{name}: expected only codec={expected}, saw {codecs}")
         if renegotiations:
             problems.append(f"{name}: {renegotiations} mid-run codec renegotiation(s) mix codecs inside the report")
-    contracts = [load(r / "plan.json")["contract"] for r in (h264_report, hevc_report)]
-    if contracts[0] != contracts[1]:
+    h264_plan, hevc_plan = [load(r / "plan.json") for r in (h264_report, hevc_report)]
+    if h264_plan["contract"] != hevc_plan["contract"]:
         problems.append("plan contracts differ (geometry, log visibility, network or diagnostic interval)")
+    for field in ("repetitions", "scenarios", "random_seed"):
+        if field not in h264_plan or field not in hevc_plan:
+            problems.append(f"plan workload is missing {field}")
+        elif h264_plan[field] != hevc_plan[field]:
+            problems.append(f"plan workloads differ in {field}")
     metrics = {name: scene_metrics(load(r / "analysis.json"))
                for name, r in (("h264", h264_report), ("hevc", hevc_report))}
     ratios = {}

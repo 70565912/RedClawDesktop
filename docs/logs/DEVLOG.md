@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-11-12 — PR #10 review fixes (M02-T03)
+
+- Interfaces: `DesktopSourceActivityTracker::on_keyframe_request` reopens a static reference, the receiver limiter coalesces request reasons, and `PresentationGate` accepts window coverage separately from DXGI results. Codec selection uses the negotiation snapshot that supplies the encoder's revision.
+- A Controller resume or recovery request moves `kStatic` to `kStaticPending` so the Host can encode a reference IDR from its retained capture. The resume reason survives dependency requests and visibility-boundary cancellation is synchronized. Runtime retries start after a bounded wait if the GUI notification is missing.
+- D3D11 polls DWM cloaking and window coverage, preserving the DXGI status path. HEVC requires an explicit presenter LUID, a matching hardware probe and a decoder pin. LUID 0, unknown adapters and GUI fallback advertise H.264. A changed selection discards a stale encoder open, and running automatic HEVC responds to hardware capability withdrawal.
+- A local-only backpressure latch allows one escalation on confirmed network evidence. The post-sample frame-pipe check is Windows-only. The bitrate comparator rejects unmatched workloads. The 70% HEVC budget continues to honor the 400 kbps interactive floor. See [PROGRESS](../../PROGRESS.md#pr-10-review-fixes-at-cd81b23) for validation.
+
 ## 2026-11-12 — Pause Controller decode with presentation (M02-T03, PR #10 local follow-up)
 
 - Native-window regression follow-up: `WinIdChange` power registration used `winId()` while the native handle was cleared, recreating a child inside parent teardown and corrupting Qt's native parent lifecycle. Use the existing handle only; keep playback/probes paused across the native gap. The original destroy/recreate test is unchanged, with separate timer-gap/zero-frame-resume coverage added. Final VS2022 Debug builds, 30 repeated focused cases and the complete 12-case D3D11 UI suite passed; evidence and remaining device gaps are in [PROGRESS](../../PROGRESS.md#native-window-recreation-regression-follow-up). No live process/session or other worktree was changed.

@@ -255,7 +255,9 @@ TEST(D3D11AdapterEnumeration, CandidatesCarryLuidAndDescription) {
 }
 
 TEST(VideoDecodeProbe, HevcDecodeAdapterMatchesTheReportedFlags) {
-    const auto probe = redclaw::render::probe_local_video_decode_support();
+    const auto selected = redclaw::render::select_gpu_adapter_for_monitor(nullptr);
+    const auto probe = redclaw::render::probe_local_video_decode_support(
+        selected.adapter ? selected.adapter->luid : 0);
     EXPECT_FALSE(probe.hevc_decode_reason.empty());
     if (probe.hevc_hardware) {
         EXPECT_FALSE(probe.hevc_decode_adapter.empty());
@@ -270,6 +272,17 @@ TEST(VideoDecodeProbe, HevcDecodeAdapterMatchesTheReportedFlags) {
     if (probe.detail.find("hevc_probe_attempts=") != std::string::npos) {
         const auto attempts = probe.detail.substr(probe.detail.find("hevc_probe_attempts="));
         EXPECT_EQ(attempts.find(','), std::string::npos) << probe.detail;
+    }
+}
+
+TEST(VideoDecodeProbe, UnspecifiedOrUnknownPresenterCannotReportHardwareHevc) {
+    for (const std::uint64_t luid : {std::uint64_t{0}, ~std::uint64_t{0}}) {
+        const auto probe = redclaw::render::probe_local_video_decode_support(luid);
+        EXPECT_FALSE(probe.hevc_hardware);
+        EXPECT_EQ(probe.present_adapter_luid, 0U);
+        EXPECT_EQ(probe.hevc_decode_adapter_luid, 0U);
+        EXPECT_EQ(probe.hevc_decode_reason,
+            luid == 0 ? "present_adapter_unspecified" : "present_adapter_not_enumerated");
     }
 }
 

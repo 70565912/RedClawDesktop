@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -68,6 +69,7 @@ public:
         std::uint64_t rate_revision);
     DesktopSourceActivityUpdate on_capture_failure(std::uint64_t now_ms);
     DesktopSourceActivityUpdate tick(std::uint64_t now_ms);
+    DesktopSourceActivityUpdate on_keyframe_request();
     DesktopSourceActivityUpdate on_viewport_change(
         std::uint64_t now_ms,
         std::uint64_t stream_geometry_revision,
@@ -222,6 +224,9 @@ public:
 
 private:
     [[nodiscard]] std::uint64_t base_retry_delay_ms(std::uint32_t srtt_ms) const;
+    ControllerDecoderRecoveryUpdate begin_recovery_locked(
+        ControllerDecoderBreakReason reason, std::uint64_t frame_id,
+        std::uint64_t now_ms, std::uint32_t srtt_ms);
     ControllerDecoderRecoveryUpdate request_keyframe_locked(
         std::uint64_t now_ms,
         std::uint32_t srtt_ms,
@@ -236,6 +241,7 @@ private:
     ControllerDecoderRecoverySnapshot snapshot_ {};
     bool playback_paused_ = false;
     bool awaiting_resume_request_ = false;
+    std::optional<std::uint64_t> resume_wait_started_ms_;
     std::uint64_t playback_session_ = 0, playback_revision_ = 0;
 };
 

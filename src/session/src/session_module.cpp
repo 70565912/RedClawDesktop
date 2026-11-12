@@ -102,6 +102,14 @@ DesktopSourceActivityUpdate DesktopSourceActivityTracker::tick(std::uint64_t now
     return update(false, false, false);
 }
 
+DesktopSourceActivityUpdate DesktopSourceActivityTracker::on_keyframe_request() {
+    if (snapshot_.state == DesktopSourceActivityState::kStatic ||
+        snapshot_.state == DesktopSourceActivityState::kStaticPending) {
+        return enter_static_pending(true);
+    }
+    return update(false, true, false);
+}
+
 DesktopSourceActivityUpdate DesktopSourceActivityTracker::on_viewport_change(
     std::uint64_t now_ms,
     std::uint64_t stream_geometry_revision,
@@ -109,14 +117,10 @@ DesktopSourceActivityUpdate DesktopSourceActivityTracker::on_viewport_change(
     (void)now_ms;
     snapshot_.stream_geometry_revision = stream_geometry_revision;
     snapshot_.rate_revision = rate_revision;
-    if (snapshot_.state == DesktopSourceActivityState::kStatic ||
-        snapshot_.state == DesktopSourceActivityState::kStaticPending) {
-        return enter_static_pending(true);
+    if (snapshot_.state == DesktopSourceActivityState::kUnknown) {
+        return update(false, false, false);
     }
-    if (snapshot_.state == DesktopSourceActivityState::kActive) {
-        return update(false, true, false);
-    }
-    return update(false, false, false);
+    return on_keyframe_request();
 }
 
 DesktopSourceActivityUpdate DesktopSourceActivityTracker::on_reference_submitted(
@@ -298,6 +302,7 @@ ControllerDecoderRecoveryCoordinator::ControllerDecoderRecoveryCoordinator(
 void ControllerDecoderRecoveryCoordinator::reset() {
     std::lock_guard lock(mutex_);
     snapshot_ = {};
+    resume_wait_started_ms_.reset();
 }
 
 void ControllerDecoderRecoveryCoordinator::set_playback_state(
@@ -308,6 +313,7 @@ void ControllerDecoderRecoveryCoordinator::set_playback_state(
     playback_revision_ = revision;
     playback_paused_ = paused;
     awaiting_resume_request_ = !paused && revision != 0;
+    resume_wait_started_ms_.reset();
     // Cancel pending IDRs/retries on either boundary. The receiver establishes
     // its sequence boundary before its one coalesced resume request arrives.
     snapshot_.state = ControllerDecoderRecoveryState::kSynchronized;
@@ -323,10 +329,19 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_depende
     std::uint32_t srtt_ms) {
     std::lock_guard lock(mutex_);
     if (playback_paused_) return update_locked(false, false);
-    if (awaiting_resume_request_) {
-        if (reason != ControllerDecoderBreakReason::kPresentationResumed) return update_locked(false, false);
-        awaiting_resume_request_ = false;
-    }
+    // Give the coalescer priority before the deadline. A late resume notice
+    // must not invalidate an IDR already requested by the deadline fallback.
+    const bool resume_notification = reason == ControllerDecoderBreakReason::kPresentationResumed;
+    if (resume_notification != awaiting_resume_request_) return update_locked(false, false);
+    return begin_recovery_locked(reason, frame_id, now_ms, srtt_ms);
+}
+
+ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::begin_recovery_locked(
+    ControllerDecoderBreakReason reason,
+    std::uint64_t frame_id,
+    std::uint64_t now_ms,
+    std::uint32_t srtt_ms) {
+    awaiting_resume_request_ = false;
     ++snapshot_.dependency_break_total;
 
     const std::uint32_t reason_mask = static_cast<std::uint32_t>(reason);
@@ -393,8 +408,17 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::tick(
     std::uint64_t now_ms,
     std::uint32_t srtt_ms) {
     std::lock_guard lock(mutex_);
-    if (playback_paused_ || awaiting_resume_request_
-        || snapshot_.state == ControllerDecoderRecoveryState::kSynchronized) {
+    if (playback_paused_) return update_locked(false, false);
+    if (awaiting_resume_request_) {
+        // Give the receiver's coalescer the first opportunity, but recover
+        // even when its notification never reaches the runtime.
+        if (!resume_wait_started_ms_) resume_wait_started_ms_ = now_ms;
+        if (now_ms - *resume_wait_started_ms_ < config_.minimum_retry_ms) {
+            return update_locked(false, false);
+        }
+        return begin_recovery_locked(ControllerDecoderBreakReason::kPresentationResumed, 0, now_ms, srtt_ms);
+    }
+    if (snapshot_.state == ControllerDecoderRecoveryState::kSynchronized) {
         return update_locked(false, false);
     }
     if (snapshot_.last_request_ms == 0

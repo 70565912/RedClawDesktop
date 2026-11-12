@@ -504,6 +504,55 @@ TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput)
     renderer.canvas->set_playback_state_callback({});
 }
 
+TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) {
+    bool paused = true;
+    QString reason;
+    QWidget window(nullptr, Qt::Window | Qt::WindowStaysOnTopHint);
+    window.resize(480, 270);
+    const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
+    ASSERT_NE(renderer.widget, nullptr);
+    renderer.widget->resize(window.size());
+    renderer.canvas->set_playback_state_callback([&](bool value, const QString& trigger) {
+        paused = value;
+        reason = trigger;
+    });
+    window.show();
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(paused);
+
+    const auto canvas = reinterpret_cast<HWND>(renderer.widget->internalWinId());
+    RECT area{};
+    POINT origin{};
+    ASSERT_TRUE(GetClientRect(canvas, &area));
+    ASSERT_TRUE(ClientToScreen(canvas, &origin));
+    const int width = area.right - area.left;
+    const int height = area.bottom - area.top;
+    ASSERT_GT(width, 0);
+    ASSERT_GT(height, 0);
+    QWidget cover(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    const auto cover_hwnd = reinterpret_cast<HWND>(cover.winId());
+    const auto cover_width = [&](int pixels) {
+        return SetWindowPos(cover_hwnd, HWND_TOPMOST, origin.x - 5, origin.y - 5,
+            pixels, height + 10, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    };
+    const auto poll_visibility = [] {
+        QEventLoop wait;
+        QTimer::singleShot(600, &wait, &QEventLoop::quit);
+        wait.exec();
+    };
+    ASSERT_TRUE(cover_width(width / 2));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(cover_width(width + 10));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    ASSERT_TRUE(cover_width(width / 2));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    renderer.canvas->set_playback_state_callback({});
+}
+
 TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWatermarks) {
     using namespace redclaw::helper;
     redclaw::ui::DirectFramePipeServer receiver;

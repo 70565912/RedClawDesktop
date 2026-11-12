@@ -657,6 +657,35 @@ TEST(AdaptiveController, NetworkCongestionStillDrainsBelowFloorAndFloorRestoresA
     EXPECT_EQ(d.cap_reason, "demand_floor_restored");
 }
 
+TEST(AdaptiveController, ConfirmedRttPressureEscalatesLatchedLocalBackpressure) {
+    MediaCongestionController controller;
+    const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);
+    auto sample = hevc_application_limited_sample(floor_kbps);
+    (void)controller.update(sample);
+    sample.local_backpressure = true;
+    sample.now_steady_ms += 500;
+    const auto local = controller.update(sample);
+    ASSERT_TRUE(local.backoff);
+    ASSERT_EQ(local.cap_reason, "local_backpressure_floor_hold");
+    EXPECT_EQ(local.pacing_bitrate_kbps, floor_kbps);
+    sample.now_steady_ms += 500;
+    EXPECT_FALSE(controller.update(sample).backoff);
+
+    sample.rtt_queue_delay_ms = 200;
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    EXPECT_FALSE(controller.update(sample).backoff);
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    const auto network = controller.update(sample);
+    EXPECT_TRUE(network.backoff);
+    EXPECT_EQ(network.cap_reason, "measured_congestion_drain");
+    EXPECT_LT(network.pacing_bitrate_kbps, floor_kbps);
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    EXPECT_FALSE(controller.update(sample).backoff);
+}
+
 TEST(AdaptiveController, DemandFloorDoesNotOverrideActiveNetworkPressure) {
     MediaCongestionController controller;
     const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);

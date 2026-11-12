@@ -48,7 +48,7 @@ void print_usage() {
         << "  --stream-video-codec <auto|h264|hevc>  Video codec preference (default auto: HEVC when both\n"
         << "                             sides can, else H.264; h264 forces the H.264 rollback path)\n"
         << "  --present-adapter-luid <value>  Adapter that owns the playback window. HEVC hardware\n"
-        << "                             decode is probed only there (default 0: primary monitor)\n"
+        << "                             decode requires a matching adapter (default 0: H.264 only)\n"
         << "  --stream-frame-pipe <name> Direct live frames to a local GUI shared-memory channel\n"
         << "  --stream-navigation-pipe <name> Direct navigation thumbnails to a local GUI shared-memory channel\n"
         << "  --log-dir <path>           Local rolling-log directory\n"
