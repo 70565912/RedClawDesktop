@@ -46,6 +46,7 @@
 #include "redclaw/protocol/capture_region_control.h"
 #include "redclaw/protocol/agent_protocol.h"
 #include "redclaw/protocol/video_codec_negotiation.h"
+#include "redclaw/protocol/hevc_access_unit.h"
 #include "redclaw/agent/agent_providers.h"
 #include "redclaw/agent/remote_agent_broker.h"
 #include "redclaw/agent/agent_peer_session.h"
@@ -3207,6 +3208,7 @@ int run_runtime_mode(
     std::uint64_t stream_latest_presented_frame_id = 0;
     std::uint64_t stream_gui_decoded_frames = 0;
     std::uint64_t stream_gui_feedback_at_ms = 0;
+    redclaw::session::ControllerPlaybackIdentity stream_gui_feedback_identity;
     std::uint64_t stream_gui_rendered_frames = 0;
     std::uint64_t stream_gui_decoded_baseline = 0;
     std::uint64_t stream_gui_rendered_baseline = 0;
@@ -3415,14 +3417,11 @@ int run_runtime_mode(
         redclaw::capture::EncoderBackendCapabilities encoder_capabilities;
         redclaw::capture::HevcHardwareEncoderProbe hevc_probe;
         if (redclaw::capture::detect_encoder_backend_capabilities(&encoder_capabilities)) {
-            host_video_encode.hevc_hardware_encoder_available = encoder_capabilities.hevc_nvenc_available
-                || encoder_capabilities.hevc_quicksync_available
-                || encoder_capabilities.hevc_amf_available;
             host_video_encode.hevc_software_encoder_available = encoder_capabilities.hevc_software_available;
             (void)redclaw::capture::probe_hevc_hardware_encoders(encoder_capabilities, &hevc_probe);
+            host_video_encode.hevc_hardware_encoder_available = hevc_probe.any_available();
         }
-        // compiled_* only says FFmpeg was built with the encoder name and drives
-        // selection; probed_* says whether this GPU/driver really opened it.
+        // Only a successful open with forced IDR configured is eligible.
         const auto describe_probe = [](const redclaw::capture::EncoderOpenProbe& result) {
             return std::string(!result.attempted ? "skipped" : (result.available ? "ok" : "failed"));
         };
@@ -3449,16 +3448,6 @@ int run_runtime_mode(
         message->session_epoch = stream_control_epoch;
         message->message_id = ++stream_control_message_id;
         message->sent_at_ms = now_unix_ms();
-        // Every Controller Hello/Capabilities, including GUI-forwarded ones,
-        // carries the decode report so the Host never mistakes it for an old peer.
-        if (options.role == RuntimeRole::kController
-            && (message->type == redclaw::protocol::StreamControlMessageTypeV1::kHello
-                || message->type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities)) {
-            message->video_codec_version = local_video_decode.version;
-            message->video_decode_codecs = local_video_decode.decode_mask;
-            message->video_hardware_decode_codecs = local_video_decode.hardware_decode_mask;
-            message->video_codec_change_reason = local_video_codec_change_reason;
-        }
     };
     auto make_control_message = [&](redclaw::protocol::StreamControlMessageTypeV1 type) {
         redclaw::protocol::StreamControlMessageV1 message;
@@ -3484,6 +3473,14 @@ int run_runtime_mode(
         // peer before N and made the replay guard reject valid recovery/input.
         message.message_id = ++stream_control_message_id;
         message.sent_at_ms = now_unix_ms();
+        // The masks and message ID share the send lock. A queued audio update
+        // cannot restore an older decode report after a withdrawal or trial.
+        if (options.role == RuntimeRole::kController
+            && (message.type == redclaw::protocol::StreamControlMessageTypeV1::kHello
+                || message.type == redclaw::protocol::StreamControlMessageTypeV1::kCapabilities)) {
+            redclaw::protocol::stamp_video_decode_capabilities(
+                message, local_video_decode, local_video_codec_change_reason);
+        }
         std::string validation_error;
         if (!redclaw::protocol::validate_stream_control_message_v1(message, &validation_error)) {
             if (error_detail != nullptr) {
@@ -3873,8 +3870,10 @@ int run_runtime_mode(
 #endif
         });
 
-    auto send_remote_keyframe_request = [&](std::string_view reason) {
-        if (controller_playback.synchronize().paused) return false;
+    using PlaybackRuntime = redclaw::runtime::ControllerPlaybackRuntime;
+    auto send_remote_keyframe_request = [&](std::string_view reason,
+                                            const redclaw::helper::PlaybackStateSnapshot& playback) {
+        if (!redclaw::helper::playback_output_is_current(playback, controller_playback.synchronize())) return false;
         if (options.role != RuntimeRole::kController) {
             return false;
         }
@@ -3909,29 +3908,30 @@ int run_runtime_mode(
 
     auto apply_decoder_recovery_update = [&]
         (const redclaw::session::ControllerDecoderRecoveryUpdate& update,
-         std::string_view reason) {
+         std::string_view reason,
+         const redclaw::helper::PlaybackStateSnapshot& playback) {
         if (!update.request_keyframe) {
             return false;
         }
-        return send_remote_keyframe_request(reason);
+        return send_remote_keyframe_request(reason, playback);
     };
 
     auto report_decoder_dependency_break = [&]
         (redclaw::session::ControllerDecoderBreakReason reason,
          std::uint64_t frame_id,
-         std::string_view reason_name) {
+         std::string_view reason_name,
+         std::optional<redclaw::helper::PlaybackStateSnapshot> expected = std::nullopt) {
         std::uint32_t srtt_ms = 0;
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             srtt_ms = stream_rtt_telemetry_snapshot.smoothed_rtt_ms;
         }
-        if (controller_playback.synchronize().paused) return false;
+        const auto current = controller_playback.synchronize();
+        const auto& playback = expected ? *expected : current;
+        if (!redclaw::helper::playback_output_is_current(playback, current)) return false;
         const auto update = stream_decoder_recovery_coordinator.on_dependency_break(
-            reason,
-            frame_id,
-            now_steady_ms(),
-            srtt_ms);
-        return apply_decoder_recovery_update(update, reason_name);
+            reason, frame_id, now_steady_ms(), srtt_ms, PlaybackRuntime::identity(playback));
+        return apply_decoder_recovery_update(update, reason_name, playback);
     };
 
     auto send_incomplete_media_feedback = [&](const PendingIncompleteMediaFeedback& feedback) {
@@ -4575,10 +4575,12 @@ int run_runtime_mode(
         bool decode_attempted = false;
         std::uint64_t decode_us = 0;
         DirectFramePipeTransportStats direct_pipe_transport_stats;
+        redclaw::helper::PlaybackStateSnapshot playback;
 
 #ifdef _WIN32
         direct_pipe_enabled = direct_frame_pipe.enabled();
         if (direct_pipe_enabled) {
+            playback = controller_playback.synchronize();
             direct_pipe_write_attempted = true;
             const auto direct_pipe_write_start = std::chrono::steady_clock::now();
             const DirectFramePipeWriteStatus direct_pipe_write_status =
@@ -4642,7 +4644,6 @@ int run_runtime_mode(
         };
 
         if (direct_pipe_enabled) {
-            const auto playback = controller_playback.synchronize();
             bool hevc_decode_overloaded = false;
             bool hevc_trial_eligible = false;
             {
@@ -4659,7 +4660,7 @@ int run_runtime_mode(
                     observation.network_loss_total = redclaw::protocol::controller_network_loss_total(
                         stream_incomplete_frames_dropped,
                         stream_dependency_frames_dropped,
-                        stream_local_dependency_frames_dropped,
+                        0, // Complete frames discarded locally are tracked separately.
                         stream_dropped_keyframes,
                         stream_reassembly_timeout_total);
                     observation.playback_eligible = playback.valid && !playback.paused && !playback.resynchronizing
@@ -4708,7 +4709,8 @@ int run_runtime_mode(
                 hevc_decode_overloaded = hevc_trial_eligible = false;
             }
 #endif
-            if (direct_pipe_written && encoded_frame.keyframe && !playback.paused) {
+            if (direct_pipe_written && encoded_frame.keyframe
+                && redclaw::helper::playback_output_is_current(playback, controller_playback.synchronize())) {
                 std::uint32_t srtt_ms = 0;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
@@ -4717,17 +4719,17 @@ int run_runtime_mode(
                 (void)stream_decoder_recovery_coordinator.on_keyframe_submitted(
                     encoded_frame.frame_id,
                     now_steady_ms(),
-                    srtt_ms);
+                    srtt_ms, PlaybackRuntime::identity(playback));
             } else if (direct_pipe_busy_drop) {
                 (void)report_decoder_dependency_break(
                     redclaw::session::ControllerDecoderBreakReason::kDirectPipeBusy,
                     encoded_frame.frame_id,
-                    "direct_frame_slot_busy");
+                    "direct_frame_slot_busy", playback);
             } else if (direct_pipe_write_failed) {
                 (void)report_decoder_dependency_break(
                     redclaw::session::ControllerDecoderBreakReason::kDirectPipeFailure,
                     encoded_frame.frame_id,
-                    "direct_frame_delivery_failure");
+                    "direct_frame_delivery_failure", playback);
             }
             if (hevc_decode_overloaded) {
                 withdraw_local_hevc_decode_for_overload();
@@ -5515,15 +5517,6 @@ int run_runtime_mode(
             return;
         }
 
-        (void)controller_playback.synchronize();
-        if (!stream_decoder_recovery_coordinator.should_accept_frame(
-                reassembly_result.frame.keyframe)) {
-            std::lock_guard<std::mutex> lock(callback_mutex);
-            ++stream_dependency_frames_dropped;
-            ++stream_local_dependency_frames_dropped;
-            return;
-        }
-
         redclaw::render::EncodedVideoFrame encoded_frame;
         encoded_frame.frame_id = reassembly_result.frame.frame_id;
         encoded_frame.codec = encoded_video_codec_from_binary(reassembly_result.frame.codec);
@@ -5540,7 +5533,9 @@ int run_runtime_mode(
         encoded_frame.width = reassembly_result.frame.width;
         encoded_frame.height = reassembly_result.frame.height;
         encoded_frame.timestamp_ms = reassembly_result.frame.timestamp_ms;
-        encoded_frame.keyframe = reassembly_result.frame.keyframe;
+        encoded_frame.keyframe = encoded_frame.codec == redclaw::render::EncodedVideoCodec::kHevc
+            ? redclaw::protocol::hevc_annex_b_contains_idr(reassembly_result.frame.payload)
+            : reassembly_result.frame.keyframe;
         encoded_frame.capture_region_revision =
             reassembly_result.frame.capture_region_revision;
         encoded_frame.content_rect_x = reassembly_result.frame.content_rect_x;
@@ -5583,6 +5578,12 @@ int run_runtime_mode(
                             + std::to_string(reassembly_result.frame.frame_id));
                 }
             }
+        }
+        (void)controller_playback.synchronize();
+        if (!stream_decoder_recovery_coordinator.should_accept_frame(encoded_frame.keyframe)) {
+            std::lock_guard<std::mutex> lock(callback_mutex);
+            ++stream_local_dependency_frames_dropped;
+            return;
         }
         handle_received_encoded_video(encoded_frame);
     });
@@ -6428,6 +6429,16 @@ int run_runtime_mode(
         return HostStreamCaptureTickResult::kCaptureAttempted;
     };
 
+    const auto running_codec_change_due = [&](const auto& negotiation, const auto& selection) {
+        if (!stream_encoder_started) return std::optional<std::uint64_t>{};
+        return redclaw::protocol::running_video_codec_change_due_ms(
+            stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
+                ? redclaw::protocol::NegotiatedVideoCodec::kHevc
+                : redclaw::protocol::NegotiatedVideoCodec::kH264,
+            stream_encoder_codec_negotiation_revision, negotiation.revision, selection,
+            stream_encoder_started_at_ms, kDesktopStreamCodecUpgradeMinEncoderAgeMs);
+    };
+
     auto run_host_stream_smoke_tick = [&](std::uint64_t now_ms) {
         if (!options.stream_smoke || options.role != RuntimeRole::kHost) {
             return;
@@ -6543,9 +6554,9 @@ int run_runtime_mode(
             return;
         }
         const auto running_codec_selection = video_codec_negotiator.select(host_video_encode, codec_negotiation);
-        if (stream_encoder_started
-            && stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
-            && running_codec_selection.codec != redclaw::protocol::NegotiatedVideoCodec::kHevc) {
+        const auto codec_change_due = running_codec_change_due(codec_negotiation, running_codec_selection);
+        if (codec_change_due && now_ms >= *codec_change_due
+            && stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc) {
             // A reconnect or a capability update can withdraw HEVC eligibility.
             const std::string reason = !codec_negotiation.peer_report_received
                 ? std::string("peer_video_codec_report_timeout")
@@ -6565,33 +6576,21 @@ int run_runtime_mode(
             }
             stream_encoder_session.stop();
             stream_encoder_started = false;
-        }
-        if (stream_encoder_started
-            && now_ms >= stream_encoder_started_at_ms
-            && now_ms - stream_encoder_started_at_ms >= kDesktopStreamCodecUpgradeMinEncoderAgeMs) {
-            if (redclaw::protocol::should_upgrade_running_encoder_to_hevc(
-                    stream_encoder_codec == redclaw::capture::EncoderCodec::kHevc
-                        ? redclaw::protocol::NegotiatedVideoCodec::kHevc
-                        : redclaw::protocol::NegotiatedVideoCodec::kH264,
-                    stream_encoder_codec_negotiation_revision,
-                    codec_negotiation.revision,
-                    running_codec_selection)) {
-                // A late, post-grace or reconnect peer report made HEVC
-                // eligible. The rebuilt encoder starts on an IDR, so the
-                // Controller switches decoders at a keyframe boundary.
-                const std::string reason(running_codec_selection.reason);
-                std::cout << "Runtime video codec renegotiation role=" << role_name
-                          << " from=h264 to=hevc reason=" << reason << '\n';
-                {
-                    std::lock_guard<std::mutex> lock(callback_mutex);
-                    append_timeline(
-                        redclaw::render::RuntimeStatusSeverity::kInfo,
-                        "stream",
-                        "video codec renegotiation from=h264 to=hevc reason=" + reason);
-                }
-                stream_encoder_session.stop();
-                stream_encoder_started = false;
+        } else if (codec_change_due && now_ms >= *codec_change_due) {
+            // The rebuilt encoder starts on an IDR, including when the
+            // worker was woken solely to refresh a settled desktop.
+            const std::string reason(running_codec_selection.reason);
+            std::cout << "Runtime video codec renegotiation role=" << role_name
+                      << " from=h264 to=hevc reason=" << reason << '\n';
+            {
+                std::lock_guard<std::mutex> lock(callback_mutex);
+                append_timeline(
+                    redclaw::render::RuntimeStatusSeverity::kInfo,
+                    "stream",
+                    "video codec renegotiation from=h264 to=hevc reason=" + reason);
             }
+            stream_encoder_session.stop();
+            stream_encoder_started = false;
         }
         const std::uint32_t adaptive_target_fps = clamp_stream_target_fps(
             adaptive_control.target_fps == 0 ? kDesktopStreamTargetFps : adaptive_control.target_fps);
@@ -7102,6 +7101,20 @@ int run_runtime_mode(
                 encoder_diagnostics.last_failure
                 == redclaw::capture::EncoderExecutionFailureCategory::kOutputNotReady;
             stream_capture_session.configureFrameDelivery(encoder_diagnostics.requested_capture_delivery);
+            if (encoder_diagnostics.last_failure
+                    == redclaw::capture::EncoderExecutionFailureCategory::kForcedIdrUnavailable) {
+                video_codec_negotiator.record_hevc_encoder_open_failure();
+                stream_encoder_session.stop();
+                stream_encoder_started = false;
+                redclaw::session::DesktopSourceActivityUpdate activity_update;
+                {
+                    std::lock_guard lock(stream_source_activity_mutex);
+                    activity_update = stream_source_activity_tracker.on_keyframe_request();
+                }
+                apply_source_activity_update(activity_update);
+                std::cout << "Runtime video codec renegotiation role=" << role_name
+                          << " from=hevc reason=host_hevc_forced_idr_unavailable" << '\n';
+            }
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_encoder_diagnostics_snapshot = encoder_diagnostics;
             if (output_not_ready) {
@@ -7287,6 +7300,10 @@ int run_runtime_mode(
                 const auto observed = stream_work_coordinator.snapshot().generation;
                 redclaw::session::HostStreamEncodeReadiness readiness;
                 readiness.due_ms = stream_encode_cadence.due_ms();
+                if (!stream_encoder_started) {
+                    readiness.due_ms = std::max(readiness.due_ms, stream_encoder_start_retry_after_ms);
+                }
+                const auto negotiation = video_codec_negotiator.snapshot();
                 std::uint64_t geometry_revision = 0;
                 {
                     std::lock_guard lock(callback_mutex);
@@ -7297,7 +7314,7 @@ int run_runtime_mode(
                     geometry_revision = stream_geometry_revision;
                     if ((!stream_encoder_started && (stream_requested_viewport_width < 64
                             || stream_requested_viewport_height < 64))
-                        || !video_codec_negotiator.snapshot().peer_report_received) {
+                        || !negotiation.peer_report_received) {
                         readiness.due_ms = std::max(readiness.due_ms,
                             stream_required_channels_ready_at_ms + kDesktopStreamInitialViewportGraceMs);
                     }
@@ -7308,12 +7325,26 @@ int run_runtime_mode(
                     stream_media_pacer.reset(false);
                     stream_pacer_geometry_revision = geometry_revision;
                 }
+                const auto now_ms = now_steady_ms();
+                const auto codec_due = readiness.channels_ready
+                    ? running_codec_change_due(negotiation, video_codec_negotiator.select(host_video_encode, negotiation))
+                    : std::nullopt;
+                redclaw::session::DesktopSourceActivityUpdate codec_refresh;
                 {
                     std::lock_guard lock(stream_source_activity_mutex);
-                    const auto state = stream_source_activity_tracker.snapshot().state;
+                    auto state = stream_source_activity_tracker.snapshot().state;
+                    if (codec_due && *codec_due <= now_ms
+                        && state != redclaw::session::DesktopSourceActivityState::kUnknown
+                        && (state == redclaw::session::DesktopSourceActivityState::kStatic
+                            || stream_keyframe_refresh_request_generation.load()
+                                <= stream_keyframe_refresh_completed_generation.load())) {
+                        codec_refresh = stream_source_activity_tracker.on_keyframe_request();
+                        state = codec_refresh.snapshot.state;
+                    }
                     readiness.source_active = state == redclaw::session::DesktopSourceActivityState::kActive
                         || state == redclaw::session::DesktopSourceActivityState::kStaticPending;
                 }
+                apply_source_activity_update(codec_refresh);
                 const auto admission = stream_media_pacer.admission();
                 readiness.capacity_available = admission.ready()
                     || admission.state == redclaw::net::MediaAdmissionState::kBudgetInfeasible;
@@ -7329,7 +7360,12 @@ int run_runtime_mode(
                             || stream_keyframe_refresh_request_generation.load()
                                 > stream_keyframe_refresh_completed_generation.load());
                 }
-                const auto wait = redclaw::session::host_stream_encode_wait(readiness, now_steady_ms());
+                auto wait = redclaw::session::host_stream_encode_wait(readiness, now_ms);
+                if (codec_due && *codec_due > now_ms) {
+                    // No capture event is required to wake up after the
+                    // upgrade cooldown on a settled desktop.
+                    wait = std::min(wait, std::chrono::milliseconds(*codec_due - now_ms));
+                }
                 if (wait != std::chrono::milliseconds::zero()) {
                     (void)stream_work_coordinator.wait_for_change(observed, wait);
                     continue;
@@ -7474,17 +7510,18 @@ int run_runtime_mode(
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 recovery_srtt_ms = stream_rtt_telemetry_snapshot.smoothed_rtt_ms;
             }
-            (void)controller_playback.synchronize();
             bool progressing_idr = false;
             {
                 std::lock_guard receive_lock(stream_receive_mutex);
                 progressing_idr = stream_video_reassembly.keyframe_progressing(
                     runtime_loop_now_ms, recovery_srtt_ms);
             }
-            if (!progressing_idr && !controller_playback.synchronize().paused) {
+            const auto playback = controller_playback.synchronize();
+            if (!progressing_idr && playback.valid && !playback.paused) {
                 apply_decoder_recovery_update(
-                    stream_decoder_recovery_coordinator.tick(runtime_loop_now_ms, recovery_srtt_ms),
-                    "decoder_recovery_retry");
+                    stream_decoder_recovery_coordinator.tick(
+                        runtime_loop_now_ms, recovery_srtt_ms, PlaybackRuntime::identity(playback)),
+                    "decoder_recovery_retry", playback);
             }
         }
         if (options.stream_smoke && options.role == RuntimeRole::kController) {
@@ -7564,9 +7601,10 @@ int run_runtime_mode(
             }
             if (gui_receiver_stats) {
                 const auto playback = controller_playback.synchronize();
-                if (command.playback_feedback_version == 1 && (command.playback_session != playback.session
-                    || command.playback_revision != playback.revision)) continue;
-                controller_playback.stamp_feedback(command);
+                if (playback.session != 0 || command.playback_feedback_version == 1) {
+                    if (!PlaybackRuntime::matches_feedback(command, playback)) continue;
+                }
+                controller_playback.stamp_feedback(command, playback);
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_observed_source_activity_revision =
@@ -7583,6 +7621,7 @@ int run_runtime_mode(
                         stream_gui_stats_baseline_pending = false;
                     }
                     stream_gui_feedback_at_ms = now_steady_ms();
+                    stream_gui_feedback_identity = PlaybackRuntime::identity(playback);
                     stream_gui_last_raw_decoded_frames = command.decoded_frames;
                     stream_gui_last_raw_rendered_frames = command.rendered_frames;
                     stream_gui_decoded_frames = command.decoded_frames
@@ -7614,8 +7653,9 @@ int run_runtime_mode(
                     command.latest_complete_keyframe_id = stream_latest_complete_keyframe_id;
                     command.observed_rate_revision = stream_observed_rate_revision;
                 }
+                if (!PlaybackRuntime::matches_feedback(command, controller_playback.synchronize())) continue;
                 (void)stream_decoder_recovery_coordinator.on_displayable_ack(
-                    command.latest_displayable_keyframe_id);
+                    command.latest_displayable_keyframe_id, PlaybackRuntime::identity(playback));
             }
             if (command.type
                 == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest) {
@@ -7626,8 +7666,8 @@ int run_runtime_mode(
                     continue;
                 }
                 const auto playback = controller_playback.synchronize();
-                if (playback.paused || (command.playback_feedback_version == 1
-                    && (command.playback_session != playback.session || command.playback_revision != playback.revision))) continue;
+                if (playback.paused || ((playback.session != 0 || command.playback_feedback_version == 1)
+                    && !PlaybackRuntime::matches_feedback(command, playback))) continue;
                 auto reason = redclaw::session::ControllerDecoderBreakReason::kDecodeFailure;
                 if (command.payload.starts_with("presentation_resumed_")) {
                     reason = redclaw::session::ControllerDecoderBreakReason::kPresentationResumed;
@@ -7643,7 +7683,7 @@ int run_runtime_mode(
                 (void)report_decoder_dependency_break(
                     reason,
                     command.incomplete_frame_id,
-                    command.payload.empty() ? "gui_decoder_dependency_break" : command.payload);
+                    command.payload.empty() ? "gui_decoder_dependency_break" : command.payload, playback);
                 continue;
             }
             stamp_control_message(&command);
@@ -7655,11 +7695,11 @@ int run_runtime_mode(
                 continue;
             }
             if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kViewportRequest) {
-                stream_decoder_recovery_coordinator.reset();
+                stream_decoder_recovery_coordinator.on_geometry_request();
                 last_local_viewport_request = command;
             } else if (command.type
                        == redclaw::protocol::StreamControlMessageTypeV1::kCaptureRegionRequest) {
-                stream_decoder_recovery_coordinator.reset();
+                stream_decoder_recovery_coordinator.on_geometry_request();
             } else if (command.log_mode == redclaw::protocol::RemoteLogModeV1::kFollow) {
                 last_local_log_follow_request = command;
             } else if (command.log_mode == redclaw::protocol::RemoteLogModeV1::kStop) {
@@ -8773,6 +8813,8 @@ int run_runtime_mode(
                 }
                 auto stats = make_control_message(
                     redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats);
+                const auto playback = controller_playback.synchronize();
+                bool gui_sample_current = true;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     const bool qa_hold_loss_stats_for_expired_feedback =
@@ -8806,12 +8848,16 @@ int run_runtime_mode(
                     stats.observed_rate_revision = stream_observed_rate_revision;
                     stats.observed_source_activity_revision =
                         stream_observed_source_activity_revision;
-                    stats.latest_displayable_frame_id = stream_latest_displayable_frame_id;
-                    stats.latest_displayable_keyframe_id =
-                        stream_latest_displayable_keyframe_id;
-                    stats.latest_presented_frame_id = stream_latest_presented_frame_id;
+                    gui_sample_current = playback.session == 0
+                        || stream_gui_feedback_identity == PlaybackRuntime::identity(playback);
+                    if (gui_sample_current) {
+                        stats.latest_displayable_frame_id = stream_latest_displayable_frame_id;
+                        stats.latest_displayable_keyframe_id = stream_latest_displayable_keyframe_id;
+                        stats.latest_presented_frame_id = stream_latest_presented_frame_id;
+                    }
                 }
-                controller_playback.stamp_feedback(stats);
+                controller_playback.stamp_feedback(stats, playback);
+                stats.decode_sample_valid &= gui_sample_current;
                 std::string stats_error;
                 (void)send_control_message(stats, &stats_error);
             }
@@ -11322,6 +11368,7 @@ int run_runtime_mode(
                 std::uint64_t recovery_reset_total = 0;
                 std::uint64_t recovery_success_total = 0;
                 std::uint64_t encoded_frames_reassembled = 0;
+                std::uint64_t local_recovery_discarded_frames = 0;
                 std::uint64_t incomplete_frames_dropped = 0;
                 std::uint64_t dependency_frames_dropped = 0;
                 std::uint64_t completed_keyframes = 0;
@@ -11379,6 +11426,7 @@ int run_runtime_mode(
                     recovery_reset_total = stream_recovery_reset_total;
                     recovery_success_total = stream_recovery_success_total;
                     encoded_frames_reassembled = stream_encoded_frames_reassembled;
+                    local_recovery_discarded_frames = stream_local_dependency_frames_dropped;
                     incomplete_frames_dropped = stream_incomplete_frames_dropped;
                     dependency_frames_dropped = stream_dependency_frames_dropped;
                     completed_keyframes = stream_completed_keyframes;
@@ -11753,6 +11801,7 @@ int run_runtime_mode(
                                    ? now_steady_ms() - stream_encoder_worker_stage_since_ms.load()
                                    : 0)
                            << " encoded_frames_reassembled=" << encoded_frames_reassembled
+                           << " local_recovery_discarded_frames=" << local_recovery_discarded_frames
                            << " incomplete_frames_dropped=" << incomplete_frames_dropped
                            << " dependency_frames_dropped=" << dependency_frames_dropped
                            << " completed_keyframes=" << completed_keyframes

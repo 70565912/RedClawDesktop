@@ -4,6 +4,7 @@
 #endif
 #include "direct_frame_receiver.h"
 #include "redclaw/helper/direct_frame_shared_memory.h"
+#include "redclaw/protocol/hevc_access_unit.h"
 #include "redclaw/render/d3d11_video_device.h"
 #include "redclaw/render/playback_flow_control.h"
 #include <QByteArray>
@@ -690,7 +691,9 @@ class DirectFramePipeServer::Impl final {
       return true;
     }
 
-    const bool keyframe = (header.flags & 1u) != 0u;
+    const bool keyframe = header.format == redclaw::helper::kDirectFrameFormatHevc
+        ? redclaw::protocol::hevc_annex_b_contains_idr({payload, header.payload_size})
+        : (header.flags & 1u) != 0u;
 
     if (!decoder_reference_.prepare(header.format, header.width, header.height,
             header.capture_region_revision, keyframe)) {

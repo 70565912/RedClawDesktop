@@ -305,13 +305,21 @@ void ControllerDecoderRecoveryCoordinator::reset() {
     resume_wait_started_ms_.reset();
 }
 
+void ControllerDecoderRecoveryCoordinator::on_geometry_request() {
+    std::lock_guard lock(mutex_);
+    // A local request may be a duplicate and never produce a replacement
+    // IDR. Keep the current reference request and displayable ACK deadline.
+    if (!awaiting_resume_request_ && snapshot_.state == ControllerDecoderRecoveryState::kSynchronized) {
+        snapshot_ = {};
+    }
+}
+
 void ControllerDecoderRecoveryCoordinator::set_playback_state(
     std::uint64_t session, std::uint64_t revision, bool paused) {
     std::lock_guard lock(mutex_);
-    if (session == playback_session_ && revision == playback_revision_ && paused == playback_paused_) return;
-    playback_session_ = session;
-    playback_revision_ = revision;
-    playback_paused_ = paused;
+    const ControllerPlaybackIdentity next{session, revision, paused};
+    if (next == playback_) return;
+    playback_ = next;
     awaiting_resume_request_ = !paused && revision != 0;
     resume_wait_started_ms_.reset();
     // Cancel pending IDRs/retries on either boundary. The receiver establishes
@@ -326,9 +334,10 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_depende
     ControllerDecoderBreakReason reason,
     std::uint64_t frame_id,
     std::uint64_t now_ms,
-    std::uint32_t srtt_ms) {
+    std::uint32_t srtt_ms,
+    std::optional<ControllerPlaybackIdentity> expected) {
     std::lock_guard lock(mutex_);
-    if (playback_paused_) return update_locked(false, false);
+    if (playback_.paused || (expected && *expected != playback_)) return update_locked(false, false);
     // Give the coalescer priority before the deadline. A late resume notice
     // must not invalidate an IDR already requested by the deadline fallback.
     const bool resume_notification = reason == ControllerDecoderBreakReason::kPresentationResumed;
@@ -369,11 +378,13 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::begin_reco
 ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_keyframe_submitted(
     std::uint64_t frame_id,
     std::uint64_t now_ms,
-    std::uint32_t srtt_ms) {
+    std::uint32_t srtt_ms,
+    std::optional<ControllerPlaybackIdentity> expected) {
     (void)now_ms;
     (void)srtt_ms;
     std::lock_guard lock(mutex_);
-    if (playback_paused_ || frame_id == 0 || snapshot_.state == ControllerDecoderRecoveryState::kSynchronized) {
+    if (playback_.paused || (expected && *expected != playback_) || frame_id == 0
+        || snapshot_.state == ControllerDecoderRecoveryState::kSynchronized) {
         return update_locked(false, false);
     }
 
@@ -385,9 +396,11 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_keyfram
 }
 
 ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_displayable_ack(
-    std::uint64_t latest_displayable_keyframe_id) {
+    std::uint64_t latest_displayable_keyframe_id,
+    std::optional<ControllerPlaybackIdentity> expected) {
     std::lock_guard lock(mutex_);
-    if (playback_paused_ || snapshot_.state != ControllerDecoderRecoveryState::kAwaitingDisplayable
+    if (playback_.paused || (expected && *expected != playback_)
+        || snapshot_.state != ControllerDecoderRecoveryState::kAwaitingDisplayable
         || snapshot_.pending_keyframe_id == 0
         || latest_displayable_keyframe_id < snapshot_.pending_keyframe_id) {
         return update_locked(false, false);
@@ -406,9 +419,10 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::on_display
 
 ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::tick(
     std::uint64_t now_ms,
-    std::uint32_t srtt_ms) {
+    std::uint32_t srtt_ms,
+    std::optional<ControllerPlaybackIdentity> expected) {
     std::lock_guard lock(mutex_);
-    if (playback_paused_) return update_locked(false, false);
+    if (playback_.paused || (expected && *expected != playback_)) return update_locked(false, false);
     if (awaiting_resume_request_) {
         // Give the receiver's coalescer the first opportunity, but recover
         // even when its notification never reaches the runtime.
@@ -430,7 +444,7 @@ ControllerDecoderRecoveryUpdate ControllerDecoderRecoveryCoordinator::tick(
 
 bool ControllerDecoderRecoveryCoordinator::should_accept_frame(bool keyframe) const {
     std::lock_guard lock(mutex_);
-    return playback_paused_ || snapshot_.state != ControllerDecoderRecoveryState::kAwaitingIdr || keyframe;
+    return playback_.paused || snapshot_.state != ControllerDecoderRecoveryState::kAwaitingIdr || keyframe;
 }
 
 ControllerDecoderRecoverySnapshot ControllerDecoderRecoveryCoordinator::snapshot() const {

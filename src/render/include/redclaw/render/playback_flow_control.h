@@ -35,6 +35,14 @@ struct GpuAdapterChoice {
 // Prefers the adapter that owns the target monitor, then the first hardware
 // adapter with outputs. An adapter without outputs (an Optimus dGPU) is never
 // chosen implicitly: presenting from it needs a cross-adapter copy.
+// A fallback device can paint, but only an enumerated monitor owner can
+// authorize the GUI's hardware decode report.
+[[nodiscard]] inline std::uint64_t monitor_owned_presenter_luid(
+    const GpuAdapterCandidate* selected, std::uint64_t device_luid) noexcept {
+    return selected && !selected->software && selected->owns_target_monitor
+        && selected->luid == device_luid ? device_luid : 0;
+}
+
 [[nodiscard]] GpuAdapterChoice choose_gpu_adapter(std::span<const GpuAdapterCandidate> candidates) noexcept;
 [[nodiscard]] std::string describe_gpu_adapter(const GpuAdapterCandidate& adapter);
 

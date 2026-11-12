@@ -1,11 +1,18 @@
 # Development Log
 
+## 2026-11-12 — PR #10 second-round re-review fixes (M02-T03)
+
+- Base `2748350`, after the first review fixes in `4aa8df8` and the D11 decision. The Controller redraws its last successful surface or CPU picture on resume without marking it as new output. It still discards unpresented frames and requests a post-boundary reference. The Host schedules eligible codec changes through the existing static-reference tracker, with no ordinary P-frame refresh on a quiet source.
+- D3D11 painting can use a fallback device; the HEVC report needs the enumerated monitor owner, matching device, probe and pin. Coverage polls DWM cloaking and subtracts bounding rectangles in Z order, including layered windows explicitly known to be opaque (alpha 255, no color key). Shaped holes and non-opaque/per-pixel-alpha/color-keyed layers can over- or undercount coverage; this is an accepted limitation.
+- The local recovery coordinator retains IDR/ACK retries across geometry requests and accepts mutations only for the matching playback identity. Both feedback paths count complete locally discarded AUs as reassembled and omit them from network drops and decode output. The reliable-channel send lock stamps the current codec capability alongside its message ID; audio updates preserve audio fields.
+- The encoder verifies forced-IDR setup and forced output; the receiver rejects HEVC CRA as a recovery reference. AMF HEVC is ineligible for the FFmpeg 7.1 path; a failed forced refresh latches H.264 fallback. The bitrate comparator rejects missing or duplicate analysis windows. No wire schema changes. See [PROGRESS](../../PROGRESS.md#pr-10-second-round-re-review-fixes-m02-t03) for validation and remaining D11 checks.
+
 ## 2026-11-12 — PR #10 review fixes (M02-T03)
 
 - Interfaces: `DesktopSourceActivityTracker::on_keyframe_request` reopens a static reference, the receiver limiter coalesces request reasons, and `PresentationGate` accepts window coverage separately from DXGI results. Codec selection uses the negotiation snapshot that supplies the encoder's revision.
 - A Controller resume or recovery request moves `kStatic` to `kStaticPending` so the Host can encode a reference IDR from its retained capture. The resume reason survives dependency requests and visibility-boundary cancellation is synchronized. Runtime retries start after a bounded wait if the GUI notification is missing.
 - D3D11 polls DWM cloaking and window coverage, preserving the DXGI status path. HEVC requires an explicit presenter LUID, a matching hardware probe and a decoder pin. LUID 0, unknown adapters and GUI fallback advertise H.264. A changed selection discards a stale encoder open, and running automatic HEVC responds to hardware capability withdrawal.
-- A local-only backpressure latch allows one escalation on confirmed network evidence. The post-sample frame-pipe check is Windows-only. The bitrate comparator rejects unmatched workloads. The 70% HEVC budget continues to honor the 400 kbps interactive floor. See [PROGRESS](../../PROGRESS.md#pr-10-review-fixes-at-cd81b23) for validation.
+- A local-only backpressure latch allows one escalation on confirmed network evidence. The post-sample frame-pipe check is Windows-only. The bitrate comparator rejects unmatched workloads. The 70% HEVC budget continues to honor the 400 kbps interactive floor. See [PROGRESS](../../PROGRESS.md#pr-10-review-fixes-at-4aa8df8) for validation.
 - D11: merges into `main` are gated on local builds/tests on both machines, a clean Codex re-review, on-device acceptance when needed, and GitHub `docs-guard`. GitHub `build-and-test` is advisory.
 
 ## 2026-11-12 — Pause Controller decode with presentation (M02-T03, PR #10 local follow-up)

@@ -124,6 +124,7 @@ enum class EncoderExecutionFailureCategory {
 	kOutputNotReady,
 	kEncodeFailed,
 	kOutputResourceLimit,
+	kForcedIdrUnavailable,
 };
 
 enum class EncoderRateControlUpdateStatus {

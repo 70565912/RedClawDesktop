@@ -2363,6 +2363,7 @@ bool launch_gui_shell(
     stats.latest_presented_frame_id = latest_presented_frame_id;
 #if defined(_WIN32)
     const auto playback = direct_frame_pipe_server.playback_state();
+    if (!playback.valid || playback.paused || playback.resynchronizing) return false;
     stats.playback_feedback_version = 1;
     stats.playback_session = playback.session;
     stats.playback_revision = playback.revision;
@@ -3474,7 +3475,8 @@ bool launch_gui_shell(
     receiver_rendered_frames = 0;
     last_reported_displayable_frame_id = 0;
   };
-  auto send_local_keyframe_request = [&](const QString& reason) {
+  auto send_local_keyframe_request = [&](const QString& reason,
+                                         const redclaw::helper::PlaybackStateSnapshot& playback) {
     if (role_combo->currentText() != "controller" || !controller.is_running()) {
       return;
     }
@@ -3483,8 +3485,7 @@ bool launch_gui_shell(
     request.session_epoch = "local";
     request.message_id = ++gui_control_message_id;
     request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
-    const auto playback = direct_frame_pipe_server.playback_state();
-    if (playback.paused) return;
+    if (!playback.valid || playback.paused) return;
     request.playback_feedback_version = 1;
     request.playback_session = playback.session;
     request.playback_revision = playback.revision;
@@ -5310,7 +5311,7 @@ bool launch_gui_shell(
                 [&send_local_keyframe_request, &direct_frame_pipe_server, state, reason = std::move(reason)]() {
                   const auto current = direct_frame_pipe_server.playback_state();
                   if (!redclaw::helper::playback_output_is_current(state, current)) return;
-                  send_local_keyframe_request(reason);
+                  send_local_keyframe_request(reason, state);
                 },
                 Qt::QueuedConnection);
           });

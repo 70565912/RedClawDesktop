@@ -38,8 +38,8 @@ class PlaybackCanvas {
   // The presenter's own device. Decode never shares it; tests use it to
   // build same-device surfaces.
   virtual ID3D11Device* d3d11_presentation_device(QString*) { return nullptr; }
-  // LUID of the adapter the presenter renders on, so decode can run on the
-  // same adapter without a cross-adapter copy.
+  // LUID of the presenter's verified monitor owner, for pinned hardware
+  // decode. A device chosen only as a presentation fallback is insufficient.
   virtual bool d3d11_presentation_adapter(std::uint64_t*, QString* detail) {
     if (detail != nullptr) *detail = "non-D3D11 playback backend";
     return false;

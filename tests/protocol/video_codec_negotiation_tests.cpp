@@ -26,6 +26,37 @@ TEST(VideoCodecNegotiation, AutoPrefersHevcWhenBothSidesHaveHardware) {
     EXPECT_EQ(selection.reason, "auto_hevc_hardware_on_both_sides");
 }
 
+TEST(VideoCodecNegotiation, LateQueuedAudioCapabilityUsesWithdrawnMaskAtSend) {
+    HostVideoCodecNegotiatorV1 host(VideoCodecPreference::kAuto);
+    const auto original = hevc_hardware_peer();
+    ASSERT_TRUE(host.observe_peer(original.version, original.decode_mask, original.hardware_decode_mask));
+    StreamControlMessageV1 queued;
+    queued.type = StreamControlMessageTypeV1::kCapabilities;
+    queued.session_epoch = "test";
+    queued.audio_version = 1;
+    queued.audio_playback_requested = true;
+    stamp_video_decode_capabilities(queued, original, {});
+
+    const PeerVideoDecodeCapabilities withdrawn{1, kVideoCodecMaskH264, kVideoCodecMaskH264};
+    ASSERT_TRUE(host.observe_peer(withdrawn.version, withdrawn.decode_mask, withdrawn.hardware_decode_mask,
+        kControllerHevcDecodeOverloadReason));
+    const auto withdrawal_revision = host.snapshot().revision;
+
+    queued.message_id = 20; // Sent later than the withdrawal.
+    queued.sent_at_ms = 100;
+    stamp_video_decode_capabilities(queued, withdrawn, kControllerHevcDecodeOverloadReason);
+    const auto parsed = parse_stream_control_message_v1(serialize_stream_control_message_v1(queued));
+    ASSERT_TRUE(parsed.ok) << parsed.error;
+    EXPECT_EQ(parsed.value.message_id, 20U);
+    EXPECT_EQ(parsed.value.audio_version, 1U);
+    EXPECT_TRUE(parsed.value.audio_playback_requested);
+    EXPECT_FALSE(host.observe_peer(parsed.value.video_codec_version, parsed.value.video_decode_codecs,
+        parsed.value.video_hardware_decode_codecs, parsed.value.video_codec_change_reason));
+    const auto after_audio = host.snapshot();
+    EXPECT_EQ(after_audio.revision, withdrawal_revision);
+    EXPECT_EQ(host.select(hevc_hardware_host(), after_audio).codec, NegotiatedVideoCodec::kH264);
+}
+
 TEST(VideoCodecNegotiation, OldPeerWithoutReportGetsH264) {
     const auto selection = select_video_codec(VideoCodecPreference::kAuto, {}, hevc_hardware_host());
     EXPECT_EQ(selection.codec, NegotiatedVideoCodec::kH264);

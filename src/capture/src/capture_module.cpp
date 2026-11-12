@@ -1,4 +1,5 @@
 #include "redclaw/capture/capture_module.h"
+#include "redclaw/protocol/hevc_access_unit.h"
 
 #include <chrono>
 #include "redclaw/capture/capture_cursor.h"
@@ -600,45 +601,33 @@ bool payload_contains_h264_keyframe(const std::uint8_t* data, std::size_t size) 
     return false;
 }
 
-bool payload_contains_hevc_keyframe(const std::uint8_t* data, std::size_t size) {
-    std::size_t offset = 0;
-    while (offset < size) {
-        std::size_t prefix_size = 0;
-        const std::size_t start = find_annex_b_start_code(data, size, offset, &prefix_size);
-        if (start == size) {
-            break;
-        }
-
-        const std::size_t nal_index = start + prefix_size;
-        if (nal_index >= size) {
-            break;
-        }
-
-        const std::uint8_t nal_type = static_cast<std::uint8_t>((data[nal_index] >> 1U) & 0x3FU);
-        if (nal_type >= 16U && nal_type <= 21U) {
-            return true;
-        }
-
-        offset = nal_index + 1;
-    }
-
-    return false;
-}
-
 bool packet_contains_keyframe(EncoderCodec codec, const AVPacket* packet) {
     if (packet == nullptr || packet->data == nullptr || packet->size <= 0) {
         return false;
     }
-    if ((packet->flags & AV_PKT_FLAG_KEY) != 0) {
-        return true;
-    }
-
-    const auto* payload = reinterpret_cast<const std::uint8_t*>(packet->data);
-    const std::size_t payload_size = static_cast<std::size_t>(packet->size);
+    const auto payload_size = static_cast<std::size_t>(packet->size);
     if (codec == EncoderCodec::kHevc) {
-        return payload_contains_hevc_keyframe(payload, payload_size);
+        return protocol::hevc_annex_b_contains_idr({packet->data, payload_size});
     }
-    return payload_contains_h264_keyframe(payload, payload_size);
+    return (packet->flags & AV_PKT_FLAG_KEY) != 0
+        || payload_contains_h264_keyframe(packet->data, payload_size);
+}
+
+bool configure_forced_idr(void* options, std::string_view encoder_name) {
+    const char* option = nullptr;
+    if (encoder_name == "h264_nvenc" || encoder_name == "hevc_nvenc" || encoder_name == "libx265") {
+        option = "forced-idr";
+    } else if (encoder_name == "hevc_qsv") {
+        option = "forced_idr";
+    }
+    // FFmpeg 7.1 AMF HEVC does not turn our picture-type request into a
+    // forced IDR. Leave it out until the backend can honor recovery.
+    std::int64_t applied = 0;
+    return options != nullptr && option != nullptr
+        && av_opt_set_int(options, option, 1, 0) >= 0
+        && av_opt_get_int(options, option, 0, &applied) >= 0 && applied == 1
+        // x265 can emit CRA for an I picture if open GOP is enabled.
+        && (encoder_name != "libx265" || av_opt_set(options, "x265-params", "open-gop=0", 0) >= 0);
 }
 
 AVCodecID resolve_ffmpeg_codec_id(EncoderCodec codec) {
@@ -1518,6 +1507,11 @@ EncoderOpenProbe probe_open_hevc_encoder(
     context->thread_count = 1;
     context->flags |= AV_CODEC_FLAG_LOW_DELAY;
     context->pix_fmt = resolve_encoder_cpu_pixel_format(codec, backend);
+    if (!configure_forced_idr(context->priv_data, encoder_name)) {
+        result.detail = "forced_idr_unavailable";
+        avcodec_free_context(&context);
+        return result;
+    }
     const int open_result = avcodec_open2(context, codec, nullptr);
     if (open_result < 0) {
         result.detail = ffmpeg_error_to_string(open_result);
@@ -2059,8 +2053,9 @@ public:
                         std::chrono::steady_clock::now() - retry_send_start)
                         .count());
                 if (retry_send_result >= 0) {
-                    submitted_frame_timestamps_.emplace_back(frame_->pts, timestamp_ms);
+                    submitted_frames_.push_back({frame_->pts, timestamp_ms, force_keyframe});
                 } else {
+                    if (force_keyframe) keyframe_requested_.store(true);
                     ++diagnostics_.dropped_frame_count;
                     if (hardware_frame_input_active_) {
                         const std::string failure_detail = "avcodec_send_frame retry failed: "
@@ -2074,6 +2069,7 @@ public:
                 }
                 return true;
             }
+            if (force_keyframe) keyframe_requested_.store(true);
             if (blocked_receive_result == ReceivePacketResult::kNeedInput) {
                 if (hardware_frame_input_active_) {
                     av_frame_unref(frame_);
@@ -2089,6 +2085,7 @@ public:
             return false;
         }
         if (send_result < 0) {
+            if (force_keyframe) keyframe_requested_.store(true);
             diagnostics_.total_encode_us += static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - encode_start)
@@ -2108,7 +2105,7 @@ public:
                 failure_detail,
                 error_detail);
         }
-        submitted_frame_timestamps_.emplace_back(frame_->pts, timestamp_ms);
+        submitted_frames_.push_back({frame_->pts, timestamp_ms, force_keyframe});
         if (hardware_frame_input_active_) {
             av_frame_unref(frame_);
         }
@@ -2316,26 +2313,30 @@ private:
     }
 
 #if REDCLAW_CAPTURE_HAS_LIBAVCODEC
-    std::uint64_t consume_submitted_frame_timestamp(std::int64_t packet_pts, std::uint64_t fallback_timestamp_ms) {
-        if (submitted_frame_timestamps_.empty()) {
-            return fallback_timestamp_ms;
-        }
+    struct SubmittedFrame {
+        std::int64_t pts;
+        std::uint64_t timestamp_ms;
+        bool force_keyframe;
+    };
 
+    SubmittedFrame consume_submitted_frame(std::int64_t packet_pts, std::uint64_t fallback_timestamp_ms) {
+        if (submitted_frames_.empty()) return {packet_pts, fallback_timestamp_ms, false};
         if (packet_pts != AV_NOPTS_VALUE) {
-            for (auto iter = submitted_frame_timestamps_.begin(); iter != submitted_frame_timestamps_.end(); ++iter) {
-                if (iter->first == packet_pts) {
-                    const std::uint64_t timestamp_ms = iter->second;
-                    auto erase_end = iter;
-                    ++erase_end;
-                    submitted_frame_timestamps_.erase(submitted_frame_timestamps_.begin(), erase_end);
-                    return timestamp_ms;
+            bool force_keyframe = false;
+            for (auto iter = submitted_frames_.begin(); iter != submitted_frames_.end(); ++iter) {
+                force_keyframe |= iter->force_keyframe;
+                if (iter->pts == packet_pts) {
+                    auto frame = *iter;
+                    // A skipped forced submission must not hide a missing IDR.
+                    frame.force_keyframe = force_keyframe;
+                    submitted_frames_.erase(submitted_frames_.begin(), ++iter);
+                    return frame;
                 }
             }
         }
-
-        const std::uint64_t timestamp_ms = submitted_frame_timestamps_.front().second;
-        submitted_frame_timestamps_.pop_front();
-        return timestamp_ms;
+        const auto frame = submitted_frames_.front();
+        submitted_frames_.pop_front();
+        return frame;
     }
 
     ReceivePacketResult try_receive_encoded_packet(
@@ -2391,9 +2392,17 @@ private:
             return ReceivePacketResult::kFailed;
         }
 
+        const auto submitted = consume_submitted_frame(packet_->pts, fallback_timestamp_ms);
+        const bool keyframe = packet_contains_keyframe(profile_.codec, packet_);
+        if (profile_.codec == EncoderCodec::kHevc && submitted.force_keyframe && !keyframe) {
+            av_packet_unref(packet_);
+            ++diagnostics_.dropped_frame_count;
+            fail(EncoderExecutionFailureCategory::kForcedIdrUnavailable,
+                "HEVC encoder did not emit an Annex B IDR for a forced refresh", error_detail);
+            return ReceivePacketResult::kFailed;
+        }
         if (packet->payload_limit_bytes != 0
             && static_cast<std::size_t>(packet_->size) > packet->payload_limit_bytes) {
-            (void)consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
             av_packet_unref(packet_);
             ++diagnostics_.dropped_frame_count;
             keyframe_requested_.store(true); // The rejected reference was never sent.
@@ -2409,8 +2418,8 @@ private:
             packet->payload.reserve(static_cast<std::size_t>(packet_->size));
         }
         packet->codec = profile_.codec;
-        packet->keyframe = packet_contains_keyframe(profile_.codec, packet_);
-        packet->timestamp_ms = consume_submitted_frame_timestamp(packet_->pts, fallback_timestamp_ms);
+        packet->keyframe = keyframe;
+        packet->timestamp_ms = submitted.timestamp_ms;
         diagnostics_.last_output_pts = packet_->pts;
         const auto payload_copy_start = std::chrono::steady_clock::now();
         packet->payload.assign(packet_->data, packet_->data + packet_->size);
@@ -2546,33 +2555,13 @@ private:
             av_opt_set(context_->priv_data, "rc-lookahead", "0", 0);
         }
         const bool supports_nvenc_tuning = selected_encoder_name_ == "h264_nvenc" || selected_encoder_name_ == "hevc_nvenc";
-        if (supports_nvenc_tuning) {
-            // AV_PICTURE_TYPE_I alone permits a non-IDR intra frame in NVENC.
-            // Recovery requests must sever old references, independently of tuning.
-            std::int64_t forced_idr = 0;
-            if (context_->priv_data == nullptr
-                || av_opt_set_int(context_->priv_data, "forced-idr", 1, 0) < 0
-                || av_opt_get_int(context_->priv_data, "forced-idr", 0, &forced_idr) < 0
-                || forced_idr != 1) {
+        if (supports_nvenc_tuning || profile_.codec == EncoderCodec::kHevc) {
+            if (!configure_forced_idr(context_->priv_data, selected_encoder_name_)) {
                 stop_runtime_context_only();
                 return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
-                    "NVENC forced IDR option could not be applied", error_detail);
+                    selected_encoder_name_ + " forced IDR option could not be applied", error_detail);
             }
             diagnostics_.forced_idr_option_applied = true;
-        }
-        if (context_->priv_data != nullptr
-            && (selected_encoder_name_ == "libx265" || selected_encoder_name_ == "hevc_amf")) {
-            // Without this, a requested HEVC keyframe may be a non-IDR intra
-            // picture and recovery waits for the natural GOP.
-            const char* option = selected_encoder_name_ == "libx265" ? "forced-idr" : "forced_idr";
-            diagnostics_.forced_idr_option_applied =
-                av_opt_set_int(context_->priv_data, option, 1, 0) >= 0;
-            // x265 keeps open GOP on by default and then emits a CRA even for
-            // a forced IDR request; a fresh decoder must start from a real IDR.
-            if (selected_encoder_name_ == "libx265") {
-                diagnostics_.forced_idr_option_applied = diagnostics_.forced_idr_option_applied
-                    && av_opt_set(context_->priv_data, "x265-params", "open-gop=0", 0) >= 0;
-            }
         }
         if (profile_.zero_latency_tuning && supports_nvenc_tuning && context_->priv_data != nullptr) {
             av_opt_set(context_->priv_data, "preset", "p1", 0);
@@ -2592,8 +2581,10 @@ private:
                 return fail(EncoderExecutionFailureCategory::kEncoderInitFailed,
                     "QSV low_delay_brc option could not be applied", error_detail);
             }
-            diagnostics_.forced_idr_option_applied =
-                av_opt_set(context_->priv_data, "forced_idr", "1", 0) >= 0;
+            if (profile_.codec == EncoderCodec::kH264) {
+                diagnostics_.forced_idr_option_applied =
+                    av_opt_set(context_->priv_data, "forced_idr", "1", 0) >= 0;
+            }
         }
         const bool supports_amf_tuning = selected_encoder_name_ == "h264_amf" || selected_encoder_name_ == "hevc_amf";
         if (profile_.zero_latency_tuning && supports_amf_tuning && context_->priv_data != nullptr) {
@@ -2706,7 +2697,7 @@ private:
 
     void stop_runtime_context_only() {
         drain_encoder_before_close();
-        submitted_frame_timestamps_.clear();
+        submitted_frames_.clear();
         if (packet_ != nullptr) {
             av_packet_free(&packet_);
             packet_ = nullptr;
@@ -3203,9 +3194,9 @@ private:
     std::chrono::steady_clock::time_point pts_origin_{};
     std::atomic_bool keyframe_requested_{false};
     std::atomic<std::uint32_t> keyframe_request_count_{0};
-    std::deque<std::pair<std::int64_t, std::uint64_t>> submitted_frame_timestamps_;
 
 #if REDCLAW_CAPTURE_HAS_LIBAVCODEC
+    std::deque<SubmittedFrame> submitted_frames_;
     const AVCodec* codec_ = nullptr;
     AVCodecContext* context_ = nullptr;
     AVFrame* frame_ = nullptr;

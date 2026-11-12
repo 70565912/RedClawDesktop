@@ -3,9 +3,12 @@
 Both reports must already contain analysis.json (analyze-video-link-baseline.py).
 The comparison refuses mislabeled runs: every encoder start recorded in
 host-video-codec.txt must carry the expected codec, and both plans must use the
-same geometry/network contract and workload. Visual quality is not measured here.
+same geometry/network contract and workload. A plan may select a subset of
+scenarios, but every planned scene/repetition must appear exactly once in each
+analysis. Visual quality is not measured here.
 """
 import argparse
+from collections import Counter
 import json
 import re
 import statistics
@@ -75,8 +78,21 @@ def compare(h264_report, hevc_report):
             problems.append(f"plan workload is missing {field}")
         elif h264_plan[field] != hevc_plan[field]:
             problems.append(f"plan workloads differ in {field}")
-    metrics = {name: scene_metrics(load(r / "analysis.json"))
-               for name, r in (("h264", h264_report), ("hevc", hevc_report))}
+    metrics = {}
+    for name, report, plan in (("h264", h264_report, h264_plan), ("hevc", hevc_report, hevc_plan)):
+        analysis = load(report / "analysis.json")
+        scenes = plan.get("scenarios")
+        repetitions = plan.get("repetitions")
+        if (isinstance(scenes, list) and scenes and all(s in SCENES for s in scenes)
+                and len(set(scenes)) == len(scenes) and type(repetitions) is int and 1 <= repetitions <= 3):
+            expected = Counter(f"{scene}-{i}" for scene in scenes for i in range(1, repetitions + 1))
+            observed = Counter(w["window"] for w in analysis["windows"])
+            for label, counts in (("missing", expected - observed), ("unexpected or duplicate", observed - expected)):
+                if counts:
+                    problems.append(f"{name}: {label} analysis windows: {', '.join(sorted(counts.elements()))}")
+        else:
+            problems.append(f"{name}: invalid planned scenarios or repetition count")
+        metrics[name] = scene_metrics(analysis)
     ratios = {}
     for scene in SCENES:
         ratios[scene] = {}

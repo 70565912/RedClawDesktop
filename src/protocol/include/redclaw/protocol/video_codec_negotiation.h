@@ -9,6 +9,8 @@
 
 namespace redclaw::protocol {
 
+struct StreamControlMessageV1;
+
 // Optional Hello/Capabilities fields 92-94. Zero means an older peer, which
 // is only guaranteed to decode H.264.
 inline constexpr std::uint32_t kVideoCodecCapabilityVersion = 1;
@@ -35,6 +37,11 @@ struct PeerVideoDecodeCapabilities {
     std::uint32_t decode_mask = 0;
     std::uint32_t hardware_decode_mask = 0;
 };
+
+// Apply the live report at reliable-channel send time, retaining the other
+// capability fields on queued messages.
+void stamp_video_decode_capabilities(StreamControlMessageV1& message,
+    const PeerVideoDecodeCapabilities& report, std::string_view reason);
 
 struct HostVideoEncodeCapabilities {
     bool hevc_hardware_encoder_available = false;
@@ -103,6 +110,13 @@ struct LocalVideoDecodeSupport {
     std::uint64_t negotiation_revision_at_start,
     std::uint64_t current_negotiation_revision,
     const VideoCodecSelection& current_selection) noexcept;
+
+// Returns the first eligible encoder restart time. Withdrawal is immediate;
+// an upgrade waits for the minimum encoder age.
+[[nodiscard]] std::optional<std::uint64_t> running_video_codec_change_due_ms(
+    NegotiatedVideoCodec running_codec, std::uint64_t negotiation_revision_at_start,
+    std::uint64_t current_negotiation_revision, const VideoCodecSelection& current_selection,
+    std::uint64_t started_at_ms, std::uint64_t minimum_upgrade_age_ms) noexcept;
 
 // Host-side owner of the per-session peer report and the sticky HEVC failure.
 // Control-channel and encoder threads share it.

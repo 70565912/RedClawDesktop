@@ -78,8 +78,15 @@ bool is_playback_window_occluded(HWND hwnd) {
   for (int i = 0; i < 256; ++i) {
     above = GetWindow(above, GW_HWNDPREV);
     if (!above || above == root) break;
-    if (!IsWindowVisible(above) || IsIconic(above)
-        || (GetWindowLongPtrW(above, GWL_EXSTYLE) & (WS_EX_LAYERED | WS_EX_TRANSPARENT))) continue;
+    if (!IsWindowVisible(above) || IsIconic(above)) continue;
+    const auto style = GetWindowLongPtrW(above, GWL_EXSTYLE);
+    if (style & WS_EX_TRANSPARENT) continue;
+    if (style & WS_EX_LAYERED) {
+      BYTE alpha = 0;
+      DWORD flags = 0;
+      if (!GetLayeredWindowAttributes(above, nullptr, &alpha, &flags)
+          || !(flags & LWA_ALPHA) || (flags & LWA_COLORKEY) || alpha != 255) continue;
+    }
     RECT frame{};
     if (FAILED(DwmGetWindowAttribute(above, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame)))
         && !GetWindowRect(above, &frame)) continue;
@@ -138,6 +145,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       synchronize_visibility("visibility_timer");
       if (presentation_gate_.needs_occlusion_probe())
         (void)presentation_allowed();
+      if (redraw_pending_ && !presentation_gate_.paused())
+        redraw_pending_ = !redraw_last_picture();
     });
     visibility_timer->start();
   }
@@ -155,7 +164,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     if (video_input_texture_) video_input_texture_->GetDesc(&description);
     DXGI_SWAP_CHAIN_DESC output{};
     const bool has_output = swap_chain_ && SUCCEEDED(swap_chain_->GetDesc(&output));
-    return {{"backend", "d3d11"}, {"last_presented_surface", latest_frame_is_surface_},
+    return {{"backend", "d3d11"}, {"last_presented_surface", bool(retained_surface_.d3d11_surface)},
+      {"retained_surface_frame_id", qint64(retained_surface_.frame_id)},
+      {"surface_redraws", qint64(surface_redraws_)},
       {"swap_chain_ready", has_output},
       {"output_window_matches_canvas", has_output && output.OutputWindow == reinterpret_cast<HWND>(internalWinId())},
       {"widget_x", x()}, {"widget_y", y()}, {"widget_width", width()}, {"widget_height", height()},
@@ -192,9 +203,10 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   // Called at session start. The device outlives sessions, so re-check the
   // adapter of the window's current monitor and rebuild after a move.
   bool d3d11_presentation_adapter(std::uint64_t* luid, QString* error_detail) override {
+    if (luid != nullptr) *luid = 0;
+    const auto selected = redclaw::render::select_gpu_adapter_for_monitor(
+        MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST));
     if (device_) {
-      const auto selected = redclaw::render::select_gpu_adapter_for_monitor(
-          MonitorFromWindow(reinterpret_cast<HWND>(winId()), MONITOR_DEFAULTTONEAREST));
       const std::uint64_t current = redclaw::render::d3d11_device_adapter_luid(device_.Get());
       if (selected.adapter && redclaw::render::presenter_adapter_changed(current, selected.adapter->luid)) {
         log_diagnostic(QString("D3D11 presenter adapter changed since the last session old_luid=0x%1:%2 new=%3; "
@@ -206,18 +218,23 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       }
     }
     if (!ensure_device(error_detail)) return false;
-    if (luid != nullptr) *luid = redclaw::render::d3d11_device_adapter_luid(device_.Get());
+    const auto verified_luid = redclaw::render::monitor_owned_presenter_luid(
+        selected.adapter ? &*selected.adapter : nullptr,
+        redclaw::render::d3d11_device_adapter_luid(device_.Get()));
+    if (verified_luid == 0) {
+      if (error_detail != nullptr) *error_detail = "Playback monitor adapter could not be verified.";
+      return false;
+    }
+    if (luid != nullptr) *luid = verified_luid;
     return true;
   }
 
   void clear_frame() override {
-    frame_texture_.Reset();
-    frame_srv_.Reset();
+    cpu_frame_ = pending_cpu_frame_ = {};
+    redraw_pending_ = false;
     video_input_texture_.Reset();
     video_input_views_.clear();
-    latest_frame_is_surface_ = false;
-    frame_width_ = 0;
-    frame_height_ = 0;
+    retained_surface_ = {};
     if (context_ && render_target_ && swap_chain_) {
       context_->ClearRenderTargetView(render_target_.Get(), desktop_theme::kCanvasClear.data());
       (void)present_swap_chain(0, nullptr, true);
@@ -274,8 +291,19 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       preparation.finish();
       const auto outcome = present_d3d11_surface(frame, error_detail);
       if (outcome == PresentOutcome::kPresented) {
-        latest_frame_is_surface_ = true;
+        // Hold one lease until another picture is actually presented. Redraw
+        // uses the original pixels without keeping a pending decoder output
+        // or copying an extra full frame on the steady-state path.
+        retained_surface_.d3d11_surface = frame.d3d11_surface;
+        retained_surface_.frame_id = frame.frame_id;
+        retained_surface_.width = frame.width;
+        retained_surface_.height = frame.height;
+        retained_surface_.content_rect_x = frame.content_rect_x;
+        retained_surface_.content_rect_y = frame.content_rect_y;
+        retained_surface_.content_rect_width = frame.content_rect_width;
+        retained_surface_.content_rect_height = frame.content_rect_height;
         frame_has_presented_ = true;
+        redraw_pending_ = false;
       }
       return outcome;
     }
@@ -300,13 +328,13 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         ? frame.height : frame.content_rect_height;
     if (content_x + content_width > frame.width
         || content_y + content_height > frame.height
-        || !ensure_frame_texture(content_width, content_height, error_detail)) {
+        || !ensure_frame_texture(pending_cpu_frame_, content_width, content_height, error_detail)) {
       return PresentOutcome::kFailed;
     }
 
     D3DCallTimer update_timer(this, "UpdateSubresource");
     context_->UpdateSubresource(
-        frame_texture_.Get(),
+        pending_cpu_frame_.texture.Get(),
         0,
         nullptr,
         frame.pixels.data()
@@ -315,10 +343,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         frame.row_pitch,
         0);
     update_timer.finish();
-    latest_frame_is_surface_ = false;
     preparation.finish();
-    const auto outcome = render(error_detail);
-    frame_has_presented_ |= outcome == PresentOutcome::kPresented;
+    // A rejected Present must not replace the CPU picture used on resume.
+    const auto outcome = render(pending_cpu_frame_, error_detail);
+    if (outcome == PresentOutcome::kPresented) {
+      std::swap(cpu_frame_, pending_cpu_frame_);
+      retained_surface_ = {};
+      frame_has_presented_ = true;
+      redraw_pending_ = false;
+    }
     return outcome;
   }
 
@@ -360,7 +393,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
         }
       }
     }
-    if (native->message == WM_ERASEBKGND && !frame_texture_ && !latest_frame_is_surface_) {
+    if (native->message == WM_ERASEBKGND && !cpu_frame_.texture && !retained_surface_.d3d11_surface) {
       fill_native_background(reinterpret_cast<HDC>(native->wParam));
       *result = 1;
       return true;
@@ -406,18 +439,14 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       last_phys_size_ = phys;
       sync_swap_chain_size();
     }
-    if (frame_texture_ && !latest_frame_is_surface_) {
-      (void)render(nullptr, true);
-    }
+    if (retained_surface_.d3d11_surface) redraw_pending_ = true;
+    else if (cpu_frame_.texture) (void)render(cpu_frame_, nullptr, true);
   }
 
   void paintEvent(QPaintEvent*) override {
     if (!presentation_allowed()) return;
-    if (frame_texture_ && !latest_frame_is_surface_) {
-      (void)render(nullptr, true);
-    } else if (!frame_texture_ && !latest_frame_is_surface_) {
-      paint_waiting_desktop();
-    }
+    if (cpu_frame_.texture && !retained_surface_.d3d11_surface) (void)render(cpu_frame_, nullptr, true);
+    else if (!cpu_frame_.texture && !retained_surface_.d3d11_surface) paint_waiting_desktop();
   }
 
   void showEvent(QShowEvent* event) override {
@@ -437,9 +466,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       last_phys_size_ = phys;
       sync_swap_chain_size();
     }
-    if (frame_texture_ && !latest_frame_is_surface_) {
-      (void)render(nullptr, true);
-    }
+    if (retained_surface_.d3d11_surface) redraw_pending_ = true;
+    else if (cpu_frame_.texture) (void)render(cpu_frame_, nullptr, true);
     synchronize_visibility("shown");
   }
 
@@ -470,7 +498,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     const auto state = QString::fromLatin1(presentation_gate_.state_name().data());
     if (state == last_notified_state_) return;
     last_notified_state_ = state;
-    (void)presentation_gate_.take_resume();
+    // Redraw after the native event has unwound. In particular WinIdChange
+    // can run during Qt's native child teardown.
+    if (presentation_gate_.take_resume()) redraw_pending_ = true;
     if (playback_state_changed_) playback_state_changed_(presentation_gate_.paused(),
         presentation_gate_.paused() ? state : QString::fromLatin1(trigger));
   }
@@ -1108,7 +1138,20 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return &slot;
   }
 
-  PresentOutcome present_d3d11_surface(const DirectFrameData& frame, QString* error_detail) {
+  bool redraw_last_picture() {
+    if (!retained_surface_.d3d11_surface) {
+      return !cpu_frame_.texture || render(cpu_frame_, nullptr, true) == PresentOutcome::kPresented;
+    }
+    if (!ensure_swap_chain(nullptr) || !sync_swap_chain_size()
+        || present_d3d11_surface(retained_surface_, nullptr, true) != PresentOutcome::kPresented) {
+      return false;
+    }
+    ++surface_redraws_;
+    return true;
+  }
+
+  PresentOutcome present_d3d11_surface(
+      const DirectFrameData& frame, QString* error_detail, bool redraw = false) {
     GuiLatencyScope preparation(GuiStage::kPresentPrepare);
     const auto& surface = frame.d3d11_surface;
     const bool shared = surface && surface->shared_handle != nullptr;
@@ -1231,7 +1274,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
       return PresentOutcome::kFailed;
     }
 
-    return present_swap_chain(DXGI_PRESENT_DO_NOT_WAIT, error_detail, false);
+    return present_swap_chain(redraw ? 0 : DXGI_PRESENT_DO_NOT_WAIT, error_detail, redraw);
   }
 
   PresentOutcome present_swap_chain(UINT flags, QString* error_detail, bool redraw) {
@@ -1271,13 +1314,19 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return PresentOutcome::kPresented;
   }
 
-  bool ensure_frame_texture(quint32 width, quint32 height, QString* error_detail) {
-    if (frame_texture_ && frame_width_ == width && frame_height_ == height) {
+  struct CpuPicture {
+    ComPtr<ID3D11Texture2D> texture;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    quint32 width = 0;
+    quint32 height = 0;
+  };
+
+  bool ensure_frame_texture(CpuPicture& frame, quint32 width, quint32 height, QString* error_detail) {
+    if (frame.srv && frame.width == width && frame.height == height) {
       return true;
     }
 
-    frame_texture_.Reset();
-    frame_srv_.Reset();
+    frame = {};
     D3D11_TEXTURE2D_DESC texture_desc{};
     texture_desc.Width = width;
     texture_desc.Height = height;
@@ -1287,23 +1336,23 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     texture_desc.SampleDesc.Count = 1;
     texture_desc.Usage = D3D11_USAGE_DEFAULT;
     texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    HRESULT hr = device_->CreateTexture2D(&texture_desc, nullptr, &frame_texture_);
-    if (FAILED(hr) || !frame_texture_) {
+    HRESULT hr = device_->CreateTexture2D(&texture_desc, nullptr, &frame.texture);
+    if (FAILED(hr) || !frame.texture) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateTexture2D failed: 0x%1").arg(static_cast<qulonglong>(hr), 0, 16);
       }
       return false;
     }
-    hr = device_->CreateShaderResourceView(frame_texture_.Get(), nullptr, &frame_srv_);
-    if (FAILED(hr) || !frame_srv_) {
+    hr = device_->CreateShaderResourceView(frame.texture.Get(), nullptr, &frame.srv);
+    if (FAILED(hr) || !frame.srv) {
       if (error_detail != nullptr) {
         *error_detail = QString("CreateShaderResourceView failed: 0x%1").arg(static_cast<qulonglong>(hr), 0, 16);
       }
       return false;
     }
 
-    frame_width_ = width;
-    frame_height_ = height;
+    frame.width = width;
+    frame.height = height;
     return true;
   }
 
@@ -1323,8 +1372,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     input_layout_.Reset();
     sampler_.Reset();
     vertex_buffer_.Reset();
-    frame_texture_.Reset();
-    frame_srv_.Reset();
+    cpu_frame_ = pending_cpu_frame_ = {};
+    redraw_pending_ = false;
     shared_input_slots_ = {};
     shared_input_generation_ = 0;
     video_context_.Reset();
@@ -1335,10 +1384,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     }
     context_.Reset();
     device_.Reset();
-    latest_frame_is_surface_ = false;
+    retained_surface_ = {};
     frame_has_presented_ = false;
-    frame_width_ = 0;
-    frame_height_ = 0;
     video_source_width_ = 0;
     video_source_height_ = 0;
     adapter_description_.clear();
@@ -1389,8 +1436,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     return ensure_swap_chain(error_detail);
   }
 
-  void update_vertices() {
-    if (!vertex_buffer_ || frame_width_ == 0 || frame_height_ == 0 || width() <= 0 || height() <= 0) {
+  void update_vertices(const CpuPicture& frame) {
+    if (!vertex_buffer_ || frame.width == 0 || frame.height == 0 || width() <= 0 || height() <= 0) {
       return;
     }
 
@@ -1399,7 +1446,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     const int phys_w = qRound(width()  * devicePixelRatioF());
     const int phys_h = qRound(height() * devicePixelRatioF());
     const float widget_aspect = static_cast<float>(phys_w) / static_cast<float>(phys_h);
-    const float frame_aspect  = static_cast<float>(frame_width_) / static_cast<float>(frame_height_);
+    const float frame_aspect  = static_cast<float>(frame.width) / static_cast<float>(frame.height);
     float x = 1.0F;
     float y = 1.0F;
     if (frame_aspect > widget_aspect) {
@@ -1424,15 +1471,15 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     }
   }
 
-  PresentOutcome render(QString* error_detail = nullptr, bool redraw = false) {
+  PresentOutcome render(const CpuPicture& frame, QString* error_detail, bool redraw = false) {
     if (!presentation_allowed()) return PresentOutcome::kBusyDrop;
     GuiLatencyScope preparation(GuiStage::kPresentPrepare);
-    if (!context_ || !swap_chain_ || !render_target_ || !frame_srv_) {
+    if (!context_ || !swap_chain_ || !render_target_ || !frame.srv) {
       if (error_detail) *error_detail = "CPU-transfer presentation resources are unavailable";
       return PresentOutcome::kFailed;
     }
 
-    update_vertices();
+    update_vertices(frame);
     context_->ClearRenderTargetView(render_target_.Get(), desktop_theme::kCanvasClear.data());
 
     // Use physical pixel dimensions so the viewport matches the actual DXGI
@@ -1455,7 +1502,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     context_->VSSetShader(vertex_shader_.Get(), nullptr, 0);
     context_->PSSetShader(pixel_shader_.Get(), nullptr, 0);
     context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
-    context_->PSSetShaderResources(0, 1, frame_srv_.GetAddressOf());
+    context_->PSSetShaderResources(0, 1, frame.srv.GetAddressOf());
     D3DCallTimer draw_timer(this, "Draw");
     context_->Draw(6, 0);
     draw_timer.finish();
@@ -1478,8 +1525,8 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   ComPtr<ID3D11InputLayout> input_layout_;
   ComPtr<ID3D11SamplerState> sampler_;
   ComPtr<ID3D11Buffer> vertex_buffer_;
-  ComPtr<ID3D11Texture2D> frame_texture_;
-  ComPtr<ID3D11ShaderResourceView> frame_srv_;
+  CpuPicture cpu_frame_;
+  CpuPicture pending_cpu_frame_;
   ComPtr<ID3D11VideoDevice> video_device_;
   ComPtr<ID3D11VideoContext> video_context_;
   ComPtr<ID3D11VideoProcessorEnumerator> video_processor_enumerator_;
@@ -1487,12 +1534,12 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   std::vector<ComPtr<ID3D11VideoProcessorOutputView>> video_output_views_;
   ComPtr<ID3D11Texture2D> video_input_texture_;
   std::vector<ComPtr<ID3D11VideoProcessorInputView>> video_input_views_;
-  quint32 frame_width_ = 0;
-  quint32 frame_height_ = 0;
   quint32 video_source_width_ = 0;
   quint32 video_source_height_ = 0;
   QSize video_output_size_;
-  bool latest_frame_is_surface_ = false;
+  DirectFrameData retained_surface_;
+  std::uint64_t surface_redraws_ = 0;
+  bool redraw_pending_ = false;
   bool geometry_transaction_active_ = false;
   std::uint64_t swap_chain_resize_count_ = 0;
   QSize last_phys_size_;

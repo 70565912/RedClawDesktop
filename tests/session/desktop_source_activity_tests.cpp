@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "redclaw/session/session_module.h"
+#include "redclaw/protocol/video_codec_negotiation.h"
 
 namespace {
 
@@ -302,7 +303,89 @@ void test_resume_notification_timeout_arms_recovery() {
     require(!coordinator.tick(3000, 0).request_keyframe, "displayable IDR must end retries");
 }
 
+void test_codec_change_refreshes_a_settled_source_at_the_restart_deadline() {
+    using namespace redclaw::session;
+    using namespace redclaw::protocol;
+    DesktopSourceActivityTracker tracker({.static_quiet_ms = 500, .minimum_timeout_polls = 1});
+    tracker.on_capture_frame(10, 1, 1);
+    const auto pending = tracker.on_capture_timeout(510);
+    tracker.on_reference_submitted(1, 1, 510, 1);
+    tracker.on_displayable_ack(pending.snapshot.revision, 1);
+    require(tracker.snapshot().state == DesktopSourceActivityState::kStatic, "test starts on a settled desktop");
+
+    HostVideoCodecNegotiatorV1 negotiator(VideoCodecPreference::kAuto);
+    const HostVideoEncodeCapabilities host{.hevc_hardware_encoder_available = true};
+    const auto h264_revision = negotiator.snapshot().revision;
+    const auto mask = kVideoCodecMaskH264 | kVideoCodecMaskHevc;
+    negotiator.observe_peer(1, mask, mask);
+    const auto hevc = negotiator.snapshot();
+    const auto upgrade = running_video_codec_change_due_ms(NegotiatedVideoCodec::kH264,
+        h264_revision, hevc.revision, negotiator.select(host, hevc), 500, 2000);
+    require(upgrade == 2500, "late HEVC upgrade must wake at the encoder age deadline");
+    auto refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending && refresh.request_reference_frame,
+        "eligible HEVC upgrade requires one retained reference");
+    tracker.on_reference_submitted(2, 2, *upgrade, 2);
+    tracker.on_displayable_ack(refresh.snapshot.revision, 2);
+    require(!running_video_codec_change_due_ms(NegotiatedVideoCodec::kHevc, hevc.revision,
+        hevc.revision, negotiator.select(host, hevc), *upgrade, 2000),
+        "settled source needs no more encodes after the codec change");
+
+    negotiator.observe_peer(1, kVideoCodecMaskH264, kVideoCodecMaskH264);
+    const auto h264 = negotiator.snapshot();
+    require(running_video_codec_change_due_ms(NegotiatedVideoCodec::kHevc, hevc.revision,
+        h264.revision, negotiator.select(host, h264), *upgrade, 2000) == 0,
+        "withdrawal must be eligible immediately");
+    refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending && refresh.request_reference_frame,
+        "withdrawal requires one H.264 reference even without new capture");
+}
+
+void test_geometry_preserves_resume_retry_until_displayable() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    coordinator.set_playback_state(1, 1, true);
+    coordinator.set_playback_state(1, 2, false);
+    coordinator.on_geometry_request();
+    require(coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1000, 0)
+        .request_keyframe, "viewport before resume notice must preserve its initial request slot");
+    coordinator.on_geometry_request();
+    require(coordinator.tick(1500, 0).request_keyframe, "duplicate viewport cannot stop IDR retries");
+    coordinator.on_keyframe_submitted(7, 1501, 0);
+    coordinator.on_geometry_request();
+    require(coordinator.tick(3500, 0).request_keyframe, "capture-region request cannot stop displayable ACK retries");
+    require(coordinator.on_displayable_ack(7).state_changed, "geometry IDR can still complete recovery");
+    require(!coordinator.tick(6000, 0).request_keyframe, "displayable geometry IDR ends retries");
+}
+
+void test_stale_resume_and_ack_cannot_mutate_newer_recovery() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    const ControllerPlaybackIdentity old_resume{1, 2, false};
+    const ControllerPlaybackIdentity new_resume{1, 4, false};
+    coordinator.set_playback_state(1, 2, false);
+    coordinator.set_playback_state(1, 3, true);
+    coordinator.set_playback_state(1, 4, false);
+    require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1000, 0,
+        old_resume).request_keyframe, "queued stale resume cannot consume the new request slot");
+    require(coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1001, 0,
+        new_resume).request_keyframe, "the new resume retains its own request slot");
+    require(!coordinator.on_keyframe_submitted(10, 1002, 0, old_resume).state_changed,
+        "an old IDR submission cannot become the new reference");
+    require(coordinator.on_keyframe_submitted(11, 1003, 0, new_resume).state_changed,
+        "current IDR is accepted");
+    require(!coordinator.on_displayable_ack(11, ControllerPlaybackIdentity{2, 4, false}).state_changed,
+        "old session ACK is rejected even if frame ID and revision match");
+    require(!coordinator.on_displayable_ack(11, old_resume).state_changed,
+        "old revision ACK is rejected even if frame ID matches");
+    require(coordinator.on_displayable_ack(11, new_resume).state_changed,
+        "current displayable ACK completes recovery");
+}
+
 int main() {
+    test_codec_change_refreshes_a_settled_source_at_the_restart_deadline();
+    test_geometry_preserves_resume_retry_until_displayable();
+    test_stale_resume_and_ack_cannot_mutate_newer_recovery();
     test_playback_pause_suspends_and_restarts_one_recovery_generation();
     test_sparse_updates_preserve_predictive_chain();
     test_static_requires_healthy_timeouts_and_displayable_keyframe();

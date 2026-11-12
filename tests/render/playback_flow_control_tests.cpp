@@ -1,4 +1,7 @@
 #include "redclaw/render/playback_flow_control.h"
+#include "redclaw/protocol/hevc_access_unit.h"
+
+#include <array>
 
 #include <gtest/gtest.h>
 
@@ -154,6 +157,29 @@ TEST(DecodeAdapterChoice, UnknownPresentAdapterProbesNothing) {
     EXPECT_FALSE(choice.index.has_value());
     EXPECT_TRUE(probed.empty());
     EXPECT_EQ(choice.reason, "present_adapter_not_enumerated");
+}
+
+TEST(DecodeAdapterChoice, PresenterFallbackCannotAuthorizeHevcOnAnOtherwiseCapableGpu) {
+    std::vector<GpuAdapterCandidate> adapters{
+        adapter(0, "Fallback", 0x8086, 1),
+        adapter(1, "Other GPU", 0x10de, 0),
+    };
+    const auto fallback = choose_gpu_adapter(adapters);
+    ASSERT_TRUE(fallback.index);
+    const auto& presenter = adapters[*fallback.index];
+    std::vector<std::uint32_t> probed;
+    const auto probe = fake_probe({0, 1}, &probed);
+    EXPECT_FALSE(choose_decode_adapter(adapters, monitor_owned_presenter_luid(&presenter, presenter.luid),
+        "hevc", probe).index);
+    EXPECT_FALSE(choose_decode_adapter(adapters, monitor_owned_presenter_luid(nullptr, presenter.luid),
+        "hevc", probe).index);
+    EXPECT_TRUE(probed.empty());
+
+    adapters[0].owns_target_monitor = true;
+    EXPECT_EQ(monitor_owned_presenter_luid(&presenter, adapters[1].luid), 0U);
+    EXPECT_EQ(choose_decode_adapter(adapters, monitor_owned_presenter_luid(&presenter, presenter.luid),
+        "hevc", probe).index, 0U);
+    EXPECT_EQ(probed, (std::vector<std::uint32_t>{0}));
 }
 
 TEST(DecodeAdapterChoice, EmptyAdapterListAndMissingProbeDecodeNothing) {
@@ -361,6 +387,23 @@ TEST(DecoderHwBackendOrder, PinnedDecodeUsesOnlyThePresenterAdapter) {
 }
 
 }  // namespace
+
+TEST(PlaybackDecodeRecovery, HevcCraCannotSatisfyAnIdrBoundary) {
+    using redclaw::protocol::hevc_annex_b_contains_idr;
+    const std::array<std::uint8_t, 6> cra{0, 0, 1, 42, 1, 0x80};
+    const std::array<std::uint8_t, 6> idr_n_lp{0, 0, 1, 40, 1, 0x80};
+    const std::array<std::uint8_t, 13> idr_w_radl{0, 0, 0, 1, 64, 1, 0x80, 0, 0, 1, 38, 1, 0x80};
+    DecoderReferenceRecovery recovery;
+    recovery.invalidate();
+    EXPECT_FALSE(recovery.prepare(3, 640, 360, 1, hevc_annex_b_contains_idr(cra)));
+    EXPECT_TRUE(recovery.needs_idr());
+    EXPECT_FALSE(recovery.awaiting_output());
+    EXPECT_TRUE(hevc_annex_b_contains_idr(idr_n_lp));
+    ASSERT_TRUE(recovery.prepare(3, 640, 360, 1, hevc_annex_b_contains_idr(idr_w_radl)));
+    recovery.submitted(true);
+    EXPECT_FALSE(recovery.needs_idr());
+    EXPECT_TRUE(recovery.take_recovery_output());
+}
 
 TEST(PlaybackDecodeRecovery, BufferedIdrAcceptsDependenciesBeforeFirstOutput) {
     redclaw::render::DecoderReferenceRecovery recovery;

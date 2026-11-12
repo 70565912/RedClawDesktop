@@ -524,6 +524,34 @@ TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) 
     QCoreApplication::processEvents();
     ASSERT_FALSE(paused);
 
+    // Model a settled old Host: present once, release the caller's frame,
+    // then uncover without delivering an IDR or any other fresh frame.
+    QString error;
+    auto* device = renderer.canvas->d3d11_presentation_device(&error);
+    ASSERT_NE(device, nullptr) << error.toStdString();
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = 320;
+    desc.Height = 180;
+    desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_DECODER;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    ASSERT_TRUE(SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)));
+    redclaw::ui::DirectFrameData picture;
+    picture.frame_id = 27;
+    picture.width = desc.Width;
+    picture.height = desc.Height;
+    picture.d3d11_surface = std::make_shared<redclaw::render::D3D11DecodedSurface>();
+    picture.d3d11_surface->device = device;
+    picture.d3d11_surface->texture = texture.Get();
+    picture.d3d11_surface->dxgi_format = desc.Format;
+    const std::weak_ptr lease = picture.d3d11_surface;
+    ASSERT_EQ(renderer.canvas->present_frame(picture, &error), redclaw::ui::PresentOutcome::kPresented)
+        << error.toStdString();
+    picture.d3d11_surface.reset();
+    ASSERT_FALSE(lease.expired());
+
     const auto canvas = reinterpret_cast<HWND>(renderer.widget->internalWinId());
     RECT area{};
     POINT origin{};
@@ -551,9 +579,35 @@ TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) 
     poll_visibility();
     EXPECT_TRUE(paused);
     EXPECT_EQ(reason, "occluded");
+    const auto before = renderer.canvas->diagnostic_snapshot()["surface_redraws"].toInteger();
     ASSERT_TRUE(cover_width(width / 2));
     poll_visibility();
     EXPECT_FALSE(paused);
+    const auto after = renderer.canvas->diagnostic_snapshot();
+    EXPECT_EQ(after["retained_surface_frame_id"].toInteger(), 27);
+    EXPECT_GT(after["surface_redraws"].toInteger(), before);
+
+    const auto style = GetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 128, LWA_ALPHA));
+    ASSERT_TRUE(cover_width(width + 10));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 255, LWA_ALPHA));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    cover.hide();
+    ShowWindow(cover_hwnd, SW_HIDE);
+    poll_visibility();
+    EXPECT_FALSE(paused);
+
+    QImage replacement(64, 64, QImage::Format_RGB32);
+    replacement.fill(Qt::white);
+    ASSERT_EQ(renderer.canvas->present_image(replacement, &error), redclaw::ui::PresentOutcome::kPresented)
+        << error.toStdString();
+    EXPECT_TRUE(lease.expired());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["last_presented_surface"].toBool());
     renderer.canvas->set_playback_state_callback({});
 }
 

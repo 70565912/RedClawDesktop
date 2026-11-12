@@ -198,27 +198,39 @@ struct ControllerDecoderRecoveryUpdate {
     ControllerDecoderRecoverySnapshot snapshot {};
 };
 
+struct ControllerPlaybackIdentity {
+    std::uint64_t session = 0;
+    std::uint64_t revision = 0;
+    bool paused = false;
+    bool operator==(const ControllerPlaybackIdentity&) const = default;
+};
+
 class ControllerDecoderRecoveryCoordinator {
 public:
     explicit ControllerDecoderRecoveryCoordinator(
         ControllerDecoderRecoveryConfig config = {});
 
     void reset();
+    void on_geometry_request();
     void set_playback_state(std::uint64_t session, std::uint64_t revision, bool paused);
     ControllerDecoderRecoveryUpdate on_dependency_break(
         ControllerDecoderBreakReason reason,
         std::uint64_t frame_id,
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate on_keyframe_submitted(
         std::uint64_t frame_id,
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate on_displayable_ack(
-        std::uint64_t latest_displayable_keyframe_id);
+        std::uint64_t latest_displayable_keyframe_id,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate tick(
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     [[nodiscard]] bool should_accept_frame(bool keyframe) const;
     [[nodiscard]] ControllerDecoderRecoverySnapshot snapshot() const;
 
@@ -239,10 +251,9 @@ private:
     ControllerDecoderRecoveryConfig config_ {};
     mutable std::mutex mutex_;
     ControllerDecoderRecoverySnapshot snapshot_ {};
-    bool playback_paused_ = false;
+    ControllerPlaybackIdentity playback_;
     bool awaiting_resume_request_ = false;
     std::optional<std::uint64_t> resume_wait_started_ms_;
-    std::uint64_t playback_session_ = 0, playback_revision_ = 0;
 };
 
 enum class IncomingHandshakeDecision {

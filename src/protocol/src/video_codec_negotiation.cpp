@@ -1,6 +1,15 @@
 #include "redclaw/protocol/video_codec_negotiation.h"
+#include "redclaw/protocol/stream_control_protocol.h"
 
 namespace redclaw::protocol {
+
+void stamp_video_decode_capabilities(StreamControlMessageV1& message,
+    const PeerVideoDecodeCapabilities& report, std::string_view reason) {
+    message.video_codec_version = report.version;
+    message.video_decode_codecs = report.decode_mask;
+    message.video_hardware_decode_codecs = report.hardware_decode_mask;
+    message.video_codec_change_reason = reason;
+}
 
 std::optional<VideoCodecPreference> parse_video_codec_preference(std::string_view value) {
     if (value == "auto") return VideoCodecPreference::kAuto;
@@ -102,6 +111,17 @@ bool should_upgrade_running_encoder_to_hevc(
     return running_codec == NegotiatedVideoCodec::kH264
         && current_negotiation_revision != negotiation_revision_at_start
         && current_selection.codec == NegotiatedVideoCodec::kHevc;
+}
+
+std::optional<std::uint64_t> running_video_codec_change_due_ms(
+    NegotiatedVideoCodec running_codec, std::uint64_t negotiation_revision_at_start,
+    std::uint64_t current_negotiation_revision, const VideoCodecSelection& current_selection,
+    std::uint64_t started_at_ms, std::uint64_t minimum_upgrade_age_ms) noexcept {
+    if (running_codec == NegotiatedVideoCodec::kHevc
+        && current_selection.codec == NegotiatedVideoCodec::kH264) return 0;
+    if (should_upgrade_running_encoder_to_hevc(running_codec, negotiation_revision_at_start,
+            current_negotiation_revision, current_selection)) return started_at_ms + minimum_upgrade_age_ms;
+    return std::nullopt;
 }
 
 std::uint64_t controller_network_loss_total(
