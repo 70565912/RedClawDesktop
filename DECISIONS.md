@@ -138,6 +138,12 @@ A merge into `main` needs all of the following at the final head:
 
 Source: Ryan, 2026-11-12.
 
+## D12 — Keep the Host input recovery prompt modeless
+
+The ordinary-desktop recovery prompt runs on the Host thread that handles remote input. Use a fixed window with a client-area close button. System menus and caption interactions can hold that thread in a modal loop while the remote input needed to dismiss it waits. Keep the existing recovery trigger and foreground behavior so the user can switch away from an unresponsive window.
+
+The **关闭原窗口** action requires a click in the active prompt and addresses the original foreground window. The Host rechecks its identity and posts one normal Windows close request without waiting on the application. Process termination requires a separate product decision because it can close other windows or discard work.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).
