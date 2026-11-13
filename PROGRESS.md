@@ -137,6 +137,10 @@ D11 was recorded in `cdc01b3`; the previous review head `2748350` adjusted the v
 - Finding 2 accepted in [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback): the coverage poll does not detect non-layered `WS_EX_TRANSPARENT` windows that paint opaque rectangles as full covers. Coverage code is unchanged.
 - The VS2022 x64 Debug application build passed without publishing. The runtime options, stream-control protocol and desktop source activity CTest suites passed, including the new keyframe send identity regression. Live sessions were not exercised.
 
+### PR #10 capture-retry send exemption (M02-T03, 2026-11-13)
+
+- Manual `user_capture_retry` keyframe requests are exempt from the playback session/revision/pause send fence. The GUI no longer stamps or drops those requests when playback is unmapped, paused, or on a different session. Ordinary resume/recovery keyframe requests and receiver feedback stay fenced.
+
 ## Mainline
 
 - PR #4 (`eca4b31`) is merged: root `SPEC.md`, `PROGRESS.md`, `DECISIONS.md`, and the root `AGENTS.md` onboarding gate.

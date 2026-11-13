@@ -35,6 +35,21 @@ public:
             && (message.type != protocol::StreamControlMessageTypeV1::kKeyframeRequest || !state.paused);
     }
 
+    // Manual capture retry must reach the Host even when playback is paused,
+    // unmapped, or stamped with a different session or revision.
+    static bool should_consume_stale_playback_command(
+        const protocol::StreamControlMessageV1& message,
+        const helper::PlaybackStateSnapshot& state) {
+        if (message.type == protocol::StreamControlMessageTypeV1::kReceiverNetworkStats) {
+            return !matches_feedback(message, state);
+        }
+        if (message.type == protocol::StreamControlMessageTypeV1::kKeyframeRequest
+            && !message.capture_retry_requested) {
+            return !matches_feedback(message, state);
+        }
+        return false;
+    }
+
     static void stamp_playback_identity(protocol::StreamControlMessageV1& message,
                                         const helper::PlaybackStateSnapshot& state) {
         message.playback_feedback_version = 1;

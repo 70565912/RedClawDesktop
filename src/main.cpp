@@ -3504,10 +3504,10 @@ int run_runtime_mode(
         }
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendEncoded, message);
         if (options.role == RuntimeRole::kController
-            && (message.type == redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats
-                || message.type == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest)
-            && !PlaybackRuntime::matches_feedback(message, controller_playback.synchronize())) {
+            && PlaybackRuntime::should_consume_stale_playback_command(
+                message, controller_playback.synchronize())) {
             // Consume stale playback commands without sending or requeuing them.
+            // Manual capture-retry keyframe requests are exempt.
             if (consumed_stale != nullptr) *consumed_stale = true;
             return true;
         }

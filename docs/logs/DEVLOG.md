@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-13 — PR #10 capture-retry send exemption (M02-T03)
+
+- Manual capture-retry keyframe requests are exempt from the playback-identity send fence so a pre-frame or failed-capture retry still reaches the Host. See [PROGRESS](../../PROGRESS.md#pr-10-capture-retry-send-exemption-m02-t03-2026-11-13).
+
 ## 2026-11-13 — PR #10 keyframe send follow-up (M02-T03)
 
 - The reliable-channel send path now consumes stale or paused keyframe requests on first send and retry. D10 records opaque, non-layered `WS_EX_TRANSPARENT` windows as an accepted coverage limitation. See [PROGRESS](../../PROGRESS.md#pr-10-keyframe-send-follow-up-m02-t03-2026-11-13).
