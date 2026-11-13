@@ -31,16 +31,22 @@ public:
                                  const helper::PlaybackStateSnapshot& state) {
         return state.valid && message.playback_feedback_version == 1
             && message.playback_session == state.session && message.playback_revision == state.revision
-            && message.playback_paused == state.paused;
+            && message.playback_paused == state.paused
+            && (message.type != protocol::StreamControlMessageTypeV1::kKeyframeRequest || !state.paused);
+    }
+
+    static void stamp_playback_identity(protocol::StreamControlMessageV1& message,
+                                        const helper::PlaybackStateSnapshot& state) {
+        message.playback_feedback_version = 1;
+        message.playback_session = state.session;
+        message.playback_revision = state.revision;
+        message.playback_paused = state.paused;
     }
 
     void stamp_feedback(protocol::StreamControlMessageV1& message,
                         const helper::PlaybackStateSnapshot& state) {
         const auto current = synchronize();
-        message.playback_feedback_version = 1;
-        message.playback_session = state.session;
-        message.playback_revision = state.revision;
-        message.playback_paused = state.paused;
+        stamp_playback_identity(message, state);
         message.decode_sample_valid = helper::playback_output_is_current(state, current)
             && !state.resynchronizing && !current.resynchronizing
             && recovery_.snapshot().state == session::ControllerDecoderRecoveryState::kSynchronized;

@@ -42,6 +42,8 @@ Product version metadata is 0.1.12. The last published package remains the v0.1.
 
 The D10 amendment pauses decode as well as presentation and keeps the shared ring drained. Resume keeps the last presented picture visible while waiting for a fresh post-boundary IDR and worker-owned reference reset, with coalesced recovery and bounded-delay retries. This keeps a settled desktop visible even when an older Host has no new picture to send. Pause/resume intervals are excluded from overload and capable-Host decode-capacity assessment. HEVC has at most one conservative hardware trial after fallback. Display-adapter-only probing, audio, remote input and input authorization retain their existing contracts. Sender pause/throttle (4.4) remains deferred. Backend limits and the trial policy are recorded in [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback); [PR #10 acceptance checklist](docs/testing/hevc-bitrate-measurement.md#pr-10-playback-pause-acceptance-checklist) tracks the unrun device checks.
 
+Accepted limits of the D3D11 coverage poll: shaped windows with holes can overcount coverage, and non-opaque, color-keyed, or per-pixel-alpha layered covers can undercount it. A non-layered `WS_EX_TRANSPARENT` window that still paints an opaque rectangle is not detected as a full cover.
+
 ## Acceptance already defined in the repo
 
 This list points at existing gates. It does not create new ones.

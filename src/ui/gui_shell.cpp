@@ -8,6 +8,7 @@
 #endif
 
 #if defined(REDCLAW_ENABLE_QT_GUI)
+#include "runtime/controller_playback_runtime.h"
 #include "ui/file_transfer_panel.h"
 #include "ui/transfer_coordinator.h"
 #include "ui/workspace_control_server.h"
@@ -2564,6 +2565,13 @@ bool launch_gui_shell(
     request.capture_status_version = 1;
     request.capture_retry_requested = true;
     request.payload = "user_capture_retry";
+#if defined(_WIN32)
+    const auto playback = direct_frame_pipe_server.playback_state();
+#else
+    const redclaw::helper::PlaybackStateSnapshot playback;
+#endif
+    if (!playback.valid || playback.paused) return;
+    redclaw::runtime::ControllerPlaybackRuntime::stamp_playback_identity(request, playback);
     QString error;
     if (!controller.send_control_message(request, &error)) {
       append_log(QString("Capture retry failed: %1").arg(error));

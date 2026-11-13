@@ -3464,7 +3464,7 @@ int run_runtime_mode(
     });
 
     auto send_control_message = [&](redclaw::protocol::StreamControlMessageV1 message,
-                                    std::string* error_detail) {
+                                    std::string* error_detail, bool* consumed_stale = nullptr) {
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendBegin, message);
         std::lock_guard<std::mutex> envelope_lock(stream_control_envelope_mutex);
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendLocked, message);
@@ -3504,9 +3504,11 @@ int run_runtime_mode(
         }
         input_qa_receipts.command(redclaw::runtime::InputQaStage::kSendEncoded, message);
         if (options.role == RuntimeRole::kController
-            && message.type == redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats
+            && (message.type == redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats
+                || message.type == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest)
             && !PlaybackRuntime::matches_feedback(message, controller_playback.synchronize())) {
-            // Consume stale feedback so neither the first attempt nor a retry requeues it.
+            // Consume stale playback commands without sending or requeuing them.
+            if (consumed_stale != nullptr) *consumed_stale = true;
             return true;
         }
         const bool sent = ice_wrapper.sendDataChannelBinaryMessage(
@@ -3890,8 +3892,10 @@ int run_runtime_mode(
         auto request = make_control_message(
             redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest);
         request.payload = std::string(reason.substr(0, 128));
+        PlaybackRuntime::stamp_playback_identity(request, playback);
         std::string send_error;
-        if (!send_control_message(request, &send_error)) {
+        bool consumed_stale = false;
+        if (!send_control_message(request, &send_error, &consumed_stale)) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             append_timeline(
                 redclaw::render::RuntimeStatusSeverity::kWarning,
@@ -3899,6 +3903,7 @@ int run_runtime_mode(
                 "keyframe request send failed: " + send_error);
             return false;
         }
+        if (consumed_stale) return true;
 
         std::lock_guard<std::mutex> lock(callback_mutex);
         ++stream_keyframe_request_sent_total;
@@ -7670,6 +7675,7 @@ int run_runtime_mode(
                 == redclaw::protocol::StreamControlMessageTypeV1::kKeyframeRequest) {
                 if (command.capture_retry_requested && command.capture_status_version == 1
                     && peer_capture_status_version.load() >= 1) {
+                    stamp_control_message(&command);
                     std::string retry_error;
                     (void)send_control_message(command, &retry_error);
                     continue;

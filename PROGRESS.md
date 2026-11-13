@@ -131,6 +131,12 @@ D11 was recorded in `cdc01b3`; the previous review head `2748350` adjusted the v
 - VS2022 x64 Debug built with `build.ps1 -SkipConfigure -ConfigurePreset ninja-x64-local -Target redclaw_desktop -NoPublish`. Focused `ctest --test-dir build/ninja-x64 -C Debug --output-on-failure` passed all 13 selected suites, including all 13 D3D11 UI cases. The four reported cases passed five consecutive repetitions (20/20). Evidence is in `build/reports/pr10-final-desktop.log`, `pr10-final-ctest.log` and `pr10-final-d3d11-repeat.log`.
 - The encoder tests cover restart classification, including a failed reopen and a stopped encoder. Hardware reopen fault injection, live feedback retry, mixed-version/device acceptance and the laptop rerun remain open. The existing D10 and D11 decisions apply.
 
+### PR #10 keyframe send follow-up (M02-T03, 2026-11-13)
+
+- Finding 1 fixed in this commit: first sends and retries consume keyframe requests whose playback session or revision has changed or whose playback is paused. Consumed requests are neither sent nor requeued.
+- Finding 2 accepted in [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback): the coverage poll does not detect non-layered `WS_EX_TRANSPARENT` windows that paint opaque rectangles as full covers. Coverage code is unchanged.
+- The VS2022 x64 Debug application build passed without publishing. The runtime options, stream-control protocol and desktop source activity CTest suites passed, including the new keyframe send identity regression. Live sessions were not exercised.
+
 ## Mainline
 
 - PR #4 (`eca4b31`) is merged: root `SPEC.md`, `PROGRESS.md`, `DECISIONS.md`, and the root `AGENTS.md` onboarding gate.

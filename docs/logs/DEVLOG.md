@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-13 — PR #10 keyframe send follow-up (M02-T03)
+
+- The reliable-channel send path now consumes stale or paused keyframe requests on first send and retry. D10 records opaque, non-layered `WS_EX_TRANSPARENT` windows as an accepted coverage limitation. See [PROGRESS](../../PROGRESS.md#pr-10-keyframe-send-follow-up-m02-t03-2026-11-13).
+
 ## 2026-11-12 — PR #10 final review fixes on `efb8950` (M02-T03)
 
 - D3D11 rebinds output and redraws the retained CPU picture after native recreation. Coverage distinguishes unavailable parent geometry from a valid clipped area and includes opaque click-through layered windows. The four affected fixtures wait for a mapped, active topmost canvas. The regressions cover zero-frame CPU redraw and layered opacity and color-key behavior.
