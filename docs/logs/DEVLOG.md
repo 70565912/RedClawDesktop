@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-11-09 — Keep the Host recovery prompt responsive (M05-T03)
+
+- Replace the native caption and system menu with a fixed prompt and a client-area close button. This keeps Windows menu and caption loops off the Host runtime thread while it drains input. The existing foreground activation, detector and eligibility rules still apply. See the [recovery contract](../architecture/ordinary-desktop-remote-input-v1.md#bounded-ordinary-window-recovery) and [verification status](../../PROGRESS.md#2026-11-09--host-input-recovery-prompt-m05-t03).
+- Add a separate **关闭原窗口** button. The authorized click posts one asynchronous close request to the tracked window and reports observed closure or failure. A normal target, a second window in the same process and a target that ignored `WM_CLOSE` were checked with a local Win32 probe. Dual-machine adapter-properties acceptance is pending.
+
 ## 2026-11-13 — PR #10 capture-retry send exemption (M02-T03)
 
 - Manual capture-retry keyframe requests are exempt from the playback-identity send fence so a pre-frame or failed-capture retry still reaches the Host. See [PROGRESS](../../PROGRESS.md#pr-10-capture-retry-send-exemption-m02-t03-2026-11-13).
