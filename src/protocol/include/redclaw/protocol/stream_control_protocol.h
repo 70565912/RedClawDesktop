@@ -183,6 +183,17 @@ struct StreamControlMessageV1 {
     // Optional system-audio capability. Zero means an older peer.
     std::uint32_t audio_version = 0;
     bool audio_playback_requested = false;
+    // Optional video codec capability. Zero means an older, H.264-only peer.
+    std::uint32_t video_codec_version = 0;
+    std::uint32_t video_decode_codecs = 0;
+    std::uint32_t video_hardware_decode_codecs = 0;
+    std::string video_codec_change_reason;
+    // Optional feedback validity v1; absent peers keep legacy assessment.
+    std::uint32_t playback_feedback_version = 0;
+    bool playback_paused = 0;
+    std::uint64_t playback_revision = 0;
+    std::uint64_t playback_session = 0;
+    bool decode_sample_valid = 0;
     std::optional<WorkspaceControlV1> workspace;
     // 0 unspecified, 1 capturing, 2 recovering, 3 paused. Future values ignored.
     std::uint32_t capture_status = 0;
@@ -242,6 +253,18 @@ struct StreamControlMessageV1 {
     std::uint32_t content_rect_width = 0;
     std::uint32_t content_rect_height = 0;
 };
+
+// Capacity uses intervals between cumulative snapshots. Both ends must be
+// active and from one transition, otherwise pause discards leak into pressure.
+[[nodiscard]] inline bool decode_capacity_feedback_is_valid(
+    const StreamControlMessageV1& current, const StreamControlMessageV1& previous) noexcept {
+    if (current.playback_feedback_version == 0 && previous.playback_feedback_version == 0) return true;
+    return current.playback_feedback_version == 1 && previous.playback_feedback_version == 1
+        && current.decode_sample_valid && previous.decode_sample_valid
+        && !current.playback_paused && !previous.playback_paused
+        && current.playback_session == previous.playback_session
+        && current.playback_revision == previous.playback_revision;
+}
 
 class StreamControlEpochGuardV1 final {
 public:

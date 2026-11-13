@@ -51,6 +51,13 @@ struct D3D11DecodedSurface {
 	std::uint32_t array_slice = 0;
 	std::uint32_t dxgi_format = 0;
 	std::shared_ptr<void> frame_lifetime;
+	// Cross-device handoff from D3D11SharedSurfaceBridge: a legacy shared
+	// handle to a keyed-mutex texture owned by the decode device. When set,
+	// `device` and `texture` are null; the presenter opens the handle on its
+	// own device and must AcquireSync(0) around every read.
+	void* shared_handle = nullptr;
+	std::uint64_t shared_generation = 0;
+	std::uint32_t shared_slot = 0;
 };
 #endif
 
@@ -269,7 +276,13 @@ public:
 		std::string* error_detail = nullptr) override;
 
 #if defined(_WIN32)
+	// Decode on `device` and output D3D11 surfaces (nullptr: FFmpeg's default
+	// adapter with CPU transfer).
 	void configure_d3d11_surface_output(ID3D11Device* device);
+	// false: keep decoding on the configured device but transfer frames to
+	// the CPU. Hardware decode stays on that device's adapter (D3D11VA only),
+	// otherwise software. Reopens the decoder on the next frame.
+	void set_d3d11_surface_output_enabled(bool enabled);
 #endif
 
 	void force_software_decode();
@@ -283,6 +296,38 @@ private:
 	class Impl;
 	std::unique_ptr<Impl> impl_;
 };
+
+// What this machine can decode. Hardware means a D3D11 video decoder profile
+// with NV12 output exists and a real device opens, not merely that FFmpeg
+// ships a decoder.
+//
+// H.264 and HEVC are probed only on the display adapter (the one that owns
+// the window's monitor). Another adapter is never probed. HEVC hardware is
+// reported only when that adapter can decode it; `hevc_decode_*` then names
+// the same adapter.
+struct LocalVideoDecodeProbe {
+	bool h264_decoder = false;
+	bool hevc_decoder = false;
+	bool h264_hardware = false;
+	bool hevc_hardware = false;
+	std::string detail;
+	// The display (presenting) adapter, formatted by describe_gpu_adapter, its
+	// LUID and the selection reason. This is where H.264 is probed and decoded.
+	std::string adapter;
+	std::string adapter_reason;
+	std::uint64_t present_adapter_luid = 0;
+	// The display adapter again when it can hardware-decode HEVC, otherwise
+	// empty/0. `hevc_decode_reason` is `display_adapter`,
+	// `display_adapter_no_hevc`, `present_adapter_unspecified`, or
+	// `present_adapter_not_enumerated`.
+	std::string hevc_decode_adapter;
+	std::uint64_t hevc_decode_adapter_luid = 0;
+	std::string hevc_decode_reason;
+};
+
+// Hardware capabilities require the explicit adapter the presenter uses.
+// An unspecified (0) or unenumerated LUID yields no hardware capabilities.
+[[nodiscard]] LocalVideoDecodeProbe probe_local_video_decode_support(std::uint64_t present_adapter_luid = 0);
 
 [[nodiscard]] bool should_fallback_to_software_decode(
 	bool using_hardware_decode,

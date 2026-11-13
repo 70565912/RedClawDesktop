@@ -8,6 +8,7 @@
 #include "ui/connection_overlay.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QMainWindow>
+#include <atomic>
 #include "ui/playback_window_geometry_controller.h"
 #include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_control_hint_overlay.h"
@@ -41,6 +42,32 @@
 #include <chrono>
 #include <thread>
 #include <QUuid>
+
+namespace {
+
+void show_playback_test_window(QWidget& window, QWidget& canvas) {
+    window.move(window.screen()->availableGeometry().center() - window.rect().center());
+    window.show();
+    canvas.show();
+    window.raise();
+}
+
+template <class Ready>
+bool wait_for_visible_playback(QWidget& window, QWidget& canvas, Ready ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        QCoreApplication::processEvents();
+        const auto hwnd = reinterpret_cast<HWND>(canvas.internalWinId());
+        RECT client{};
+        if (window.windowHandle() && window.windowHandle()->isExposed()
+            && hwnd && IsWindowVisible(hwnd) && GetClientRect(hwnd, &client) && !IsRectEmpty(&client)
+            && ready()) return true;
+        QThread::msleep(10);
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+}
+
+}  // namespace
 
 TEST(D3D11Playback, NativeEmptyBackgroundIsDarkBeforeFirstFrameAndAfterClear) {
     QWidget owner; owner.resize(640, 400);
@@ -347,7 +374,7 @@ TEST(D3D11Playback, NewFramesDuringDeferredGeometryUseTheActualOutputResource) {
     std::unique_ptr<QWidget> owner(renderer.widget);
     owner->resize(640, 360); owner->show(); QCoreApplication::processEvents();
     QString error;
-    auto* device = renderer.canvas->d3d11_decode_device(&error);
+    auto* device = renderer.canvas->d3d11_presentation_device(&error);
     ASSERT_NE(device, nullptr) << error.toStdString();
     D3D11_TEXTURE2D_DESC description{};
     description.Width = 640; description.Height = 368; description.ArraySize = 2;
@@ -404,6 +431,7 @@ TEST(D3D11Playback, NewFramesDuringDeferredGeometryUseTheActualOutputResource) {
 }
 
 TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDecoder) {
+    std::vector<bool> states;
     class RecreatingWindow : public QWidget {
     public:
         void recreate_native_window() {
@@ -412,16 +440,19 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
             show();
         }
     } window;
+    window.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
     auto* layout = new QVBoxLayout(&window);
     layout->setContentsMargins(0, 0, 0, 0);
     const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
     ASSERT_NE(renderer.widget, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
     layout->addWidget(renderer.widget);
     window.resize(640, 360);
-    window.show();
-    QCoreApplication::processEvents();
+    show_playback_test_window(window, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
     QString error;
-    auto* decoder_device = renderer.canvas->d3d11_decode_device(&error);
+    auto* decoder_device = renderer.canvas->d3d11_presentation_device(&error);
     ASSERT_NE(decoder_device, nullptr) << error.toStdString();
     D3D11_TEXTURE2D_DESC description{};
     description.Width = 640;
@@ -451,16 +482,185 @@ TEST(D3D11Playback, NativeWindowRecreationRebindsPresentationWithoutReplacingDec
     for (int i = 0; i < 6; ++i) {
         SCOPED_TRACE(i);
         const auto old_window = renderer.widget->winId();
+        const auto before_recreation = states.size();
+        const auto before_redraw = renderer.canvas->diagnostic_snapshot()["cpu_redraws"].toInteger();
         window.recreate_native_window();
-        QCoreApplication::processEvents();
+        window.raise();
+        ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, [&] {
+            if (!active()) return false;
+            return i != 0 || renderer.canvas->diagnostic_snapshot()["cpu_redraws"].toInteger() > before_redraw;
+        }));
         ASSERT_NE(renderer.widget->winId(), old_window);
+        if (i == 0) {
+            // Only the initial CPU image exists. The replacement HWND must
+            // receive that picture before any new frame is submitted.
+            EXPECT_TRUE(renderer.canvas->diagnostic_snapshot()["output_window_matches_canvas"].toBool());
+            ASSERT_GT(states.size(), before_recreation);
+            EXPECT_TRUE(states[before_recreation]);
+        }
         error.clear();
         const auto outcome = i % 2 == 0 ? renderer.canvas->present_frame(frame, &error)
                                        : renderer.canvas->present_image(image, &error);
         ASSERT_NE(outcome, redclaw::ui::PresentOutcome::kFailed) << error.toStdString();
         EXPECT_TRUE(renderer.canvas->diagnostic_snapshot()["output_window_matches_canvas"].toBool());
-        EXPECT_EQ(renderer.canvas->d3d11_decode_device(&error), decoder_device);
+        EXPECT_EQ(renderer.canvas->d3d11_presentation_device(&error), decoder_device);
     }
+}
+
+TEST(PlaybackVisibility, D3D11NativeWindowGapStaysPausedWithoutRecreatingOutput) {
+    std::vector<bool> states;
+    class RecreatingWindow : public QWidget {
+    public:
+        using QWidget::create;
+        using QWidget::destroy;
+    } window;
+    window.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
+    const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
+    ASSERT_NE(renderer.widget, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
+    window.resize(640, 360);
+    renderer.widget->resize(window.size());
+    show_playback_test_window(window, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
+    ASSERT_FALSE(states.empty());
+    ASSERT_FALSE(states.back());
+
+    window.destroy();
+    EXPECT_EQ(window.internalWinId(), WId(0));
+    EXPECT_EQ(renderer.widget->internalWinId(), WId(0));
+    EXPECT_TRUE(states.back());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["swap_chain_ready"].toBool());
+
+    // Let the 250 ms visibility timer fire with no native window or frames.
+    QEventLoop wait;
+    QTimer::singleShot(600, &wait, &QEventLoop::quit);
+    wait.exec();
+    EXPECT_EQ(window.internalWinId(), WId(0));
+    EXPECT_EQ(renderer.widget->internalWinId(), WId(0));
+    EXPECT_TRUE(states.back());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["swap_chain_ready"].toBool());
+
+    window.create();
+    window.show();
+    window.raise();
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, active));
+    EXPECT_NE(renderer.widget->internalWinId(), WId(0));
+    EXPECT_FALSE(states.back()); // resume without a decoded frame
+    renderer.canvas->set_playback_state_callback({});
+}
+
+TEST(PlaybackVisibility, D3D11FullCoveragePausesAndUncoverResumesWithoutFrames) {
+    bool paused = true;
+    QString reason;
+    QWidget window(nullptr, Qt::Window | Qt::WindowStaysOnTopHint);
+    window.resize(480, 270);
+    const auto renderer = redclaw::ui::try_create_d3d11_playback_renderer(&window);
+    ASSERT_NE(renderer.widget, nullptr);
+    renderer.widget->resize(window.size());
+    renderer.canvas->set_playback_state_callback([&](bool value, const QString& trigger) {
+        paused = value;
+        reason = trigger;
+    });
+    show_playback_test_window(window, *renderer.widget);
+    ASSERT_TRUE(wait_for_visible_playback(window, *renderer.widget, [&] { return !paused; }))
+        << reason.toStdString();
+    ASSERT_FALSE(paused);
+
+    // Model a settled old Host: present once, release the caller's frame,
+    // then uncover without delivering an IDR or any other fresh frame.
+    QString error;
+    auto* device = renderer.canvas->d3d11_presentation_device(&error);
+    ASSERT_NE(device, nullptr) << error.toStdString();
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = 320;
+    desc.Height = 180;
+    desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_DECODER;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    ASSERT_TRUE(SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)));
+    redclaw::ui::DirectFrameData picture;
+    picture.frame_id = 27;
+    picture.width = desc.Width;
+    picture.height = desc.Height;
+    picture.d3d11_surface = std::make_shared<redclaw::render::D3D11DecodedSurface>();
+    picture.d3d11_surface->device = device;
+    picture.d3d11_surface->texture = texture.Get();
+    picture.d3d11_surface->dxgi_format = desc.Format;
+    const std::weak_ptr lease = picture.d3d11_surface;
+    ASSERT_EQ(renderer.canvas->present_frame(picture, &error), redclaw::ui::PresentOutcome::kPresented)
+        << error.toStdString();
+    picture.d3d11_surface.reset();
+    ASSERT_FALSE(lease.expired());
+
+    const auto canvas = reinterpret_cast<HWND>(renderer.widget->internalWinId());
+    RECT area{};
+    POINT origin{};
+    ASSERT_TRUE(GetClientRect(canvas, &area));
+    ASSERT_TRUE(ClientToScreen(canvas, &origin));
+    const int width = area.right - area.left;
+    const int height = area.bottom - area.top;
+    ASSERT_GT(width, 0);
+    ASSERT_GT(height, 0);
+    QWidget cover(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    const auto cover_hwnd = reinterpret_cast<HWND>(cover.winId());
+    const auto cover_width = [&](int pixels) {
+        return SetWindowPos(cover_hwnd, HWND_TOPMOST, origin.x - 5, origin.y - 5,
+            pixels, height + 10, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    };
+    const auto poll_visibility = [] {
+        QEventLoop wait;
+        QTimer::singleShot(600, &wait, &QEventLoop::quit);
+        wait.exec();
+    };
+    ASSERT_TRUE(cover_width(width / 2));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(cover_width(width + 10));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    const auto before = renderer.canvas->diagnostic_snapshot()["surface_redraws"].toInteger();
+    ASSERT_TRUE(cover_width(width / 2));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    const auto after = renderer.canvas->diagnostic_snapshot();
+    EXPECT_EQ(after["retained_surface_frame_id"].toInteger(), 27);
+    EXPECT_GT(after["surface_redraws"].toInteger(), before);
+
+    const auto style = GetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 128, LWA_ALPHA));
+    ASSERT_TRUE(cover_width(width + 10));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 255, LWA_ALPHA));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    SetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    ASSERT_EQ(GetWindowLongPtrW(cover_hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT, WS_EX_TRANSPARENT);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, RGB(255, 0, 0), 255, LWA_ALPHA | LWA_COLORKEY));
+    poll_visibility();
+    EXPECT_FALSE(paused);
+    ASSERT_TRUE(SetLayeredWindowAttributes(cover_hwnd, 0, 255, LWA_ALPHA));
+    poll_visibility();
+    EXPECT_TRUE(paused);
+    EXPECT_EQ(reason, "occluded");
+    cover.hide();
+    ShowWindow(cover_hwnd, SW_HIDE);
+    poll_visibility();
+    EXPECT_FALSE(paused);
+
+    QImage replacement(64, 64, QImage::Format_RGB32);
+    replacement.fill(Qt::white);
+    ASSERT_EQ(renderer.canvas->present_image(replacement, &error), redclaw::ui::PresentOutcome::kPresented)
+        << error.toStdString();
+    EXPECT_TRUE(lease.expired());
+    EXPECT_FALSE(renderer.canvas->diagnostic_snapshot()["last_presented_surface"].toBool());
+    renderer.canvas->set_playback_state_callback({});
 }
 
 TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWatermarks) {
@@ -482,7 +682,7 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
     ASSERT_NE(writer.event, nullptr);
     auto* shared = static_cast<DirectFrameSharedMemoryHeader*>(writer.view);
     std::uint64_t sequence = 0;
-    auto publish = [&](std::uint64_t frame_id) {
+    auto publish = [&](std::uint64_t frame_id, std::uint32_t format = kDirectFrameFormatBgra, std::uint64_t geometry = 1) {
         const auto next = sequence + 1;
         const auto slot_index = static_cast<std::uint32_t>((next - 1) % kDirectFrameSharedMemorySlotCount);
         auto* slot = direct_frame_shared_slot_header(writer.view, slot_index);
@@ -492,8 +692,8 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
         slot->frame = {};
         std::memcpy(slot->frame.magic, kDirectFrameChannelMagic, sizeof(kDirectFrameChannelMagic));
         slot->frame.width = slot->frame.height = 2; slot->frame.row_pitch = 8;
-        slot->frame.format = kDirectFrameFormatBgra; slot->frame.frame_id = frame_id;
-        slot->frame.capture_region_revision = 1;
+        slot->frame.format = format; slot->frame.frame_id = frame_id;
+        slot->frame.capture_region_revision = geometry;
         slot->frame.content_rect_width = slot->frame.content_rect_height = 2;
         slot->frame.payload_size = 16;
         std::memset(direct_frame_shared_slot_payload(slot), 128, 16);
@@ -522,7 +722,82 @@ TEST(DirectFrameReceiver, SessionResetDiscardsRetainedFrameAndRestartsFrameWater
     EXPECT_EQ(receiver.stats_snapshot().playback_generation, generation);
     EXPECT_EQ(receiver.stats_snapshot().latest_displayable_frame_id, 1U);
     EXPECT_EQ(receiver.stats_snapshot().decode_failures, 0U);
+    std::atomic<unsigned> requests{0};
+    receiver.set_on_keyframe_request([&](QString reason, PlaybackStateSnapshot state) {
+        EXPECT_TRUE(reason.startsWith("presentation_resumed_"));
+        EXPECT_FALSE(state.paused);
+        ++requests;
+    });
+    receiver.set_playback_paused(true, "display_off");
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    const auto before_pause=receiver.stats_snapshot();
+    // Invalid encoded payloads must never reach FFmpeg while paused, even
+    // as codec/geometry metadata changes and the ring wraps repeatedly.
+    for (int i=0; i<50; ++i) publish(100+i, i%2 ? kDirectFrameFormatHevc : kDirectFrameFormatH264, 10+i);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (direct_frame_atomic_load_i64(&shared->reader_sequence)<static_cast<LONG64>(sequence)
+        && std::chrono::steady_clock::now()<deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->reader_sequence), static_cast<LONG64>(sequence));
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->reader_active_sequence), 0);
+    EXPECT_EQ(receiver.stats_snapshot().shared_snapshot_copies, before_pause.shared_snapshot_copies);
+    EXPECT_EQ(receiver.stats_snapshot().decode_failures, before_pause.decode_failures);
+    EXPECT_EQ(receiver.stats_snapshot().shared_dependency_gaps, before_pause.shared_dependency_gaps);
+    EXPECT_GE(receiver.stats_snapshot().pause_discarded_sequences, 50U);
+    EXPECT_EQ(direct_frame_atomic_load_i64(&shared->playback_hevc_progress), 0);
+    EXPECT_EQ(requests.load(), 0U);
+    EXPECT_FALSE(receiver.take_latest_frame(&stale, &count));
+    receiver.set_playback_paused(false, "display_on");
+    const auto resume_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (!requests.load() && std::chrono::steady_clock::now()<resume_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_EQ(requests.load(), 1U); // zero-frame resume, after the drain boundary
+    EXPECT_GE(receiver.playback_state().boundary, sequence);
+    EXPECT_TRUE(await_frame(200, generation));
+    receiver.set_playback_paused(true, "hidden");
+    receiver.set_playback_paused(false, "shown");
+    receiver.set_playback_paused(true, "hidden");
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    const auto requests_when_paused = requests.load();
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+    EXPECT_TRUE(receiver.playback_state().paused);
+    EXPECT_EQ(requests.load(), requests_when_paused); // queued limiter work canceled by final pause
+    const auto stopped_session=receiver.playback_state();
     receiver.stop();
+    ASSERT_TRUE(receiver.start(channel+"-next", &error)) << error.toStdString();
+    EXPECT_NE(receiver.playback_state().session, stopped_session.session);
+    EXPECT_FALSE(playback_output_is_current(stopped_session, receiver.playback_state()));
+    receiver.stop();
+}
+
+
+TEST(PlaybackVisibility, D3D11TransitionsWithoutDecodedFramesAndKeepsOtherReasonsClosed) {
+    std::vector<bool> states;
+    QWidget owner;
+    owner.setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint);
+    auto renderer=redclaw::ui::try_create_d3d11_playback_renderer(&owner);
+    ASSERT_NE(renderer.canvas, nullptr);
+    renderer.canvas->set_playback_state_callback([&](bool paused, const QString&) { states.push_back(paused); });
+    ASSERT_FALSE(states.empty()); EXPECT_TRUE(states.back());
+    owner.resize(640,360); renderer.widget->resize(owner.size());
+    show_playback_test_window(owner, *renderer.widget);
+    const auto active = [&] { return !states.empty() && !states.back(); };
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
+    ASSERT_FALSE(states.empty()); EXPECT_FALSE(states.back());
+    owner.showMinimized(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
+    owner.showNormal(); owner.raise();
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
+    EXPECT_FALSE(states.back());
+    owner.hide(); QCoreApplication::processEvents(); EXPECT_TRUE(states.back());
+    owner.show(); owner.raise();
+    ASSERT_TRUE(wait_for_visible_playback(owner, *renderer.widget, active));
+    EXPECT_FALSE(states.back());
+    const auto before_recreation = states.size();
+    QEvent recreated(QEvent::WinIdChange);
+    QCoreApplication::sendEvent(renderer.widget, &recreated);
+    ASSERT_GE(states.size(), before_recreation+2);
+    EXPECT_TRUE(states[before_recreation]);
+    EXPECT_FALSE(states.back()); // zero-frame native-window recovery
+    renderer.canvas->set_playback_state_callback({});
 }
 
 int main(int argc, char** argv) {

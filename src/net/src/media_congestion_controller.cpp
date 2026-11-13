@@ -12,6 +12,20 @@ std::uint32_t rate_kbps(double value) {
         static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
 }
 constexpr std::size_t kPacketBytes = 16 * 1024;
+// After a network-evidence drain the cap stays drained at least this long
+// before the demand floor is restored, so a genuinely slower path is not
+// re-flooded every tick.
+constexpr std::uint64_t kPacingFloorHoldMs = 2000;
+}
+
+std::uint32_t resolve_media_pacing_floor_kbps(
+    std::uint32_t encoder_target_kbps, std::uint32_t encoder_max_kbps) {
+    if (encoder_target_kbps == 0 && encoder_max_kbps == 0) return 0;
+    const std::uint64_t headroom = static_cast<std::uint64_t>(encoder_target_kbps)
+        * kMediaPacingFloorHeadroomPercent / 100;
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        std::max<std::uint64_t>(headroom, encoder_max_kbps),
+        std::numeric_limits<std::uint32_t>::max()));
 }
 
 MediaCongestionDecision MediaCongestionController::update(const MediaCongestionSample& sample) {
@@ -40,6 +54,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
     d.probe = d.backoff = d.reduce_fps = d.isolated_loss = false;
     if (pacing_bitrate_kbps_ == 0) {
         if (sample.encoder_target_bitrate_kbps == 0) return d;
+        d.cap_reason = "bootstrap_seed";
         // A bootstrap seed, never a measured capacity or a probing ceiling.
         pacing_bitrate_kbps_ = sample.encoder_target_bitrate_kbps;
         bootstrap_rate_kbps_ = pacing_bitrate_kbps_;
@@ -110,7 +125,7 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
             confirmed_rate_kbps_ = std::min(pacing_bitrate_kbps_, t.probe_delivery_bitrate_kbps);
             pacing_bitrate_kbps_ = confirmed_rate_kbps_;
             recovery_probe_.phase = MediaRecoveryProbePhase::kConfirmed;
-            d.reason = "media_probe_confirmed";
+            d.cap_reason = d.reason = "media_probe_confirmed";
         } else if (completed || expired || pressure || !sample.media_channel_open) {
             pacing_bitrate_kbps_ = recovery_probe_original_rate_;
             recovery_probe_.phase = MediaRecoveryProbePhase::kCancelled;
@@ -123,15 +138,18 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
 
     // Receiver arrival timestamps can expose forward-path queuing, but one
     // aggregated or clock-adjusting feedback batch is not enough to reduce the
-    // path rate. Require consecutive usable delivery samples, then apply at
-    // most one drain decision until the measured pressure has cleared.
-    const bool new_pressure_evidence = sample.local_backpressure
-        || (new_feedback && (confirmed_media_pressure || sustained_loss))
+    // path rate. Allow confirmed network pressure to escalate a local drain
+    // once even when the pressure episode has not cleared.
+    const bool new_network_evidence
+        = (new_feedback && (confirmed_media_pressure || sustained_loss))
         || (new_rtt && rtt_pressure_rounds_ >= 2);
+    const bool new_pressure_evidence = sample.local_backpressure || new_network_evidence;
     if (!pressure) {
-        pressure_backoff_latched_ = false;
+        pressure_backoff_ = PressureBackoff::kNone;
     }
-    if (pressure && new_pressure_evidence && !pressure_backoff_latched_
+    const bool can_back_off = pressure_backoff_ == PressureBackoff::kNone
+        || (pressure_backoff_ == PressureBackoff::kLocal && new_network_evidence);
+    if (pressure && new_pressure_evidence && can_back_off
         && (!probe_cancelled_for_pressure || sample.local_backpressure || sustained_loss)
         && (last_backoff_sample_ms_ == 0
             || sample.now_steady_ms >= last_backoff_sample_ms_ + (horizon + 999) / 1000)) {
@@ -148,13 +166,26 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
             : pacing_bitrate_kbps_;
         // Drain measured excess queue instead of applying a fixed percentage.
         const double drain_us = static_cast<double>(std::max<std::uint64_t>(queue_us, allowance));
-        pacing_bitrate_kbps_ = rate_kbps(delivered * static_cast<double>(horizon)
+        auto drained_kbps = rate_kbps(delivered * static_cast<double>(horizon)
             / (static_cast<double>(horizon) + drain_us));
+        d.cap_reason = "measured_congestion_drain";
+        if (new_network_evidence) {
+            last_network_drain_ms_ = sample.now_steady_ms;
+        } else if (sample.pacing_floor_kbps != 0 && drained_kbps < sample.pacing_floor_kbps) {
+            // Native buffer pressure alone cannot lower the cap below the
+            // demand floor: that buffer depth is itself sized from the cap, so
+            // a low cap would keep triggering it. Queue, loss or RTT evidence
+            // is required to go lower. FPS reaction below is unchanged.
+            drained_kbps = std::min(pacing_bitrate_kbps_,
+                std::max(drained_kbps, sample.pacing_floor_kbps));
+            d.cap_reason = "local_backpressure_floor_hold";
+        }
+        pacing_bitrate_kbps_ = drained_kbps;
         confirmed_rate_kbps_ = pacing_bitrate_kbps_;
         last_backoff_sample_ms_ = sample.now_steady_ms;
         next_probe_ms_ = sample.now_steady_ms + (horizon + queue_us + 999) / 1000;
         ++backoff_count_;
-        pressure_backoff_latched_ = true;
+        pressure_backoff_ = new_network_evidence ? PressureBackoff::kNetwork : PressureBackoff::kLocal;
         d.backoff = true;
         d.reduce_fps = !sample.demand.resource_limited;
         d.reason = "measured_congestion_drain";
@@ -171,6 +202,19 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
         // A backoff increases packet serialization time. It must not increase
         // tolerance while the very same network queue is still present.
         queue_allowance_us_ = std::max(frame_us, packet_us) + noise_us;
+    }
+
+    // Probes raise the cap only from non-application-limited delivery samples.
+    // At low bitrates most frames fit in one packet, so such samples can be
+    // absent indefinitely; the demand floor is the recovery path then.
+    if (sample.pacing_floor_kbps != 0 && !pressure
+        && pacing_bitrate_kbps_ < sample.pacing_floor_kbps
+        && recovery_probe_.phase != MediaRecoveryProbePhase::kProbing
+        && (last_network_drain_ms_ == 0
+            || sample.now_steady_ms >= last_network_drain_ms_ + kPacingFloorHoldMs)) {
+        pacing_bitrate_kbps_ = sample.pacing_floor_kbps;
+        confirmed_rate_kbps_ = std::max(confirmed_rate_kbps_, pacing_bitrate_kbps_);
+        d.cap_reason = "demand_floor_restored";
     }
 
     const bool recovery_needed = sample.recovery_budget_blocked && sample.rtt_fresh
@@ -214,11 +258,12 @@ MediaCongestionDecision MediaCongestionController::update_locked(const MediaCong
             recovery_probe_started_ms_ = sample.now_steady_ms;
             ++probe_count_;
             d.probe = true;
-            d.reason = "measured_headroom_probe";
+            d.cap_reason = d.reason = "measured_headroom_probe";
         }
     }
 
     d.pacing_bitrate_kbps = pacing_bitrate_kbps_;
+    d.pacing_floor_kbps = sample.pacing_floor_kbps;
     d.feedback_horizon_us = horizon;
     d.queue_allowance_us = allowance;
     d.receiver_frame_period_us = sample.demand.receiver_frame_period_us;
@@ -253,8 +298,8 @@ void MediaCongestionController::reset() {
     probe_count_ = backoff_count_ = 0;
     last_transport_feedback_sample_id_ = last_rtt_sample_id_ = 0;
     recovery_probe_ = {};
-    recovery_probe_started_ms_ = last_backoff_sample_ms_ = 0;
+    recovery_probe_started_ms_ = last_backoff_sample_ms_ = last_network_drain_ms_ = 0;
     recovery_probe_original_rate_ = 0;
-    pressure_backoff_latched_ = false;
+    pressure_backoff_ = PressureBackoff::kNone;
 }
 }  // namespace redclaw::net

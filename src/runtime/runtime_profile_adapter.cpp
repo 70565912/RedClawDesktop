@@ -94,6 +94,14 @@ bool apply_runtime_profile(const redclaw::helper::RuntimeProfileData& profile, R
     if (profile.stream_video_max_width.has_value()) {
         options->stream_video_max_width = profile.stream_video_max_width.value();
     }
+    if (profile.stream_video_codec.has_value()) {
+        const auto preference = redclaw::protocol::parse_video_codec_preference(profile.stream_video_codec.value());
+        if (!preference.has_value()) {
+            *error = "invalid runtime profile stream_video_codec (auto|h264|hevc): " + profile.stream_video_codec.value();
+            return false;
+        }
+        options->stream_video_codec = preference.value();
+    }
     if (profile.cli.has_value()) {
         options->force_cli = profile.cli.value();
     }

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -68,6 +69,7 @@ public:
         std::uint64_t rate_revision);
     DesktopSourceActivityUpdate on_capture_failure(std::uint64_t now_ms);
     DesktopSourceActivityUpdate tick(std::uint64_t now_ms);
+    DesktopSourceActivityUpdate on_keyframe_request();
     DesktopSourceActivityUpdate on_viewport_change(
         std::uint64_t now_ms,
         std::uint64_t stream_geometry_revision,
@@ -164,6 +166,7 @@ enum class ControllerDecoderBreakReason : std::uint32_t {
     kSharedSequenceGap = 1U << 7U,
     kSharedSequenceChanged = 1U << 8U,
     kDecodeFailure = 1U << 9U,
+    kPresentationResumed = 1U << 10U,
 };
 
 struct ControllerDecoderRecoveryConfig {
@@ -195,31 +198,47 @@ struct ControllerDecoderRecoveryUpdate {
     ControllerDecoderRecoverySnapshot snapshot {};
 };
 
+struct ControllerPlaybackIdentity {
+    std::uint64_t session = 0;
+    std::uint64_t revision = 0;
+    bool paused = false;
+    bool operator==(const ControllerPlaybackIdentity&) const = default;
+};
+
 class ControllerDecoderRecoveryCoordinator {
 public:
     explicit ControllerDecoderRecoveryCoordinator(
         ControllerDecoderRecoveryConfig config = {});
 
     void reset();
+    void on_geometry_request();
+    void set_playback_state(std::uint64_t session, std::uint64_t revision, bool paused);
     ControllerDecoderRecoveryUpdate on_dependency_break(
         ControllerDecoderBreakReason reason,
         std::uint64_t frame_id,
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate on_keyframe_submitted(
         std::uint64_t frame_id,
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate on_displayable_ack(
-        std::uint64_t latest_displayable_keyframe_id);
+        std::uint64_t latest_displayable_keyframe_id,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     ControllerDecoderRecoveryUpdate tick(
         std::uint64_t now_ms,
-        std::uint32_t srtt_ms);
+        std::uint32_t srtt_ms,
+        std::optional<ControllerPlaybackIdentity> expected = std::nullopt);
     [[nodiscard]] bool should_accept_frame(bool keyframe) const;
     [[nodiscard]] ControllerDecoderRecoverySnapshot snapshot() const;
 
 private:
     [[nodiscard]] std::uint64_t base_retry_delay_ms(std::uint32_t srtt_ms) const;
+    ControllerDecoderRecoveryUpdate begin_recovery_locked(
+        ControllerDecoderBreakReason reason, std::uint64_t frame_id,
+        std::uint64_t now_ms, std::uint32_t srtt_ms);
     ControllerDecoderRecoveryUpdate request_keyframe_locked(
         std::uint64_t now_ms,
         std::uint32_t srtt_ms,
@@ -232,6 +251,9 @@ private:
     ControllerDecoderRecoveryConfig config_ {};
     mutable std::mutex mutex_;
     ControllerDecoderRecoverySnapshot snapshot_ {};
+    ControllerPlaybackIdentity playback_;
+    bool awaiting_resume_request_ = false;
+    std::optional<std::uint64_t> resume_wait_started_ms_;
 };
 
 enum class IncomingHandshakeDecision {

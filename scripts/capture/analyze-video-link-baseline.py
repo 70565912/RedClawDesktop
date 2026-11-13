@@ -29,9 +29,15 @@ def send_attribution(rows):
     """Exclusive wait reasons and pacer accounting, successful frames only."""
     waits = ("token_wait", "in_flight_wait", "buffered_wait", "channel_wait")
     components = (*waits, "send_call", "transport_state", "callback")
-    sent = [r for r in rows if r["outcome"] == 1]
+    # Frames captured before the trace window opened carry capture time 0. Only
+    # such leading rows are skipped; a zero after real capture times stays corrupt.
+    leading_zero = 0
+    while leading_zero < len(rows) and rows[leading_zero].get("capture_ready_us", 1) == 0:
+        leading_zero += 1
+    sent = [r for r in rows[leading_zero:] if r["outcome"] == 1]
     result = {"denominator": "successfully sent traced frames of each kind",
               "outcomes": {str(i): sum(r["outcome"] == i for r in rows) for i in (1, 2, 3)},
+              "skipped_leading_zero_capture_frames": leading_zero,
               "kinds": {}}
     for name, keyframe in (("keyframe", 1), ("ordinary", 0)):
         selected = [r for r in sent if r["keyframe"] == keyframe]
@@ -235,6 +241,7 @@ def main():
                         "v1 capture copy weights use attempts minus timeouts only when capture failure delta is zero; v2 uses explicit successful capture count.",
                         "Static zero-frame windows have no per-frame latency quantiles.",
                         "Send attribution excludes failed/cancelled frames; outcome counts are retained.",
+                        "Leading frames captured before the trace window opened (capture_ready_us 0) are excluded from send attribution and counted in skipped_leading_zero_capture_frames per window; a zero capture time after real capture times is still rejected.",
                         "Wait reasons are exclusive in channel/in-flight/buffered/token priority order, not independent causal estimates.",
                         "Overshoot is included in reason wait time; it is not additive. Overshoot frame count is not timeout/wakeup count.",
                         "probe_wait_us is unpopulated in trace v1; zero does not demonstrate absence of probe effects.",

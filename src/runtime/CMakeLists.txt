@@ -7,7 +7,7 @@ add_library(redclaw_runtime_options STATIC
   runtime_usage.cpp
 )
 target_include_directories(redclaw_runtime_options PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(redclaw_runtime_options PRIVATE redclaw_helper redclaw_service)
+target_link_libraries(redclaw_runtime_options PUBLIC redclaw_protocol PRIVATE redclaw_helper redclaw_service)
 if(WIN32)
   target_link_libraries(redclaw_runtime_options PRIVATE ws2_32)
 endif()

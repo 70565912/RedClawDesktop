@@ -247,6 +247,90 @@ TEST(FfmpegNvencRecoveryIntegration, RequestProducesStandaloneIdr) {
     }
 }
 
+namespace {
+
+bool payload_contains_hevc_idr(const std::vector<std::uint8_t>& payload) {
+    for (std::size_t offset = 0; offset + 3 < payload.size(); ++offset) {
+        if (payload[offset] == 0 && payload[offset + 1] == 0 && payload[offset + 2] == 1) {
+            const auto nal_type = (payload[offset + 3] >> 1) & 0x3f;
+            if (nal_type == 19 || nal_type == 20) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Requested HEVC keyframes must be IDR pictures that a fresh decoder can show,
+// otherwise packet recovery waits for the natural GOP.
+void expect_hevc_recovery_produces_standalone_idr(bool allow_software) {
+    redclaw::capture::EncoderProfileRequest request;
+    request.width = 320;
+    request.height = 180;
+    request.fps = 30;
+    request.preferred_codec = redclaw::capture::EncoderCodec::kHevc;
+    redclaw::capture::EncoderConfigProfile profile;
+    std::string error;
+    ASSERT_TRUE(redclaw::capture::build_low_latency_encoder_profile(request, &profile, &error)) << error;
+    profile.gop_length_frames = 60;
+
+    redclaw::capture::EncoderBackendBridgeRequest bridge;
+    bridge.codec = redclaw::capture::EncoderCodec::kHevc;
+    bridge.preferred_backend = allow_software
+        ? redclaw::capture::EncoderBackendType::kSoftware
+        : redclaw::capture::EncoderBackendType::kAuto;
+    bridge.allow_software_fallback = allow_software;
+    redclaw::capture::EncoderExecutionSession encoder;
+    redclaw::capture::EncoderBackendBridgePlan plan;
+    if (!redclaw::capture::start_encoder_execution_from_bridge(profile, bridge, &encoder, &plan, &error)) {
+        GTEST_SKIP() << "HEVC encoder unavailable on this machine: " << error;
+    }
+    const auto diagnostics = encoder.diagnostics();
+    EXPECT_TRUE(diagnostics.forced_idr_option_applied) << diagnostics.encoder_name;
+
+    const auto captured = make_test_bgra_frame(request.width, request.height);
+    for (std::uint64_t index = 0; index < 5; ++index) {
+        const bool recovery = index == 2 || index == 4;
+        if (recovery) encoder.request_keyframe();
+        redclaw::capture::EncodedFramePacket packet;
+        ASSERT_TRUE(encoder.encode_bgra_frame(captured, 1000 + index * 34, &packet, &error)) << error;
+        ASSERT_FALSE(packet.payload.empty());
+        EXPECT_EQ(packet.codec, redclaw::capture::EncoderCodec::kHevc);
+        if (!recovery) {
+            EXPECT_EQ(packet.keyframe, index == 0);
+            continue;
+        }
+        ASSERT_TRUE(packet.keyframe);
+        ASSERT_TRUE(payload_contains_hevc_idr(packet.payload))
+            << "Requested recovery must contain HEVC IDR (NAL 19/20) from " << diagnostics.encoder_name;
+        redclaw::render::EncodedVideoFrame encoded;
+        encoded.codec = to_render_codec(packet.codec);
+        encoded.width = captured.width;
+        encoded.height = captured.height;
+        encoded.timestamp_ms = packet.timestamp_ms;
+        encoded.keyframe = packet.keyframe;
+        encoded.payload = std::move(packet.payload);
+        redclaw::render::FfmpegVideoFrameDecoder decoder;
+        redclaw::render::DecodedVideoFrame decoded;
+        ASSERT_TRUE(decoder.decode_frame(encoded, &decoded, &error)) << error;
+        EXPECT_EQ(decoded.width, captured.width);
+        EXPECT_EQ(decoded.height, captured.height);
+    }
+    encoder.stop();
+}
+
+}  // namespace
+
+TEST(FfmpegRoundtripIntegration, HevcSoftwareRecoveryProducesStandaloneIdr) {
+    expect_hevc_recovery_produces_standalone_idr(true);
+}
+
+// Developer-selected hardware check (NVENC/QSV HEVC); not part of the
+// portable CTest/release gate.
+TEST(FfmpegHevcHardwareRecoveryIntegration, RequestProducesStandaloneIdr) {
+    expect_hevc_recovery_produces_standalone_idr(false);
+}
+
 TEST(FfmpegRoundtripIntegration, DecoderCanAdvanceWithoutBgraOutput) {
     redclaw::capture::EncoderProfileRequest profile_request;
     profile_request.width = 320;
@@ -347,7 +431,7 @@ TEST(FfmpegRoundtripIntegration, TwoSlotBurstsPreservePredictiveChainWithoutExtr
         encoded.payload = packet.payload;
         ASSERT_TRUE(sequential_baseline.decode_frame(encoded, &expected, &error)) << error;
         auto* slot = redclaw::helper::direct_frame_shared_slot_header(mapping.data(),
-            static_cast<std::uint32_t>((sequence - 1) % 2));
+            static_cast<std::uint32_t>((sequence - 1) % redclaw::helper::kDirectFrameSharedMemorySlotCount));
         redclaw::helper::direct_frame_atomic_store_i64(&slot->committed_sequence, 0);
         slot->frame = {};
         slot->frame.width = profile.width;
@@ -389,7 +473,7 @@ TEST(FfmpegRoundtripIntegration, TwoSlotBurstsPreservePredictiveChainWithoutExtr
     EXPECT_EQ(predictive, 12U);
     EXPECT_EQ(decoded, 13U);
     EXPECT_EQ(catchups, 6U);
-    EXPECT_EQ(header->slot_count, 2U);
+    EXPECT_EQ(header->slot_count, redclaw::helper::kDirectFrameSharedMemorySlotCount);
     EXPECT_EQ(old_latest_only_gaps, 6U);
     EXPECT_EQ(dependency_gaps, 0U);
     RecordProperty("dependency_catchups", catchups);

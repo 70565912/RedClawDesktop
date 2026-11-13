@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "redclaw/session/session_module.h"
+#include "redclaw/protocol/video_codec_negotiation.h"
 
 namespace {
 
@@ -88,6 +89,36 @@ void test_static_viewport_change_and_bounded_retry() {
     update = tracker.mark_reference_retry(1600);
     require(update.request_reference_frame && update.snapshot.reference_retry_total == 1,
         "retry must request a bounded replacement reference");
+}
+
+void test_keyframe_request_reopens_settled_static_reference() {
+    using namespace redclaw::session;
+    DesktopSourceActivityTracker tracker({.static_quiet_ms = 500, .minimum_timeout_polls = 1});
+    tracker.on_capture_frame(10, 1, 1);
+    const auto pending = tracker.on_capture_timeout(510);
+    tracker.on_reference_submitted(1, 1, 510, 1);
+    tracker.on_displayable_ack(pending.snapshot.revision, 1);
+    const auto quiet = tracker.on_capture_timeout(520);
+    require(quiet.snapshot.state == DesktopSourceActivityState::kStatic
+        && !quiet.request_keyframe && !quiet.request_reference_frame,
+        "settled static desktop must stay quiet without a request");
+
+    const auto refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending
+        && refresh.state_changed && refresh.request_keyframe && refresh.request_reference_frame,
+        "static source must request an IDR from its retained capture");
+    require(refresh.snapshot.last_frame_ms == quiet.snapshot.last_frame_ms,
+        "the reference must be requested without new capture");
+    tracker.on_reference_submitted(2, 2, 530, 1);
+    const auto replacement = tracker.on_keyframe_request();
+    require(replacement.request_reference_frame && replacement.snapshot.reference_keyframe_id == 0
+        && replacement.snapshot.revision > refresh.snapshot.revision,
+        "a new request must supersede an older pending reference");
+    require(tracker.on_displayable_ack(refresh.snapshot.revision, 2).snapshot.state
+        == DesktopSourceActivityState::kStaticPending, "a stale ACK must not settle the source");
+    tracker.on_reference_submitted(3, 3, 540, 1);
+    require(tracker.on_displayable_ack(replacement.snapshot.revision, 3).snapshot.state
+        == DesktopSourceActivityState::kStatic, "the replacement IDR must settle the source");
 }
 
 void test_work_coordinator_coalesces_typed_reasons() {
@@ -216,11 +247,152 @@ void test_sparse_updates_preserve_predictive_chain() {
     require(tracker.on_capture_frame(61500, 1, 1).request_keyframe, "real recovery still requires IDR");
 }
 
+void test_playback_pause_suspends_and_restarts_one_recovery_generation() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    auto first=coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 1, 1000, 0);
+    require(first.request_keyframe, "initial dependency break requests IDR");
+    coordinator.on_keyframe_submitted(2, 1001, 0);
+    coordinator.set_playback_state(1, 1, true);
+    for (std::uint64_t now=2000; now<20000; now+=500) {
+        require(!coordinator.tick(now, 0).request_keyframe, "pause cancels runtime retries");
+        require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 3, now, 0).request_keyframe,
+            "pause suppresses gaps even when draining stalls");
+        coordinator.on_keyframe_submitted(4, now, 0);
+        require(coordinator.should_accept_frame(false), "network and shared ring continue while paused");
+    }
+    coordinator.set_playback_state(1, 2, false);
+    require(!coordinator.tick(21000, 0).request_keyframe, "receiver owns initial resume request");
+    auto resumed=coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 21000, 0);
+    require(resumed.request_keyframe && resumed.snapshot.generation == first.snapshot.generation+1,
+        "resume starts exactly one generation");
+    require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kDependencyFrame, 5, 21001, 0).request_keyframe,
+        "duplicate initial request coalesces");
+    require(!coordinator.tick(21499, 0).request_keyframe, "retry observes minimum interval");
+    require(coordinator.tick(21500, 0).request_keyframe, "failed delivery gets bounded-delay retry");
+    coordinator.on_keyframe_submitted(6, 21501, 0);
+    require(coordinator.should_accept_frame(false), "submitted IDR permits dependencies awaiting output");
+    coordinator.on_displayable_ack(6);
+    require(!coordinator.tick(30000, 0).request_keyframe, "displayable output stops retries");
+    coordinator.set_playback_state(1, 3, true);
+    coordinator.set_playback_state(2, 4, true);
+    coordinator.reset();
+    require(!coordinator.tick(40000, 0).request_keyframe, "reset cannot revive a paused session");
+}
+
+void test_resume_notification_timeout_arms_recovery() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    coordinator.set_playback_state(1, 1, true);
+    coordinator.set_playback_state(1, 2, false);
+    require(!coordinator.tick(1000, 0).request_keyframe, "give the coalescer the first opportunity");
+    coordinator.on_dependency_break(ControllerDecoderBreakReason::kSharedSequenceGap, 5, 1100, 0);
+    require(!coordinator.tick(1499, 0).request_keyframe, "honor the resume notification grace");
+    const auto first = coordinator.tick(1500, 0);
+    require(first.request_keyframe && first.snapshot.state == ControllerDecoderRecoveryState::kAwaitingIdr,
+        "a missing dedicated resume notification must still arm recovery");
+    require(!coordinator.on_dependency_break(
+        ControllerDecoderBreakReason::kPresentationResumed, 0, 1600, 0).request_keyframe,
+        "a delayed notification must coalesce into the existing recovery");
+    require(coordinator.tick(2000, 0).request_keyframe, "an unanswered request must retry");
+    coordinator.on_keyframe_submitted(6, 2001, 0);
+    require(!coordinator.on_dependency_break(
+        ControllerDecoderBreakReason::kPresentationResumed, 0, 2002, 0).request_keyframe,
+        "a delayed notification must preserve the submitted IDR");
+    coordinator.on_displayable_ack(6);
+    require(!coordinator.tick(3000, 0).request_keyframe, "displayable IDR must end retries");
+}
+
+void test_codec_change_refreshes_a_settled_source_at_the_restart_deadline() {
+    using namespace redclaw::session;
+    using namespace redclaw::protocol;
+    DesktopSourceActivityTracker tracker({.static_quiet_ms = 500, .minimum_timeout_polls = 1});
+    tracker.on_capture_frame(10, 1, 1);
+    const auto pending = tracker.on_capture_timeout(510);
+    tracker.on_reference_submitted(1, 1, 510, 1);
+    tracker.on_displayable_ack(pending.snapshot.revision, 1);
+    require(tracker.snapshot().state == DesktopSourceActivityState::kStatic, "test starts on a settled desktop");
+
+    HostVideoCodecNegotiatorV1 negotiator(VideoCodecPreference::kAuto);
+    const HostVideoEncodeCapabilities host{.hevc_hardware_encoder_available = true};
+    const auto h264_revision = negotiator.snapshot().revision;
+    const auto mask = kVideoCodecMaskH264 | kVideoCodecMaskHevc;
+    negotiator.observe_peer(1, mask, mask);
+    const auto hevc = negotiator.snapshot();
+    const auto upgrade = running_video_codec_change_due_ms(NegotiatedVideoCodec::kH264,
+        h264_revision, hevc.revision, negotiator.select(host, hevc), 500, 2000);
+    require(upgrade == 2500, "late HEVC upgrade must wake at the encoder age deadline");
+    auto refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending && refresh.request_reference_frame,
+        "eligible HEVC upgrade requires one retained reference");
+    tracker.on_reference_submitted(2, 2, *upgrade, 2);
+    tracker.on_displayable_ack(refresh.snapshot.revision, 2);
+    require(!running_video_codec_change_due_ms(NegotiatedVideoCodec::kHevc, hevc.revision,
+        hevc.revision, negotiator.select(host, hevc), *upgrade, 2000),
+        "settled source needs no more encodes after the codec change");
+
+    negotiator.observe_peer(1, kVideoCodecMaskH264, kVideoCodecMaskH264);
+    const auto h264 = negotiator.snapshot();
+    require(running_video_codec_change_due_ms(NegotiatedVideoCodec::kHevc, hevc.revision,
+        h264.revision, negotiator.select(host, h264), *upgrade, 2000) == 0,
+        "withdrawal must be eligible immediately");
+    refresh = tracker.on_keyframe_request();
+    require(refresh.snapshot.state == DesktopSourceActivityState::kStaticPending && refresh.request_reference_frame,
+        "withdrawal requires one H.264 reference even without new capture");
+}
+
+void test_geometry_preserves_resume_retry_until_displayable() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    coordinator.set_playback_state(1, 1, true);
+    coordinator.set_playback_state(1, 2, false);
+    coordinator.on_geometry_request();
+    require(coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1000, 0)
+        .request_keyframe, "viewport before resume notice must preserve its initial request slot");
+    coordinator.on_geometry_request();
+    require(coordinator.tick(1500, 0).request_keyframe, "duplicate viewport cannot stop IDR retries");
+    coordinator.on_keyframe_submitted(7, 1501, 0);
+    coordinator.on_geometry_request();
+    require(coordinator.tick(3500, 0).request_keyframe, "capture-region request cannot stop displayable ACK retries");
+    require(coordinator.on_displayable_ack(7).state_changed, "geometry IDR can still complete recovery");
+    require(!coordinator.tick(6000, 0).request_keyframe, "displayable geometry IDR ends retries");
+}
+
+void test_stale_resume_and_ack_cannot_mutate_newer_recovery() {
+    using namespace redclaw::session;
+    ControllerDecoderRecoveryCoordinator coordinator;
+    const ControllerPlaybackIdentity old_resume{1, 2, false};
+    const ControllerPlaybackIdentity new_resume{1, 4, false};
+    coordinator.set_playback_state(1, 2, false);
+    coordinator.set_playback_state(1, 3, true);
+    coordinator.set_playback_state(1, 4, false);
+    require(!coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1000, 0,
+        old_resume).request_keyframe, "queued stale resume cannot consume the new request slot");
+    require(coordinator.on_dependency_break(ControllerDecoderBreakReason::kPresentationResumed, 0, 1001, 0,
+        new_resume).request_keyframe, "the new resume retains its own request slot");
+    require(!coordinator.on_keyframe_submitted(10, 1002, 0, old_resume).state_changed,
+        "an old IDR submission cannot become the new reference");
+    require(coordinator.on_keyframe_submitted(11, 1003, 0, new_resume).state_changed,
+        "current IDR is accepted");
+    require(!coordinator.on_displayable_ack(11, ControllerPlaybackIdentity{2, 4, false}).state_changed,
+        "old session ACK is rejected even if frame ID and revision match");
+    require(!coordinator.on_displayable_ack(11, old_resume).state_changed,
+        "old revision ACK is rejected even if frame ID matches");
+    require(coordinator.on_displayable_ack(11, new_resume).state_changed,
+        "current displayable ACK completes recovery");
+}
+
 int main() {
+    test_codec_change_refreshes_a_settled_source_at_the_restart_deadline();
+    test_geometry_preserves_resume_retry_until_displayable();
+    test_stale_resume_and_ack_cannot_mutate_newer_recovery();
+    test_playback_pause_suspends_and_restarts_one_recovery_generation();
     test_sparse_updates_preserve_predictive_chain();
     test_static_requires_healthy_timeouts_and_displayable_keyframe();
     test_stall_is_unknown_and_frame_change_reactivates();
     test_static_viewport_change_and_bounded_retry();
+    test_keyframe_request_reopens_settled_static_reference();
+    test_resume_notification_timeout_arms_recovery();
     test_work_coordinator_coalesces_typed_reasons();
     test_decoder_recovery_coalesces_breaks_and_waits_for_displayable_idr();
     test_decoder_recovery_retries_invalidates_and_resets();

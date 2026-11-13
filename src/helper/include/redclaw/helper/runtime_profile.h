@@ -37,6 +37,8 @@ struct RuntimeProfileData {
   std::optional<bool> stream_require_capture;
   std::optional<std::uint32_t> stream_preview_width;
   std::optional<std::uint32_t> stream_video_max_width;
+  // Validated by the runtime adapter: auto | h264 | hevc.
+  std::optional<std::string> stream_video_codec;
   std::optional<bool> cli;
 };
 

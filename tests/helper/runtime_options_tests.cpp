@@ -1,7 +1,9 @@
 #include "runtime/runtime_options.h"
 #include <gtest/gtest.h>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <initializer_list>
 #include <string>
@@ -116,6 +118,43 @@ TEST(RuntimeOptions, CliOverridesProfileRegardlessOfArgumentPosition) {
     EXPECT_EQ(options.ice_udp_port, 55001U);
     EXPECT_EQ(options.stream_video_max_width, 1280U);
     EXPECT_TRUE(options.allow_remote_input);
+}
+
+TEST(RuntimeOptions, VideoCodecDefaultsToAutoAndCliForcesH264OverProfile) {
+    using redclaw::protocol::VideoCodecPreference;
+    RuntimeOptions defaults;
+    std::string error;
+    ASSERT_TRUE(parse({}, &defaults, &error)) << error;
+    EXPECT_EQ(defaults.stream_video_codec, VideoCodecPreference::kAuto);
+
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path()
+        / ("redclaw-runtime-codec-test-" + std::to_string(nonce) + ".conf");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    { std::ofstream file(path); file << "role=host\nstream_video_codec=hevc\n"; }
+    RuntimeOptions profile_only;
+    ASSERT_TRUE(parse({"--runtime-config", path.string()}, &profile_only, &error)) << error;
+    EXPECT_EQ(profile_only.stream_video_codec, VideoCodecPreference::kHevc);
+
+    RuntimeOptions forced;
+    ASSERT_TRUE(parse({"--stream-video-codec", "h264", "--runtime-config", path.string()}, &forced, &error)) << error;
+    EXPECT_EQ(forced.stream_video_codec, VideoCodecPreference::kH264);
+
+    RuntimeOptions invalid;
+    EXPECT_FALSE(parse({"--stream-video-codec", "h265"}, &invalid, &error));
+    EXPECT_NE(error.find("--stream-video-codec"), std::string::npos);
+    EXPECT_FALSE(parse({"--stream-video-codec"}, &invalid, &error));
+
+    RuntimeOptions luid;
+    ASSERT_TRUE(parse({"--present-adapter-luid", "18446744073709551615"}, &luid, &error)) << error;
+    EXPECT_EQ(luid.present_adapter_luid, std::numeric_limits<std::uint64_t>::max());
+    EXPECT_FALSE(parse({"--present-adapter-luid", "12x"}, &luid, &error));
+    EXPECT_FALSE(parse({"--present-adapter-luid", "18446744073709551616"}, &luid, &error));
+    EXPECT_FALSE(parse({"--present-adapter-luid"}, &luid, &error));
+
+    { std::ofstream file(path); file << "role=host\nstream_video_codec=vp9\n"; }
+    EXPECT_FALSE(parse({"--runtime-config", path.string()}, &invalid, &error));
+    EXPECT_NE(error.find("stream_video_codec"), std::string::npos);
 }
 
 TEST(RuntimeOptions, HelpDoesNotStartOrValidateARuntime) {

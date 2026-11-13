@@ -38,6 +38,25 @@ class SendAttributionTests(unittest.TestCase):
         self.assertIsNone(report["kinds"]["ordinary"]["duration_ms"]["pacer"]["p95"])
         self.assertIsNone(analysis.send_attribution([])["kinds"]["keyframe"]["sent_frame_ratio"])
 
+    def test_leading_frames_captured_before_the_window_are_skipped_and_counted(self):
+        early = sent_frame()
+        early.update(frame_id=0, capture_begin_us=0, capture_end_us=0, capture_ready_us=0)
+        later = sent_frame()
+        report = analysis.send_attribution([early, later])
+        self.assertEqual(report["skipped_leading_zero_capture_frames"], 1)
+        self.assertEqual(report["outcomes"]["1"], 2)
+        data = report["kinds"]["keyframe"]
+        self.assertEqual(data["frames"], 1)
+        self.assertEqual(data["duration_ms"]["age_last_send"]["mean"], 9)
+        self.assertEqual(analysis.send_attribution([later])["skipped_leading_zero_capture_frames"], 0)
+
+    def test_zero_capture_time_after_real_capture_times_is_still_corrupt(self):
+        later = sent_frame()
+        broken = sent_frame()
+        broken.update(frame_id=2, capture_ready_us=0)
+        with self.assertRaises(ValueError):
+            analysis.send_attribution([later, broken])
+
     def test_rejects_corrupt_accounting_and_incomplete_sent_frames(self):
         for field, value in (("wait_elapsed_us", 2999), ("finish_us", 8000),
                              ("sent_fragments", 0), ("send_call_us", 10000),

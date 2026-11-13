@@ -38,6 +38,7 @@ struct GuiAutoStartOptions {
   quint32 signal_timeout_seconds = 120;
   quint32 stream_preview_width = 160;
   quint32 stream_video_max_width = 0;
+  redclaw::protocol::VideoCodecPreference stream_video_codec = redclaw::protocol::VideoCodecPreference::kAuto;
   bool stream_qa_native_size = false;
   bool stream_smoke = false;
   bool stream_require_capture = false;

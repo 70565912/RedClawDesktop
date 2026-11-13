@@ -217,6 +217,15 @@ foreach ($scene in $Scenario) {
         }
     }
 }
+# The codec decision is logged once per encoder start, outside the per-window
+# tail, so codec A/B reports can be checked against what actually ran.
+$codecLines = foreach ($suffix in '.2','.1','') {
+    if (Test-Path -LiteralPath ($runtimeLog+$suffix)) {
+        Get-Content -LiteralPath ($runtimeLog+$suffix) |
+            Where-Object { $_ -match 'Runtime video (codec negotiated|codec renegotiation|encode capabilities)' }
+    }
+}
+$codecLines | Set-Content -LiteralPath (Join-Path $report 'host-video-codec.txt') -Encoding UTF8
 [pscustomobject]@{schema='redclaw.video-link-baseline.v1'; ok=$true; windows=$windows;
     scope='local Host metrics only; remote Client and visual quality evidence remain separate'} |
     ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $report 'result.json') -Encoding UTF8

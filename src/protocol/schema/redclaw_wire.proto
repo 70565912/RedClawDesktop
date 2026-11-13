@@ -298,6 +298,22 @@ message StreamControlMessageV1 {
   // Optional navigation command capability; absent means legacy revision requests.
   uint32 capture_region_command_version = 90;
   uint64 capture_region_request_id = 91;
+  // Optional video codec capability v1 on Hello/Capabilities. Zero means an
+  // older peer that only guarantees H.264. Masks: bit0 H.264, bit1 HEVC;
+  // unknown bits are ignored.
+  uint32 video_codec_version = 92;
+  uint32 video_decode_codecs = 93;
+  uint32 video_hardware_decode_codecs = 94;
+  // Optional token explaining why the decode masks changed mid-session, e.g.
+  // controller_hevc_decode_overload. Diagnostics only; receivers ignore it
+  // when empty, oversized or malformed.
+  string video_codec_change_reason = 95;
+  // Receiver feedback validity only; never a sender pause command.
+  uint32 playback_feedback_version = 96;
+  bool playback_paused = 97;
+  uint64 playback_revision = 98;
+  uint64 playback_session = 99;
+  bool decode_sample_valid = 100;
 }
 
 message WorkspaceControlV1 {

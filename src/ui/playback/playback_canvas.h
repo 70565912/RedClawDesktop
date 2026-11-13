@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QWidget>
 #include <cstdint>
+#include <functional>
 
 #if defined(_WIN32)
 struct ID3D11Device;
@@ -26,8 +27,23 @@ class PlaybackCanvas {
   virtual void set_geometry_transaction_active(bool) {}
   virtual void commit_geometry(std::uint64_t) {}
   [[nodiscard]] virtual std::uint64_t swap_chain_resize_count() const { return 0; }
+  // Warnings the backend wants in the session log (adapter choice, slow
+  // D3D calls). Invoked on the GUI thread.
+  virtual void set_diagnostic_log(std::function<void(const QString&)>) {}
+  // Immediately publishes the current state, then changes on the GUI thread.
+  // True pauses decoding too; the short reason/trigger scopes recovery.
+  // D3D11 includes power/occlusion, other canvases include hide/minimize.
+  virtual void set_playback_state_callback(std::function<void(bool, const QString&)>) {}
 #if defined(_WIN32)
-  virtual ID3D11Device* d3d11_decode_device(QString*) { return nullptr; }
+  // The presenter's own device. Decode never shares it; tests use it to
+  // build same-device surfaces.
+  virtual ID3D11Device* d3d11_presentation_device(QString*) { return nullptr; }
+  // LUID of the presenter's verified monitor owner, for pinned hardware
+  // decode. A device chosen only as a presentation fallback is insufficient.
+  virtual bool d3d11_presentation_adapter(std::uint64_t*, QString* detail) {
+    if (detail != nullptr) *detail = "non-D3D11 playback backend";
+    return false;
+  }
 #endif
 };
 

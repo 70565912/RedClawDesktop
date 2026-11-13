@@ -1,0 +1,81 @@
+# HEVC versus H.264 bitrate measurement
+
+Decision: [D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback). Goal: lower bitrate at comparable picture quality. This page is the procedure. It records no numbers. Nothing here has been run on Ryan's machines yet.
+
+## What the build does
+
+- Host HEVC target and floor = 70% of the H.264 interactive budget for the same pixels and FPS (`kHevcBitratePercentOfH264` in `src/capture/include/redclaw/capture/capture_module.h`). The 400 kbps absolute floor and the 1.2x max/target ratio are unchanged.
+- 70% is a planning value, not a measurement. It sits at the conservative end of the 25–40% savings usually quoted for HEVC Main over H.264 High at equal quality. Desktop content (text, flat UI) and the ultra-low-latency presets used here (no B-frames, no lookahead) can save less, so the value starts conservative and should only be lowered after this measurement.
+- Worked values from `test_hevc_budget_is_lower_than_h264_for_the_same_pixels`: 1920x1080 at 30 FPS is 4976 kbps for H.264 and 3483 kbps for HEVC. The interactive floor for 1680x1050 at 30 FPS is 2963 kbps for HEVC.
+- Because the rate controller is given the lower target, a wire bitrate near 70% of H.264 is expected by construction. **What the measurement decides is whether picture quality stays comparable at that bitrate**, plus the latency, CPU/GPU, and keyframe-size side effects.
+
+## Procedure
+
+Run on the same two machines, the same Host display geometry, the same network path, and the same scene for both codecs. Use Debug builds from this branch on both sides so that `Runtime video codec negotiated` lines exist.
+
+1. Start the Host and Controller with the H.264 rollback switch on the **Host**: `--stream-video-codec h264` (or profile key `stream_video_codec=h264`, or the GUI "Video codec: H.264 only (rollback)" selector). Confirm the Host log shows `Runtime video codec negotiated role=host codec=h264 reason=forced_h264_by_setting`.
+2. Run the existing Host baseline into a new directory:
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/capture/run-video-link-baseline.ps1 `
+     -RunDirectory <host-run-dir> -ContractFile <contract.json> -ReportDirectory build/reports/hevc-ab/h264
+   python scripts/capture/analyze-video-link-baseline.py build/reports/hevc-ab/h264
+   ```
+
+3. Restart the Host with `--stream-video-codec auto` (the default). Confirm `codec=hevc reason=auto_hevc_hardware_on_both_sides`. If the line says `codec=h264`, the `reason=` field explains why (`peer_no_video_codec_report`, `peer_no_hevc_decoder`, `peer_hevc_decode_not_hardware`, `host_no_hevc_hardware_encoder`, `host_hevc_encoder_open_failed`). Stop there and record it; that machine pair cannot run the A/B.
+4. Run the baseline again with the same contract file into `build/reports/hevc-ab/hevc` and analyze it.
+5. Compare:
+
+   ```powershell
+   python scripts/capture/compare-video-codec-baseline.py build/reports/hevc-ab/h264 build/reports/hevc-ab/hevc
+   ```
+
+   The comparator exits non-zero and lists problems when a report contains the wrong codec, a mid-run renegotiation, or a different contract. Otherwise it writes `codec-comparison.json` with per-scene medians and HEVC/H.264 ratios for wire kbps, keyframe and ordinary frame wire bytes, sent FPS, encode p95, frame-age p95, and Host CPU.
+6. Picture quality. The comparator does not judge it. For each scene, take Controller screenshots at the same moments in both runs (static text, scrolling text, moving window) and compare them side by side. Record whether text is equally legible and whether motion shows more blocking or smearing under HEVC.
+7. Repeat once on the remote (DHT/ICE) path if available.
+
+Keep generated reports local; they contain endpoint data. Record the summary (ratios, quality judgment, machine/GPU/driver names) in [PROGRESS.md](../../PROGRESS.md) and, if the 70% value changes, in D10.
+
+## Pass / adjust rules
+
+- Comparable quality and latency at about 0.70 wire kbps: keep 70%.
+- Visibly worse quality: raise `kHevcBitratePercentOfH264` (for example to 80%) and re-run.
+- Same quality with headroom: a lower value can be tried, one step at a time, with a re-run.
+- HEVC encode p95, frame-age p95, or Host CPU clearly worse than H.264: record it; the `h264` rollback stays available while it is investigated.
+
+## Automated checks that already run
+
+- `redclaw_video_codec_negotiation_tests`: selection rules, old-peer fallback, rollback, bounded wait, wire round-trip.
+- `redclaw_capture_encoder_low_latency_profile_tests`: HEVC budget below H.264 for the same pixels, 400 kbps floor kept.
+- `redclaw_capture_encoder_backend_bridge_tests`: automatic HEVC needs an HEVC hardware encoder and never selects libx265.
+- `FfmpegRoundtripIntegration.HevcSoftwareRecoveryProducesStandaloneIdr` (integration, libx265): a requested HEVC keyframe is an IDR (NAL 19/20) that a fresh decoder can show.
+- `FfmpegHevcHardwareRecoveryIntegration.RequestProducesStandaloneIdr`: the same check on the machine's HEVC hardware encoder. Excluded from CTest like the NVENC check; run it by hand on each machine:
+
+  ```powershell
+  build/vs2022-x64/tests/Debug/redclaw_ffmpeg_roundtrip_integration_tests.exe --gtest_filter=FfmpegHevcHardwareRecoveryIntegration.*
+  ```
+
+- `scripts/capture/test-compare-video-codec-baseline.py`: offline checks for the comparator.
+- `redclaw_adaptive_media_sender_tests` (`AdaptiveController.*Floor*`, `ApplicationLimited*`): the pacing cap cannot collapse below the encoder-derived floor on local buffer pressure, still drains below it on queue/loss/RTT evidence, and returns to it after the hold.
+- `scripts/capture/test-analyze-video-link-baseline.py`: includes leading zero-capture-time frames, which are skipped and counted.
+
+## Reading the Host logs
+
+- `Runtime video encode capabilities`: `compiled_hevc_*` means FFmpeg has that encoder name; `probed_hevc_*` reports whether a small encoder with forced IDR configured opened. Automatic selection requires an eligible hardware probe. A failed probe includes missing forced-IDR support as well as hardware or driver failures.
+- `Runtime stream adaptation stats` and `... decision`: `pacing_floor_kbps` is the lower bound derived from the encoder budget; `pacing_cap_reason` is why the cap last moved. A healthy HEVC run should show `pacing_bitrate_kbps` at or above `pacing_floor_kbps` except briefly after `measured_congestion_drain`.
+
+## PR #10 playback pause acceptance checklist
+
+Local follow-up to base `0c96a109`. The remote PR body is not edited by this local-only run; this section is its repository checklist. The task's HD 530 display-off observations (four reproductions, five overrun episodes in about 10 s; no bright-screen/minimize/hide gaps) are supplied baseline evidence, not a reproduction by this author. No measured performance improvement is asserted here.
+
+- [ ] On the HD 530 Controller, separately power off the display, hide, minimize and fully occlude the D3D11 canvas during HEVC. Check pause-discard counts advance, snapshot copies/decode/output stop after in-flight work, reader sequence follows the captured latest sequence, no slot stays claimed, and no pause-induced gap request or overload fallback occurs. Compare the same FPS/geometry, CPU/GPU and ring counters against the supplied failure baseline.
+- [ ] Start already minimized/off; toggle off/on while minimized; recreate the canvas HWND. Clear every pause reason before resume. Uncover a static desktop with no decoded frame delivery and verify the 250 ms occlusion timer recovers. A failed DXGI probe must rebuild output, never claim visibility.
+- [ ] Resume after more than six incoming AUs, with pending coalesced requests and runtime retries. Verify one initial `presentation_resumed_<trigger>` generation through the 500 ms limiter, followed by bounded-delay retries only as needed, and a new post-boundary IDR. Decoder reset runs on its worker, not the GUI thread. Buffered IDR submission permits following dependencies before output; a late output from an older revision is rejected.
+- [ ] Change codec, capture region and resolution during pause; rapidly toggle visibility and reconnect. Verify retained pre-resume IDRs and stale callbacks/ACKs are excluded, audio keeps playing, and input remains subject to its existing authorization.
+- [ ] New Controller/new Host: network received/reassembled totals continue, decoded counts do not include discarded frames, and optional validity v1 excludes paused/recovering/transition intervals from decode capacity. Confirm no pause-induced FPS reduction.
+- [ ] New Controller/old supported Host, both before and after rolling upgrade/reconnect: connection and IDR recovery remain usable. Uncover a settled desktop at the same viewport: the last presented picture must stay visible with no new IDR, then yield to the first fresh recovery picture after a capture change. Record the old Host's temporary FPS reduction (potentially 1 FPS), wake recovery duration, and codec. Do not call the optional extension a fix for an old Host's adaptation.
+- [ ] Old supported Controller/new Host, both roles and rolling upgrade/reconnect: optional fields default to legacy feedback, no sender pause can be latched, and common codec capabilities still select H.264 as appropriate. Same-version tests alone do not close these two mixed-binary checks.
+- [ ] Visible genuine HEVC overload still falls back after five clean-network ring-overrun episodes in 30 s. Preserve actual network-loss history across pause. After fallback, permit one trial only after at least 5 min and 120 s continuous visible, fresh, progressing, healthy playback. Pause, overrun, decode failure, recovery break, stale feedback/progress and software fallback must prevent/reset eligibility. Preserve forced-H.264 and display-adapter-only D10 probing.
+- [ ] Observe trial success only after actual HEVC recovery output and 30 s stable playback. An old Host staying H.264 records an attempt, never a successful trial. A second overload withdraws HEVC for the rest of the runtime; no further automatic advertisement occurs.
+
+Automated coverage is tracked in [PROGRESS](../../PROGRESS.md#2026-11-12--pause-controller-decode-while-presentation-is-paused-m02-t03). These device boxes remain unchecked in the local implementation run: RedClaw applications were not launched or replaced. D3D11 includes all four pause reasons; raster Qt/OpenGL include explicit hide/minimize handling only, with display-power/full-occlusion detection excluded. Item 4.4 sender pause/throttle remains deferred: a typed local session/revision/state/reason snapshot and one runtime integration point are the only hook. It has no wire sender command and cannot leave an old peer paused.

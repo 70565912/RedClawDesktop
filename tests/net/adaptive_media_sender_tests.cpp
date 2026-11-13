@@ -540,4 +540,174 @@ TEST(AdaptiveController, FailedProbeCancelsIncrementBeforeBaselineBackoff) {
     EXPECT_EQ(cancelled.pacing_bitrate_kbps, 8000U);
 }
 
+// HEVC at the measured live bitrate fits most frames in one packet, so
+// feedback is application-limited almost continuously: no delivery samples, no
+// probes. These tests model that feedback shape (target 2664, max 3196 kbps).
+MediaCongestionSample hevc_application_limited_sample(std::uint32_t floor_kbps) {
+    MediaCongestionSample s;
+    s.now_steady_ms = 1000;
+    s.encoder_target_bitrate_kbps = 2664;
+    s.pacing_floor_kbps = floor_kbps;
+    s.media_channel_open = s.rtt_fresh = true;
+    s.smoothed_rtt_ms = 10;
+    s.demand.target_fps = 30;
+    s.transport.feedback_fresh = true;
+    s.transport.application_limited = true;
+    s.transport.delivery_rate_valid = false;
+    s.transport.feedback_interval_us = s.transport.feedback_round_trip_us = 50000;
+    return s;
+}
+
+TEST(AdaptiveController, PacingFloorFollowsEncoderBudgetWithHeadroom) {
+    EXPECT_EQ(resolve_media_pacing_floor_kbps(0, 0), 0U);
+    EXPECT_EQ(resolve_media_pacing_floor_kbps(2664, 3196), 3330U);
+    EXPECT_EQ(resolve_media_pacing_floor_kbps(2664, 4000), 4000U);
+    EXPECT_EQ(resolve_media_pacing_floor_kbps(3806, 0), 4757U);
+}
+
+TEST(AdaptiveController, ApplicationLimitedBackpressureCollapsesCapWithoutFloor) {
+    MediaCongestionController controller;
+    auto s = hevc_application_limited_sample(0);
+    MediaCongestionDecision d;
+    for (unsigned i = 1; i <= 12; ++i) {
+        s.now_steady_ms += 500;
+        s.local_backpressure = true;
+        ++s.rtt_sample_id;
+        d = controller.update(s);
+        s.local_backpressure = false;
+        s.now_steady_ms += 500;
+        d = controller.update(s);
+    }
+    EXPECT_LT(d.pacing_bitrate_kbps, s.encoder_target_bitrate_kbps / 4);
+    for (unsigned i = 1; i <= 60; ++i) {
+        s.now_steady_ms += 500;
+        ++s.transport.feedback_sample_id;
+        d = controller.update(s);
+    }
+    EXPECT_LT(d.pacing_bitrate_kbps, s.encoder_target_bitrate_kbps / 4)
+        << "application-limited feedback cannot probe the collapsed cap back up";
+}
+
+TEST(AdaptiveController, ApplicationLimitedLocalBackpressureNeverDrainsBelowDemandFloor) {
+    MediaCongestionController controller;
+    const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);
+    auto s = hevc_application_limited_sample(floor_kbps);
+    MediaCongestionDecision d = controller.update(s);
+    EXPECT_GE(d.pacing_bitrate_kbps, floor_kbps);
+    bool held = false;
+    for (unsigned i = 1; i <= 40; ++i) {
+        s.now_steady_ms += 500;
+        s.local_backpressure = true;
+        ++s.transport.feedback_sample_id;
+        d = controller.update(s);
+        held |= d.cap_reason == "local_backpressure_floor_hold";
+        EXPECT_GE(d.pacing_bitrate_kbps, floor_kbps);
+        EXPECT_TRUE(d.pressure != MediaNetworkPressure::kStable);
+        s.local_backpressure = false;
+        s.now_steady_ms += 500;
+        d = controller.update(s);
+        EXPECT_GE(d.pacing_bitrate_kbps, floor_kbps);
+    }
+    EXPECT_TRUE(held);
+    EXPECT_EQ(d.pacing_floor_kbps, floor_kbps);
+    EXPECT_GE(d.in_flight_limit_bytes, 16384U);
+}
+
+TEST(AdaptiveController, NetworkCongestionStillDrainsBelowFloorAndFloorRestoresAfterHold) {
+    MediaCongestionController controller;
+    const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);
+    auto s = hevc_application_limited_sample(floor_kbps);
+    s.transport.application_limited = false;
+    s.transport.delivery_rate_valid = true;
+    s.transport.delivery_bitrate_kbps = floor_kbps;
+    s.transport.feedback_sample_id = 1;
+    for (unsigned i = 0; i < 8; ++i) {
+        s.now_steady_ms += 200;
+        ++s.transport.feedback_sample_id;
+        (void)controller.update(s);
+    }
+    s.transport.queue_delay_ms = 200;
+    s.transport.delivery_bitrate_kbps = floor_kbps / 2;
+    MediaCongestionDecision d;
+    for (unsigned i = 0; i < 3 && !d.backoff; ++i) {
+        s.now_steady_ms += 200;
+        ++s.transport.feedback_sample_id;
+        d = controller.update(s);
+    }
+    ASSERT_TRUE(d.backoff);
+    EXPECT_EQ(d.cap_reason, "measured_congestion_drain");
+    EXPECT_LT(d.pacing_bitrate_kbps, floor_kbps);
+    const auto drained = d.pacing_bitrate_kbps;
+    const auto drain_ms = s.now_steady_ms;
+
+    // Pressure clears but feedback becomes application-limited, so no probe
+    // can run. The cap stays drained during the hold, then returns to the floor.
+    s.transport.queue_delay_ms = 0;
+    s.transport.application_limited = true;
+    s.transport.delivery_rate_valid = false;
+    s.transport.delivery_bitrate_kbps = 0;
+    s.now_steady_ms = drain_ms + 500;
+    ++s.transport.feedback_sample_id;
+    d = controller.update(s);
+    EXPECT_EQ(d.pacing_bitrate_kbps, drained);
+    s.now_steady_ms = drain_ms + 2500;
+    ++s.transport.feedback_sample_id;
+    d = controller.update(s);
+    EXPECT_EQ(d.pacing_bitrate_kbps, floor_kbps);
+    EXPECT_EQ(d.cap_reason, "demand_floor_restored");
+}
+
+TEST(AdaptiveController, ConfirmedRttPressureEscalatesLatchedLocalBackpressure) {
+    MediaCongestionController controller;
+    const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);
+    auto sample = hevc_application_limited_sample(floor_kbps);
+    (void)controller.update(sample);
+    sample.local_backpressure = true;
+    sample.now_steady_ms += 500;
+    const auto local = controller.update(sample);
+    ASSERT_TRUE(local.backoff);
+    ASSERT_EQ(local.cap_reason, "local_backpressure_floor_hold");
+    EXPECT_EQ(local.pacing_bitrate_kbps, floor_kbps);
+    sample.now_steady_ms += 500;
+    EXPECT_FALSE(controller.update(sample).backoff);
+
+    sample.rtt_queue_delay_ms = 200;
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    EXPECT_FALSE(controller.update(sample).backoff);
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    const auto network = controller.update(sample);
+    EXPECT_TRUE(network.backoff);
+    EXPECT_EQ(network.cap_reason, "measured_congestion_drain");
+    EXPECT_LT(network.pacing_bitrate_kbps, floor_kbps);
+    sample.now_steady_ms += 500;
+    ++sample.rtt_sample_id;
+    EXPECT_FALSE(controller.update(sample).backoff);
+}
+
+TEST(AdaptiveController, DemandFloorDoesNotOverrideActiveNetworkPressure) {
+    MediaCongestionController controller;
+    const auto floor_kbps = resolve_media_pacing_floor_kbps(2664, 3196);
+    auto s = hevc_application_limited_sample(floor_kbps);
+    s.transport.application_limited = false;
+    s.transport.delivery_rate_valid = true;
+    s.transport.delivery_bitrate_kbps = floor_kbps;
+    for (unsigned i = 1; i <= 8; ++i) {
+        s.now_steady_ms += 200;
+        s.transport.feedback_sample_id = i;
+        (void)controller.update(s);
+    }
+    s.transport.queue_delay_ms = 400;
+    s.transport.delivery_bitrate_kbps = floor_kbps / 3;
+    MediaCongestionDecision d;
+    for (unsigned i = 0; i < 40; ++i) {
+        s.now_steady_ms += 200;
+        ++s.transport.feedback_sample_id;
+        d = controller.update(s);
+    }
+    EXPECT_LT(d.pacing_bitrate_kbps, floor_kbps);
+    EXPECT_NE(d.cap_reason, "demand_floor_restored");
+}
+
 }  // namespace

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "redclaw/protocol/video_codec_negotiation.h"
+
 namespace redclaw::runtime {
 #ifdef NDEBUG
 inline constexpr bool kWorkspaceControlEnabledByDefault = false;
@@ -60,6 +62,12 @@ struct RuntimeOptions {
     bool input_diagnostics = false;
     std::uint32_t stream_preview_width = 160;
     std::uint32_t stream_video_max_width = 0;
+    // auto prefers HEVC when both sides have it; h264 is the rollback switch.
+    redclaw::protocol::VideoCodecPreference stream_video_codec =
+        redclaw::protocol::VideoCodecPreference::kAuto;
+    // Adapter that owns the playback window. 0 leaves the adapter unspecified.
+    // HEVC advertisement requires an explicit matching adapter and decoder pin.
+    std::uint64_t present_adapter_luid = 0;
     std::string stream_frame_pipe;
     std::string stream_navigation_pipe;
     std::string log_dir;

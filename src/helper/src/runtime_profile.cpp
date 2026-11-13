@@ -142,6 +142,7 @@ bool load_runtime_profile_file(
       "stream_require_capture",
       "stream_preview_width",
       "stream_video_max_width",
+      "stream_video_codec",
       "cli",
   };
 
@@ -444,6 +445,10 @@ bool load_runtime_profile_file(
         return false;
       }
       profile->stream_video_max_width = parsed;
+      continue;
+    }
+    if (key == "stream_video_codec") {
+      profile->stream_video_codec = value;
       continue;
     }
     if (key == "cli") {

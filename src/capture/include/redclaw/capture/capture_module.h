@@ -76,6 +76,9 @@ struct EncoderBackendBridgeRequest {
 	EncoderBackendType preferred_backend = EncoderBackendType::kAuto;
 	EncoderBackendType excluded_hardware_backend = EncoderBackendType::kAuto;
 	bool allow_hardware_fallback = true;
+	// Automatic HEVC sets this false: CPU HEVC (libx265) is a diagnostic
+	// option only, so a hardware failure must surface and fall back to H.264.
+	bool allow_software_fallback = true;
 	bool allow_hardware_frame_input = true;
 	CaptureAdapterVendor capture_adapter_vendor = CaptureAdapterVendor::kUnknown;
 };
@@ -86,7 +89,22 @@ struct EncoderBackendCapabilities {
 	bool quicksync_available = false;
 	bool amf_available = false;
 	bool software_available = true;
+	// Encoder names present in this FFmpeg build. A name is not proof that the
+	// GPU/driver can open an HEVC session; the first real open decides.
+	bool hevc_nvenc_available = false;
+	bool hevc_quicksync_available = false;
+	bool hevc_amf_available = false;
+	bool hevc_software_available = false;
 };
+
+// HEVC budgets are this percentage of the H.264 budget for the same pixels and
+// nominal cadence. Unmeasured planning value; see DECISIONS.md D10 and
+// docs/testing/hevc-bitrate-measurement.md.
+inline constexpr std::uint32_t kHevcBitratePercentOfH264 = 70;
+
+[[nodiscard]] std::uint32_t scale_bitrate_for_codec(
+	std::uint32_t h264_bitrate_kbps,
+	EncoderCodec codec) noexcept;
 
 struct EncoderBackendBridgePlan {
 	EncoderBackendType selected_backend = EncoderBackendType::kSoftware;
@@ -106,7 +124,14 @@ enum class EncoderExecutionFailureCategory {
 	kOutputNotReady,
 	kEncodeFailed,
 	kOutputResourceLimit,
+	kForcedIdrUnavailable,
 };
+
+[[nodiscard]] constexpr bool encoder_execution_requires_restart(
+	EncoderExecutionFailureCategory failure, bool running) noexcept {
+	return !running || failure == EncoderExecutionFailureCategory::kEncoderInitFailed
+		|| failure == EncoderExecutionFailureCategory::kForcedIdrUnavailable;
+}
 
 enum class EncoderRateControlUpdateStatus {
 	kApplied,
@@ -209,6 +234,9 @@ struct EncoderExecutionDiagnostics {
 	bool initialized = false;
 	bool qsv_low_delay_brc = false;
 	bool qsv_low_delay_brc_verified = false;
+	// True when the backend accepted an option that turns forced keyframes
+	// into IDR pictures (NVENC verifies it; others are best effort).
+	bool forced_idr_option_applied = false;
 	std::uint32_t configured_fps = 0;
 	std::uint32_t configured_time_base_num = 0;
 	std::uint32_t configured_time_base_den = 0;
@@ -302,7 +330,8 @@ bool build_desktop_encoder_profile(
 [[nodiscard]] std::uint32_t resolve_interactive_desktop_bitrate_floor_kbps(
 	std::uint32_t width,
 	std::uint32_t height,
-	std::uint32_t fps);
+	std::uint32_t fps,
+	EncoderCodec codec = EncoderCodec::kH264);
 
 bool resolve_viewport_encode_dimensions(
 	std::uint32_t source_width,
@@ -317,6 +346,34 @@ bool resolve_viewport_encode_dimensions(
 bool detect_encoder_backend_capabilities(
 	EncoderBackendCapabilities* capabilities,
 	std::string* error_detail = nullptr);
+
+// Result of really opening one hardware HEVC encoder. `attempted` is false when
+// the encoder is not compiled in or is disabled, in which case `available` is
+// false and `detail` says why it was skipped.
+struct EncoderOpenProbe {
+	bool attempted = false;
+	bool available = false;
+	std::string detail;
+};
+
+struct HevcHardwareEncoderProbe {
+	EncoderOpenProbe nvenc;
+	EncoderOpenProbe quicksync;
+	EncoderOpenProbe amf;
+
+	[[nodiscard]] bool any_available() const noexcept {
+		return nvenc.available || quicksync.available || amf.available;
+	}
+};
+
+// Opens (and immediately closes) a small hardware HEVC encoder session for each
+// backend whose FFmpeg encoder name is present in `capabilities`. The name
+// check in detect_encoder_backend_capabilities proves only that FFmpeg was
+// built with the encoder, not that this GPU and driver can run it. Intended to
+// run once at Host startup; it does not change encoder selection.
+bool probe_hevc_hardware_encoders(
+	const EncoderBackendCapabilities& capabilities,
+	HevcHardwareEncoderProbe* probe);
 
 bool build_encoder_backend_bridge_plan(
 	const EncoderBackendBridgeRequest& request,

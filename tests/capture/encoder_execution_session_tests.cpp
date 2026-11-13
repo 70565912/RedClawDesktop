@@ -351,6 +351,20 @@ bool test_encoder_execution_accepts_resized_source_frame() {
     return ok;
 }
 
+bool test_encoder_execution_restart_after_encode_failure() {
+    using Failure = redclaw::capture::EncoderExecutionFailureCategory;
+    using redclaw::capture::encoder_execution_requires_restart;
+    bool ok = expect_true(encoder_execution_requires_restart(Failure::kEncoderInitFailed, true),
+        "an encoder reopen failure must restart the stream encoder");
+    ok = expect_true(encoder_execution_requires_restart(Failure::kEncodeFailed, false),
+        "a generic encode error must restart if the context is gone") && ok;
+    ok = expect_true(encoder_execution_requires_restart(Failure::kForcedIdrUnavailable, true),
+        "a failed forced IDR must restart the stream encoder") && ok;
+    ok = expect_true(!encoder_execution_requires_restart(Failure::kOutputNotReady, true),
+        "a running encoder with delayed output should keep its context") && ok;
+    return ok;
+}
+
 bool test_encoder_execution_bridge_falls_back_to_software() {
     const ScopedEnvironmentValue disable_nvenc("REDCLAW_DISABLE_NVENC", "1");
     const ScopedEnvironmentValue disable_quicksync("REDCLAW_DISABLE_QSV", "1");
@@ -404,6 +418,7 @@ int main() {
     bool ok = true;
     ok = test_encoder_execution_bridge_start_flow() && ok;
     ok = test_encoder_execution_accepts_resized_source_frame() && ok;
+    ok = test_encoder_execution_restart_after_encode_failure() && ok;
     ok = test_encoder_execution_bridge_falls_back_to_software() && ok;
     ok = test_encoder_execution_rejects_b_frames() && ok;
     ok = test_encoder_execution_reencodes_static_frame_as_requested_keyframe() && ok;

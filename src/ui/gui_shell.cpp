@@ -1976,6 +1976,14 @@ bool launch_gui_shell(
   stream_video_max_width->setValue(0);
   stream_video_max_width->setToolTip("0 keeps native capture width; lower values are a manual weak-network diagnostic cap.");
 
+  auto* stream_video_codec = new QComboBox(session_form_box);
+  stream_video_codec->addItem("Auto (HEVC when both sides support it)", QStringLiteral("auto"));
+  stream_video_codec->addItem("H.264 only (rollback)", QStringLiteral("h264"));
+  stream_video_codec->addItem("HEVC (diagnostic, may use CPU encoder)", QStringLiteral("hevc"));
+  stream_video_codec->setToolTip(
+      "Auto prefers HEVC only when the Host has a hardware HEVC encoder and the Controller has hardware HEVC decode; "
+      "otherwise H.264. H.264 only forces the previous codec on this side.");
+
   session_form->addRow("Role", role_combo);
   session_form->addRow("Transport", transport_combo);
   session_form->addRow("Target host", target_host);
@@ -1999,6 +2007,7 @@ bool launch_gui_shell(
   session_form->addRow("Remote diagnostics", allow_remote_diagnostics);
   session_form->addRow("Preview width", stream_preview_width);
   session_form->addRow("Video max width", stream_video_max_width);
+  session_form->addRow("Video codec", stream_video_codec);
 
   auto* action_row = new QHBoxLayout();
   auto* start_button = new QPushButton("Start Runtime", session_form_box);
@@ -2328,6 +2337,14 @@ bool launch_gui_shell(
   auto remote_input_state = redclaw::protocol::RemoteInputControlStateV1::kUnavailable;
   auto remote_input_reason = redclaw::protocol::RemoteInputStatusReasonV1::kNone;
   qint64 last_remote_input_metrics_log_ms = 0;
+#if defined(_WIN32)
+  DirectFramePipeServer direct_frame_pipe_server;
+  struct PlaybackCallbackScope final {
+    QPointer<QWidget> widget;
+    PlaybackCanvas* canvas;
+    ~PlaybackCallbackScope() { if (widget) canvas->set_playback_state_callback({}); }
+  } playback_callback_scope{playback_canvas_widget, playback_window_canvas};
+#endif
   auto send_displayable_stats = [&](bool force) {
     if (source_activity_revision == 0 || latest_displayable_frame_id == 0) {
       return false;
@@ -2344,6 +2361,14 @@ bool launch_gui_shell(
     stats.latest_displayable_frame_id = latest_displayable_frame_id;
     stats.latest_displayable_keyframe_id = latest_displayable_keyframe_id;
     stats.latest_presented_frame_id = latest_presented_frame_id;
+#if defined(_WIN32)
+    const auto playback = direct_frame_pipe_server.playback_state();
+    if (!playback.valid || playback.paused || playback.resynchronizing) return false;
+    stats.playback_feedback_version = 1;
+    stats.playback_session = playback.session;
+    stats.playback_revision = playback.revision;
+    stats.playback_paused = playback.paused;
+#endif
     stats.received_frames = receiver_decoded_frames;
     stats.reassembled_frames = receiver_decoded_frames;
     stats.decoded_frames = receiver_decoded_frames;
@@ -3366,7 +3391,7 @@ bool launch_gui_shell(
   QSize last_popup_target_size;
   bool playback_window_presented = false;
 #if defined(_WIN32)
-  DirectFramePipeServer direct_frame_pipe_server;
+
   DirectFramePipeServer navigation_frame_pipe_server;
   bool direct_frame_stream_enabled = false;
   bool navigation_frame_stream_enabled = false;
@@ -3450,7 +3475,8 @@ bool launch_gui_shell(
     receiver_rendered_frames = 0;
     last_reported_displayable_frame_id = 0;
   };
-  auto send_local_keyframe_request = [&](const QString& reason) {
+  auto send_local_keyframe_request = [&](const QString& reason,
+                                         const redclaw::helper::PlaybackStateSnapshot& playback) {
     if (role_combo->currentText() != "controller" || !controller.is_running()) {
       return;
     }
@@ -3459,6 +3485,10 @@ bool launch_gui_shell(
     request.session_epoch = "local";
     request.message_id = ++gui_control_message_id;
     request.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    if (!playback.valid || playback.paused) return;
+    request.playback_feedback_version = 1;
+    request.playback_session = playback.session;
+    request.playback_revision = playback.revision;
     request.payload = reason.left(128).toStdString();
     QString send_error;
     if (!controller.send_control_message(request, &send_error)) {
@@ -3893,6 +3923,10 @@ bool launch_gui_shell(
     const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
     const double window_seconds = (std::max)(0.001, static_cast<double>(now_ms - direct_frame_last_stats_log_ms) / 1000.0);
     const DirectFrameTransportStats transport = direct_frame_pipe_server.stats_snapshot();
+    append_log(QString("GUI playback pause telemetry discarded=%1 stale_outputs=%2 paused=%3 revision=%4")
+        .arg(transport.pause_discarded_sequences).arg(transport.stale_decoded_outputs)
+        .arg(direct_frame_pipe_server.playback_state().paused)
+        .arg(direct_frame_pipe_server.playback_state().revision));
     const quint64 writer_delta = delta(transport.writer_frames, direct_frame_last_transport_stats.writer_frames);
     const quint64 skipped_delta = delta(transport.skipped_sequences, direct_frame_last_transport_stats.skipped_sequences);
     const quint64 published_delta = delta(transport.published_frames, direct_frame_last_transport_stats.published_frames);
@@ -4084,6 +4118,37 @@ bool launch_gui_shell(
                 static_cast<double>(direct_frame_handler_max_us) / 1000.0,
                 'f',
                 2)));
+    log_line.append(
+        QString(" keyframe_requests_sent_delta=%1 keyframe_requests_coalesced_delta=%2 surface_bridge_busy_drops_delta=%3 surface_bridge_failures_total=%4 decode_adapter_luid=0x%5")
+            .arg(QString::number(delta(transport.keyframe_requests_sent, direct_frame_last_transport_stats.keyframe_requests_sent)))
+            .arg(QString::number(delta(transport.keyframe_requests_suppressed, direct_frame_last_transport_stats.keyframe_requests_suppressed)))
+            .arg(QString::number(delta(transport.surface_bridge_busy_drops, direct_frame_last_transport_stats.surface_bridge_busy_drops)))
+            .arg(QString::number(transport.surface_bridge_failures))
+            .arg(transport.decode_adapter_luid, 16, 16, QLatin1Char('0')));
+    log_line.append(
+        QString(" hevc_decode_adapter_luid=0x%1 decode_route=%2")
+            .arg(transport.hevc_decode_adapter_luid, 16, 16, QLatin1Char('0'))
+            .arg(transport.decode_route));
+    {
+      const QJsonObject canvas = playback_window_canvas->diagnostic_snapshot();
+      if (canvas.contains("presentation_state")) {
+        log_line.append(QString(" presentation_state=%1 presentation_skipped_total=%2 slow_d3d_calls_total=%3 slow_d3d_call_max_ms=%4")
+            .arg(canvas.value("presentation_state").toString())
+            .arg(canvas.value("presentation_skipped").toVariant().toULongLong())
+            .arg(canvas.value("slow_d3d_calls").toVariant().toULongLong())
+            .arg(QString::number(canvas.value("slow_d3d_call_max_us").toDouble() / 1000.0, 'f', 1)));
+      }
+    }
+    if (!transport.shared_texture_bind.isEmpty()) {
+      log_line.append(QString(" shared_texture_bind=%1").arg(transport.shared_texture_bind));
+    }
+    if (!transport.last_surface_bridge_error.isEmpty()) {
+      QString safe_bridge_error = transport.last_surface_bridge_error;
+      safe_bridge_error.replace(' ', '_');
+      safe_bridge_error.replace('\n', '_');
+      safe_bridge_error.replace('\r', '_');
+      log_line.append(QString(" last_surface_bridge_error=%1").arg(safe_bridge_error));
+    }
     if (!transport.last_decode_error.isEmpty()) {
       QString safe_decode_error = QString::fromStdString(
           redclaw::diag::redact_log_text(transport.last_decode_error.toStdString()));
@@ -5153,6 +5218,7 @@ bool launch_gui_shell(
       }
       args << "--stream-preview-width" << QString::number(stream_preview_width->value());
       args << "--stream-video-max-width" << QString::number(stream_video_max_width->value());
+      args << "--stream-video-codec" << stream_video_codec->currentData().toString();
     }
 
     if (!gui_auto_start.log_dir.isEmpty()) {
@@ -5172,14 +5238,48 @@ bool launch_gui_shell(
       const QString pipe_name = make_direct_frame_channel_name();
       QString pipe_error;
       QString decode_device_error;
-      ID3D11Device* decode_device = playback_window_canvas->d3d11_decode_device(&decode_device_error);
-      direct_frame_pipe_server.configure_d3d11_surface_output(decode_device);
-      if (decode_device != nullptr) {
-        append_log("D3D11 decoded-surface output enabled on the playback device.");
+      playback_window_canvas->set_diagnostic_log(&append_log);
+      std::uint64_t presenter_adapter_luid = 0;
+      const bool has_presentation_adapter =
+          playback_window_canvas->d3d11_presentation_adapter(&presenter_adapter_luid, &decode_device_error);
+      if (has_presentation_adapter) {
+        // HEVC is probed on this adapter only. The runtime gets the same LUID
+        // so the capability report matches the window.
+        QElapsedTimer probe_timer;
+        probe_timer.start();
+        const auto decode_probe = redclaw::render::probe_local_video_decode_support(presenter_adapter_luid);
+        append_log(QString("Controller video decode adapters present_adapter=%1 hevc_decode_adapter=%2 "
+                           "hevc_decode_reason=%3 probe_ms=%4 probe_detail=%5")
+                       .arg(QString::fromStdString(decode_probe.adapter))
+                       .arg(decode_probe.hevc_hardware
+                                ? QString::fromStdString(decode_probe.hevc_decode_adapter)
+                                : QStringLiteral("none"))
+                       .arg(QString::fromStdString(decode_probe.hevc_decode_reason))
+                       .arg(probe_timer.elapsed())
+                       .arg(QString::fromStdString(decode_probe.detail)));
+        if (presenter_adapter_luid != 0) {
+          args << "--present-adapter-luid" << QString::number(static_cast<qulonglong>(presenter_adapter_luid));
+        }
+      }
+      if (has_presentation_adapter
+          && direct_frame_pipe_server.configure_d3d11_decode_adapter(presenter_adapter_luid, &decode_device_error)) {
+        append_log(QString("D3D11 decode device enabled on the presenter adapter luid=0x%1:%2; "
+                           "decoded frames reach the presenter through keyed-mutex shared textures.")
+                       .arg(static_cast<quint32>(presenter_adapter_luid >> 32U), 8, 16, QLatin1Char('0'))
+                       .arg(static_cast<quint32>(presenter_adapter_luid & 0xffffffffU), 8, 16, QLatin1Char('0')));
       } else {
+        direct_frame_pipe_server.disable_d3d11_surface_output();
         append_log(
             QString("D3D11 decoded-surface output unavailable; CPU frame fallback remains enabled: %1")
                 .arg(decode_device_error.isEmpty() ? "non-D3D11 playback backend" : decode_device_error));
+        // D10 requires a decode device on the presenter's adapter for HEVC.
+        const int codec_arg = args.indexOf("--stream-video-codec");
+        if (codec_arg >= 0 && codec_arg + 1 < args.size()) {
+          args[codec_arg + 1] = "h264";
+        } else {
+          args << "--stream-video-codec" << "h264";
+        }
+        append_log("Controller advertises H.264 only: no decode device on the presenter adapter.");
       }
       if (!direct_frame_pipe_server.start(pipe_name, &pipe_error)) {
         reject_session_start(
@@ -5190,6 +5290,10 @@ bool launch_gui_shell(
       }
       reset_direct_frame_stats();
       direct_frame_stream_enabled = true;
+      playback_window_canvas->set_playback_state_callback(
+          [&direct_frame_pipe_server, &direct_frame_stream_enabled](bool paused, const QString& reason) {
+            if (direct_frame_stream_enabled) direct_frame_pipe_server.set_playback_paused(paused, reason);
+          });
       args << "--stream-frame-pipe" << pipe_name;
       append_log(QString("Direct frame shared-memory channel ready: %1").arg(pipe_name));
 
@@ -5201,11 +5305,13 @@ bool launch_gui_shell(
         schedule_direct_frame_update();
           });
       direct_frame_pipe_server.set_on_keyframe_request(
-          [session_page, &send_local_keyframe_request](QString reason) {
+          [session_page, &send_local_keyframe_request, &direct_frame_pipe_server](QString reason, redclaw::helper::PlaybackStateSnapshot state) {
             QMetaObject::invokeMethod(
                 session_page,
-                [&send_local_keyframe_request, reason = std::move(reason)]() {
-                  send_local_keyframe_request(reason);
+                [&send_local_keyframe_request, &direct_frame_pipe_server, state, reason = std::move(reason)]() {
+                  const auto current = direct_frame_pipe_server.playback_state();
+                  if (!redclaw::helper::playback_output_is_current(state, current)) return;
+                  send_local_keyframe_request(reason, state);
                 },
                 Qt::QueuedConnection);
           });
@@ -6162,6 +6268,8 @@ bool launch_gui_shell(
     stream_require_capture->setChecked(gui_auto_start.stream_require_capture);
     stream_preview_width->setValue(static_cast<int>(gui_auto_start.stream_preview_width));
     stream_video_max_width->setValue(static_cast<int>(gui_auto_start.stream_video_max_width));
+    stream_video_codec->setCurrentIndex(std::max(0, stream_video_codec->findData(
+        QString::fromStdString(std::string(redclaw::protocol::to_string(gui_auto_start.stream_video_codec))))));
     enable_ice_tcp->setChecked(gui_auto_start.enable_ice_tcp);
     enable_port_mapping->setChecked(gui_auto_start.enable_port_mapping);
     QString configured_stun_preset = match_stun_server_preset(gui_auto_start.ice_servers);

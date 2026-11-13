@@ -279,13 +279,6 @@ EncodedVideoReassemblyResult EncodedVideoFrameReassembler::push(
         }
         clear_current_frame();
         discarded_frame_id_ = 0;
-        if (awaiting_keyframe_ && !fragment.keyframe) {
-            discarded_frame_id_ = fragment.frame_id;
-            result.status = EncodedVideoReassemblyStatus::kDiscarded;
-            result.dropped_dependency_frames = 1;
-            result.keyframe_required = true;
-            return result;
-        }
         frame_.frame_id = fragment.frame_id;
         frame_.rate_revision = fragment.rate_revision;
         frame_.capture_region_revision = fragment.capture_region_revision;
@@ -301,11 +294,11 @@ EncodedVideoReassemblyResult EncodedVideoFrameReassembler::push(
         fragment_count_ = fragment.fragment_count;
         total_payload_bytes_ = fragment.total_payload_bytes;
         started_at_ms_ = now_ms;
-        frame_.payload.reserve(fragment.total_payload_bytes);
+        result.keyframe_required = awaiting_keyframe_ && !fragment.keyframe;
+        if (!result.keyframe_required) frame_.payload.reserve(fragment.total_payload_bytes);
         result.started_frame = true;
     } else if (discarded_frame_id_ == fragment.frame_id) {
         result.status = EncodedVideoReassemblyStatus::kDiscarded;
-        result.keyframe_required = awaiting_keyframe_;
         return result;
     } else if (!has_incomplete_frame()
                || frame_.frame_id != fragment.frame_id
@@ -342,7 +335,7 @@ EncodedVideoReassemblyResult EncodedVideoFrameReassembler::push(
     }
 
     if (next_fragment_index_ != fragment.fragment_index
-        || frame_.payload.size() + fragment.payload.size() > total_payload_bytes_) {
+        || fragment.payload.size() > total_payload_bytes_ - received_payload_bytes_) {
         const std::uint64_t discarded_frame_id = fragment.frame_id;
         result.abandoned_incomplete_frame = has_incomplete_frame();
         result.dropped_frame_id = result.abandoned_incomplete_frame
@@ -359,17 +352,20 @@ EncodedVideoReassemblyResult EncodedVideoFrameReassembler::push(
         return result;
     }
 
-    frame_.payload.insert(
-        frame_.payload.end(),
-        fragment.payload.begin(),
-        fragment.payload.end());
+    // Validate the complete AU even during reference wait. Counting bytes
+    // without copying dependent payloads distinguishes local drops from loss.
+    const bool discard_dependency = awaiting_keyframe_ && !frame_.keyframe;
+    if (!discard_dependency) {
+        frame_.payload.insert(frame_.payload.end(), fragment.payload.begin(), fragment.payload.end());
+    }
+    received_payload_bytes_ += fragment.payload.size();
     last_progress_ms_ = now_ms;
     ++next_fragment_index_;
 
     if (next_fragment_index_ != fragment_count_) {
         return result;
     }
-    if (frame_.payload.size() != total_payload_bytes_) {
+    if (received_payload_bytes_ != total_payload_bytes_) {
         const std::uint64_t discarded_frame_id = fragment.frame_id;
         result.dropped_frame_id = frame_.frame_id;
         result.dropped_incomplete_frames = 1;
@@ -383,13 +379,15 @@ EncodedVideoReassemblyResult EncodedVideoFrameReassembler::push(
         return result;
     }
 
-    result.status = EncodedVideoReassemblyStatus::kComplete;
+    result.status = discard_dependency ? EncodedVideoReassemblyStatus::kDiscarded
+                                       : EncodedVideoReassemblyStatus::kComplete;
+    result.discarded_complete_dependency = discard_dependency;
     result.frame = std::move(frame_);
     if (result.frame.keyframe) {
         awaiting_keyframe_ = false;
     }
     clear_current_frame();
-    discarded_frame_id_ = 0;
+    discarded_frame_id_ = discard_dependency ? result.frame.frame_id : 0;
     return result;
 }
 
@@ -411,6 +409,7 @@ void EncodedVideoFrameReassembler::clear_current_frame() {
     next_fragment_index_ = 0;
     fragment_count_ = 0;
     total_payload_bytes_ = 0;
+    received_payload_bytes_ = 0;
     started_at_ms_ = 0;
     last_progress_ms_ = 0;
 }

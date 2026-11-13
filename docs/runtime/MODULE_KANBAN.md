@@ -1,6 +1,6 @@
 # Module Kanban
 
-Updated: 2026-11-06
+Updated: 2026-11-12
 
 This board tracks public project status. Detailed machine-specific evidence stays outside the repository. The v0.1.9 Developer Preview is published from `8c1c1d0`, with Release build, final coverage of 126 automatic suites after targeted test-fixture repairs, verified GitHub assets and passing cloud package smoke. Local Debug is updated and reconnected with a verified rollback bundle. The original source CI stopped before compilation on an AMD AMF archive hash mismatch; the verified dependency overlay below repairs that download while retaining integrity checks. The preceding v0.1.8 checkpoint has verified Release build, all 125 automatic CTest suites and local/GitHub package smoke. v0.1.7 remains the preceding navigation/input repair; v0.1.6 remains the optimization release and v0.1.5 the audio release. v0.1.4 remains the 2026-09-22 package. v0.1.3 remains the 2026-09-20 combined package; the operator selected current main and superseded the separate v0.1.2-first plan on 2026-09-20.
 
@@ -25,8 +25,15 @@ FFmpeg source-CI compatibility (2026-10-18): use the public pixel-format capabil
 
 ## M02 Codec
 
+Updated: 2026-11-12
+
 - `M02-T01` H.264/HEVC encode/decode pipeline with hardware selection — done.
 - `M02-T02` Broader hardware/driver compatibility matrix — in-progress.
+- `M02-T03` HEVC preferred with negotiated H.264 fallback ([D10](../../DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback)) — in-review. Implementation and automated tests are on branch `cursor/hevc-preferred-codec-5649`. The pacing fix passed Ryan's retest. The Controller decode/present decoupling, the HEVC decode-overload fallback, the display-adapter-only HEVC probe, the HD 530 shared-texture bind-flag fix, and the fixes for the seven Codex review findings (2026-11-12) are on the branch but have not run on his laptop yet. On-device checks and the [bitrate measurement](../testing/hevc-bitrate-measurement.md) are still pending.
+
+Local pause-decode follow-up for M02-T03 — implemented, local Debug build + 8 focused CTest suites + 2 receiver/visibility cases passed. Native-window teardown regression fixed: final Debug product/UI builds, all 12 D3D11 UI cases and 10 repetitions of the crash case plus both visibility cases passed; device evaluation pending. Review P1 1–6, optional capacity validity, deferred 4.4 hook and one conservative HEVC trial remain intact. See [PROGRESS](../../PROGRESS.md#2026-11-12--pause-controller-decode-while-presentation-is-paused-m02-t03) and [PR #10 checklist](../testing/hevc-bitrate-measurement.md#pr-10-playback-pause-acceptance-checklist).
+
+Local PR #10 review fixes for M02-T03 cover static-desktop recovery, D3D11 coverage and adapter eligibility, codec restart, and pacing. The second re-review fixes add last-picture resume for old Hosts, recovery identity checks, strict HEVC IDR validation, current capability stamping and complete bitrate evidence. D11 and on-device verification remain pending. See [PROGRESS](../../PROGRESS.md#pr-10-second-round-re-review-fixes-m02-t03).
 
 ## M03 Security
 
