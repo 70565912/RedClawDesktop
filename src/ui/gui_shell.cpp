@@ -2292,6 +2292,13 @@ bool launch_gui_shell(
       [&controller](const auto& message, QString* error) { return controller.send_control_message(message, error); });
   task_workspace->add_task(DesktopTask::kFiles, QString::fromUtf8("文件/剪贴板"), file_transfer_panel, QSize(640, 420));
   file_transfer_panel->set_activity_callback([task_workspace] { task_workspace->set_task_visible(DesktopTask::kFiles, true); });
+  file_transfer_panel->set_clipboard_failure_callback(
+      [playback_canvas_widget, playback_control_hint, session_workspace, &connection_flow_model](const QString& message) {
+        if (playback_canvas_widget->isVisible() && connection_flow_model.snapshot().transport_ready
+            && session_workspace->disconnect_state() == SessionDisconnectState::kIdle) {
+          playback_control_hint->show_clipboard_failure(message);
+        }
+      });
 #ifdef _WIN32
   if (gui_auto_start.enable_workspace_control) {
     auto* workspace_control = new WorkspaceControlServer(
@@ -2483,7 +2490,7 @@ bool launch_gui_shell(
   remote_input_capture->set_paused_callback([&](const QString& reason) {
     file_transfer_panel->cancel_clipboard_paste();
     remote_input_request_pending = false;
-    playback_control_hint->hide_hint();
+    playback_control_hint->hide_control_hint();
     append_log(QString("Remote input capture paused: %1").arg(reason));
     refresh_remote_control_ui();
   });
@@ -3685,7 +3692,7 @@ bool launch_gui_shell(
     remote_input_capture->set_remote_frame_size(image.size());
     remote_input_frame_ready = true;
     last_playback_presented_at = QDateTime::currentDateTime();
-    playback_control_hint->hide_hint();
+    playback_control_hint->hide_persistent_hint();
     refresh_remote_control_ui();
     apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
     present_playback_window();
@@ -3779,7 +3786,7 @@ bool launch_gui_shell(
       }
       if (!remote_input_frame_ready && !capture_playback_state.waiting()) {
         remote_input_frame_ready = true;
-        playback_control_hint->hide_hint();
+        playback_control_hint->hide_persistent_hint();
         refresh_remote_control_ui();
         present_playback_window();
         playback_geometry_controller->publish_initial_viewport();
@@ -4431,7 +4438,7 @@ bool launch_gui_shell(
                     QString("Remote input capture could not start: %1").arg(activation_error));
                 (void)send_input_control_request(false);
               } else {
-                playback_control_hint->hide_hint();
+                playback_control_hint->hide_control_hint();
               }
             } else if (remote_input_capture->active()) {
               remote_input_capture->pause(
