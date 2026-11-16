@@ -248,7 +248,7 @@ TEST_F(UnifiedSessionFixture, PasteFailuresUseTheNonActivatingPlaybackHintAndPre
     auto* status = panel->findChild<QLabel*>("fileTransferStatus");
     ASSERT_NE(status, nullptr);
     PlaybackControlHintOverlay hint(canvas);
-    panel->set_clipboard_failure_callback([&](const QString& message) { hint.show_hint(message); });
+    panel->set_clipboard_failure_callback([&](const QString& message) { hint.show_clipboard_failure(message); });
     overlay()->set_state(ConnectionOverlayState::kHidden);
     canvas->setFocus();
     settle();
@@ -267,6 +267,7 @@ TEST_F(UnifiedSessionFixture, PasteFailuresUseTheNonActivatingPlaybackHintAndPre
     panel->receive(message);
     settle();
     ASSERT_TRUE(hint.isVisible());
+    hint.hide_control_hint(); // An input-status acknowledgment clears only control guidance.
     hint.hide_persistent_hint(); // Both playback paths refresh this on new frames.
     ASSERT_TRUE(hint.isVisible());
     EXPECT_EQ(hint.message(), status->text());
@@ -281,6 +282,8 @@ TEST_F(UnifiedSessionFixture, PasteFailuresUseTheNonActivatingPlaybackHintAndPre
     EXPECT_FALSE(hint.isVisible());
 
     hint.show_hint("Connection interrupted", 0);
+    hint.hide_control_hint();
+    ASSERT_TRUE(hint.isVisible());
     panel->receive(pending_clipboard_image());
     message.workspace->error_code = "clipboard_move_result_unknown";
     message.workspace->clipboard_move = true;
