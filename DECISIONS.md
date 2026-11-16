@@ -134,8 +134,10 @@ A merge into `main` needs all of the following at the final head:
 
 - A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
 - A clean Codex CLI re-review in a fresh read-only find-issues session, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
-- Passing on-device acceptance on the affected machines or configurations when behavior depends on both endpoints, codecs, hardware or drivers, or installation and rolling upgrades. Include mixed-version tests when peer or upgrade compatibility is affected.
+- Passing dual-machine acceptance when behavior depends on both endpoints. For codec, hardware, driver, installation, or rolling-upgrade changes, verify the relevant devices and configurations. Include mixed-version tests when peer or upgrade compatibility is affected.
 - `docs-guard` green on GitHub.
+
+Build and test evidence carries forward across a verified documentation-only delta. The read-only re-review and `docs-guard` cover the final head.
 
 `build-and-test` is advisory. A failure already visible there should be noted, but the merge does not wait for that job to finish.
 
