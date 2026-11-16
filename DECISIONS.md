@@ -128,16 +128,18 @@ Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The as
 
 Made 2026-11-12. Ryan decided that GitHub ruleset 27011669 requires only `docs-guard`. The `build-and-test` workflow may still run, but it is not a required check.
 
+Updated 2026-11-16 with Ryan's approval. The validation scope follows the change.
+
 A merge into `main` needs all of the following at the final head:
 
-- Local build and unit tests passing on both of Ryan's machines (the desktop and the laptop).
+- A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
 - A clean Codex CLI re-review in a fresh read-only find-issues session, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
-- On-device acceptance passing when the change needs device evaluation.
+- Passing on-device acceptance on the affected machines or configurations when behavior depends on both endpoints, codecs, hardware or drivers, or installation and rolling upgrades. Include mixed-version tests when peer or upgrade compatibility is affected.
 - `docs-guard` green on GitHub.
 
 `build-and-test` is advisory. A failure already visible there should be noted, but the merge does not wait for that job to finish.
 
-Source: Ryan, 2026-11-12.
+Source: Ryan, 2026-11-12 and 2026-11-16.
 
 ## Not decided in this file
 
