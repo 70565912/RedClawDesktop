@@ -6,6 +6,12 @@ As of 2026-11-12 (Asia/Shanghai). The clipboard and mainline sections were writt
 
 Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
 
+## 2026-11-16 — Clipboard feedback during reconnect (M10-T03)
+
+- Session-loss completion used the same callback as approved file progress, so the Controller reopened File/Clipboard during automatic reconnect. The panel now records the interrupted paste while preserving its visibility. Connected paste failures use the existing non-activating playback hint. Direct frames and preview updates preserve a timed hint and dismiss the persistent frozen-frame warning on recovery. See [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
+- The VS2022 x64 Debug application built with `build.ps1 -SkipConfigure -ConfigurePreset vs2022-x64-local -Target redclaw_desktop -NoPublish`. With a workspace-local temporary directory, the desktop passed 186 connection UI cases and 11 clipboard demand cases. The workspace-control suite passed all 21 cases under the normal Windows user with a workspace-local temporary directory after five legacy snapshot cases failed to create files in the sandbox. The two new regressions and two existing playback-hint cases also passed five offscreen repetitions. Evidence: `build/reports/clipboard-reconnect-overlay-*.log`.
+- The regression simulates Controller runtime messages and checks the actual floating windows, including a closed or open file panel through recovery. Live two-machine reconnect and native paste were outside this local validation.
+
 ## 2026-11-10 — Runtime logs go to files (M10-T02)
 
 - Remove the runtime log card and its copy and clear actions from the connection pages. Remove the diagnostic log displays from the workspace. Connection progress and actionable errors remain visible. The existing diagnostic writer still records GUI and runtime messages in the rotating local files. See [D9](DECISIONS.md#d9--show-connection-status-and-write-runtime-logs-to-files).

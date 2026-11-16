@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-16 — Clipboard feedback during reconnect (M10-T03)
+
+- The Controller keeps its File/Clipboard tool in the user-selected state when a pending paste ends during reconnection. Connected paste failures use the existing playback hint, and confirmed file paste uses the existing progress window. See [PROGRESS](../../PROGRESS.md#2026-11-16--clipboard-feedback-during-reconnect-m10-t03).
+
 ## 2026-11-13 — PR #10 capture-retry send exemption (M02-T03)
 
 - Manual capture-retry keyframe requests are exempt from the playback-identity send fence so a pre-frame or failed-capture retry still reaches the Host. See [PROGRESS](../../PROGRESS.md#pr-10-capture-retry-send-exemption-m02-t03-2026-11-13).
