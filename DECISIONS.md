@@ -149,6 +149,13 @@ The ordinary-desktop recovery prompt runs on the Host thread that handles remote
 
 The **关闭原窗口** action requires a click in the active prompt and addresses the original foreground window. The Host rechecks its identity and posts one normal Windows close request without waiting on the application. Process termination requires a separate product decision because it can close other windows or discard work.
 
+## D13 — Debug Host ICE ports are machine-specific
+
+The desktop uses ICE UDP port 43000. The laptop does not use that port. Store an
+optional port override in the ignored local configuration or pass it explicitly;
+the shared launcher retains the supervisor default when no override is present.
+This does not create a router mapping or require TURN.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).

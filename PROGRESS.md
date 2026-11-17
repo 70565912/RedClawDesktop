@@ -1,5 +1,19 @@
 # Progress
 
+## 2026-11-17 — Per-machine Debug Host port
+
+The Debug Host launcher accepts an explicit ICE UDP port or an ignored
+`local/debug-host-ice-port.txt` override. With neither, it retains the existing
+supervisor default. The desktop uses 43000 locally; the laptop uses its own
+configuration. The Controller's optional peer-code file remains local. Fixed
+machine codes and passwords do not belong in tracked launch scripts.
+On the desktop, launcher dry runs verified the local 43000 override, explicit
+43001 precedence, unconfigured Host and Controller defaults of 55000, and
+rejection of an out-of-range port. The merged Debug application built through
+`build.ps1 -SkipConfigure -NoPublish`; the input recovery and remote input
+session suites passed 16 and 18 cases respectively. Laptop validation is pending.
+
+
 As of 2026-11-12 (Asia/Shanghai). The clipboard and mainline sections were written 2026-11-06.
 
 `main` includes the clipboard paste fix at `c8ec2a2` (PR #5). Product version metadata is 0.1.12 so the Windows publish script can run after this preparation merges. That script has not been run. The published GitHub package remains v0.1.11, and there is no v0.1.12 tag.

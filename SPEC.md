@@ -32,6 +32,10 @@ Product version metadata is 0.1.12. The last published package remains the v0.1.
 1. Windows x64 Host and Controller in one desktop GUI: local machine code, peer machine code, connection password, wait/connect, and a playback area. The GUI shows connection progress and errors. Runtime diagnostics are written to local log files.
 2. Connection password required. Passwordless v0.1.3 and earlier builds are rejected. See [connection password](docs/architecture/connection-password-v1.md).
 3. Public-DHT rendezvous and ICE/STUN direct connect. TURN can be configured by the user. It is not a product dependency. See the ICE section of [README.md](README.md) and [network exit selection](docs/architecture/network-exit-selection-analysis.md).
+
+Debug Host launchers accept an ICE UDP port per machine. An optional ignored
+`local/debug-host-ice-port.txt` supplies the port, while an explicit launcher
+argument takes precedence. Without either, the existing supervisor default applies.
 4. Real desktop capture (Windows Graphics Capture / Desktop Duplication) and a real encode, transport, decode, and present path. Codec per [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (branch `cursor/hevc-preferred-codec-5649`, not yet on `main`): the Host sends HEVC when both sides have hardware HEVC and H.264 otherwise, including with older peers; `stream_video_codec=h264` forces H.264. Until that pull request merges, `main` still sends H.264 only.
 5. Authorized keyboard and mouse. Missing capability, lease, or lifecycle channel fails closed. Secure-desktop ambiguity refuses or pauses input. The ordinary-desktop recovery prompt keeps remote input responsive and lets the user dismiss the prompt, switch windows, or ask the Host to close the window that triggered the prompt. See [ordinary desktop input](docs/architecture/ordinary-desktop-remote-input-v1.md).
 6. Control, Media, and Agent channels. Codex and Cursor providers run on the Host inside registered projects. See [remote Agent bridge](docs/architecture/remote-development-agent-bridge-v1.md).
