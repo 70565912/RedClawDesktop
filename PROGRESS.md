@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-11-17 — Independent review subtask
+
+Ryan changed the review convention from a separate Codex CLI invocation to an
+independent read-only subtask. D8, D11 and the Agent guides describe the updated
+workflow. The lead verifies findings and retains development and test ownership.
+
+## 2026-11-17 — Per-machine Debug Host port
+
+The Debug Host launcher accepts an explicit ICE UDP port or an ignored
+`local/debug-host-ice-port.txt` override. With neither, it retains the existing
+supervisor default. The desktop uses 43000 locally; the laptop uses its own
+configuration. The Controller's optional peer-code file remains local. Fixed
+machine codes and passwords do not belong in tracked launch scripts.
+On the desktop, launcher dry runs verified the local 43000 override, explicit
+43001 precedence, unconfigured Host and Controller defaults of 55000, and
+rejection of an out-of-range port. The merged Debug application built through
+`build.ps1 -SkipConfigure -NoPublish`; the input recovery and remote input
+session suites passed 16 and 18 cases respectively. Laptop validation is pending.
+
+
 As of 2026-11-12 (Asia/Shanghai). The clipboard and mainline sections were written 2026-11-06.
 
 `main` includes the clipboard paste fix at `c8ec2a2` (PR #5). Product version metadata is 0.1.12 so the Windows publish script can run after this preparation merges. That script has not been run. The published GitHub package remains v0.1.11, and there is no v0.1.12 tag.
@@ -22,6 +42,20 @@ Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.m
 - With a workspace-local test temporary directory, all 42 focused connection, workspace, and diagnostic writer cases passed. The D3D11, file logger, and structured redaction CTest suites also passed. The broader UI run in the default environment hit filesystem and Windows credential or registry restrictions. The running Host was not replaced.
 
 - The independent Debug candidate passed a 345-file manifest check and a restricted-PATH startup probe. CIM could not verify the running Host from the build environment, so the maintenance worker did not take ownership. The existing Host continued DHT publication in standby.
+
+## 2026-11-09 — Host input recovery prompt (M05-T03)
+
+- The prompt runs on the Host runtime thread. Its native title bar could enter a modal system-menu loop and stop the thread from draining remote input. The prompt now uses a fixed window with a **关闭提示** button. It still activates on the existing qualified stall and closes on focus loss, user dismissal or context revocation. See [D12](DECISIONS.md#d12--keep-the-host-input-recovery-prompt-modeless).
+- Local Debug build passed with `build.ps1 -SkipConfigure -Target redclaw_desktop -NoPublish`. CTest passed all 34 cases across `redclaw_input_recovery_tests` and `redclaw_remote_input_session_tests`. A hidden-window Win32 probe using the production window procedure confirmed that posted keyboard and system-menu commands return and that separate mouse-down and mouse-up messages dismiss the prompt through the close button.
+- The Debug executable passed `--help` with the locally installed Qt runtime. Standalone packaging stopped at `windeployqt` because its `qmake` child exited with `0xC0000142`. The running Host was left in place.
+- The follow-up adds **关闭原窗口**. The Host posts `WM_CLOSE` to the verified original window after the user clicks. The prompt confirms observed closure or reports a failed or unconfirmed request. The Debug build and both focused CTest suites passed again. The Win32 probe verified that no close is sent before a click, that the intended target closes while another window in the same process stays open, and that an ignored request is reported as unconfirmed.
+- The separate 345-file Debug candidate passed the complete bundle manifest, executable hash and standalone `--help` checks after Qt deployment with the configured `qmake`. Evidence `E-M05-RECOVERY-20261109`. The current environment did not identify a serving Host to replace. Runtime handoff, publication and media remain unverified.
+- Ryan authorized a local replacement conditional on RedClaw being stopped. Process enumeration in the execution session returned no results, and the new 345-file bundle was installed in `release/Debug`. The full 345-file old bundle was retained and rehashed, and the installed executable passed `--help`. Evidence `E-M05-LOCAL-SWAP-20261109`. The standard Host launcher stopped at `Get-NetRoute` because this environment denied CIM access. A later check showed that the empty process list did not establish that the original Host had exited.
+- The Debug Host CMD delegates to that launcher. An explicit-binding retry reused the previous active Ethernet address, but the controlled GUI could not open its Debug control pipe. The installed binary then started the ordinary Host runtime with the same binding and the existing Debug DPAPI credential file. It remained in `dht_waiting` with a failed UDP listener and zero publications. Controller connectivity and media remain unverified.
+- Subsequent live sampling distinguished two Host instances. The original GUI continued writing status and reported `streaming`, while its real media counters stayed flat across a five-second sample and the runtime log had stopped advancing. The new instance still had zero publications. Its selected DHT port differed from the original listener port, and no address-in-use alert was recorded. The old runtime's liveness and any effect on the new listener remain unverified.
+- After explicit authorization, the original and duplicate Host windows closed through their normal UI and both runtimes reached `stopped`. The installed Debug Host restarted in the interactive desktop with the original code and binding. A single Host window remained, remote input was allowed, and DHT publication and Controller reconnection succeeded. Over six seconds the new Host advanced real capture, encode and transmit by 584, 185 and 184, with zero synthetic frames or capture, encode and transmit failures in that window. Evidence `E-M05-HOST-RESTART-20261109`. The restart changed both instance count and launch context, so the previous DHT failure cannot be attributed to either factor alone.
+- In the live session, the operator clicked **关闭原窗口** and reported that Windows denied the close. This prompt is emitted only when `PostMessageW(WM_CLOSE)` fails with `ERROR_ACCESS_DENIED`. The Host GUI log records a non-elevated launch. A target at higher integrity could explain the denial, but the target's integrity was not observed. Local same-permission close validation still passes. Closing the reported window remains unverified.
+- Developer check on a rebuilt Host: after the adapter-properties window triggers the prompt, press Ctrl+Space with the prompt focused. Confirm that no title-bar menu opens and the pointer still moves. Click **关闭原窗口** and check the actual dialog and reported result, then verify that an ordinary window receives input.
 
 ## Clipboard paste fix, on main
 

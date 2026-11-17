@@ -66,7 +66,7 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
 
-## D8 — Reader-specific agent rules and on-demand Codex CLI reviews
+## D8 — Reader-specific agent rules and on-demand subtask reviews
 
 On 2026-11-06 Ryan decided, via 小程 · 工程专家, that collaboration rules are split by reader. This refines the later reader-specific part of [D5](#d5--root-charter-branch-and-pull-request-scriptable-acceptance-fresh-reviewers) and [D6](#d6--root-agentsmd-is-the-agent-onboarding-gate): who the lead is, and how a review is invited. D6 remains the historical record that Ryan approved an onboarding gate at the top of root [AGENTS.md](AGENTS.md). That gate landed on `main` through PR #4 as `eca4b31`.
 
@@ -91,8 +91,7 @@ Grok Bot:
 Every reader:
 
 - Only one lead at a time.
-- There are no standing review bots and no standing test bots. A milestone review, a pull-request review, or a review after acceptance goes to Codex CLI in a session separate from development. The reviewer only finds issues and must not change code. Development and scriptable acceptance stay with the current lead.
-- The Codex CLI invocation already known for those reviews is `D:\DevTools\npm-global\codex.cmd`, model `gpt-6.1-sol`. The lead supplies a branch or a commit, plus the acceptance criteria in [SPEC.md](SPEC.md). 小程 may run the review.
+- Updated 2026-11-17 at Ryan's request: milestone, pull-request and post-acceptance reviews go to an independent read-only subtask. The reviewer only finds issues and must not change code. The lead supplies the diff, the three root fact files and acceptance criteria, verifies the findings, and retains ownership of development and scriptable acceptance.
 
 ## D9 — Show connection status and write runtime logs to files
 
@@ -133,7 +132,7 @@ Updated 2026-11-16 with Ryan's approval. The validation scope follows the change
 A merge into `main` needs all of the following at the final head:
 
 - A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
-- A clean Codex CLI re-review in a fresh read-only find-issues session, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
+- A clean independent read-only review subtask on the final head, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
 - Passing dual-machine acceptance when behavior depends on both endpoints. For codec, hardware, driver, installation, or rolling-upgrade changes, verify the relevant devices and configurations. Include mixed-version tests when peer or upgrade compatibility is affected.
 - `docs-guard` green on GitHub.
 
@@ -142,6 +141,19 @@ Build and test evidence carries forward across a verified documentation-only del
 `build-and-test` is advisory. A failure already visible there should be noted, but the merge does not wait for that job to finish.
 
 Source: Ryan, 2026-11-12 and 2026-11-16.
+
+## D12 — Keep the Host input recovery prompt modeless
+
+The ordinary-desktop recovery prompt runs on the Host thread that handles remote input. Use a fixed window with a client-area close button. System menus and caption interactions can hold that thread in a modal loop while the remote input needed to dismiss it waits. Keep the existing recovery trigger and foreground behavior so the user can switch away from an unresponsive window.
+
+The **关闭原窗口** action requires a click in the active prompt and addresses the original foreground window. The Host rechecks its identity and posts one normal Windows close request without waiting on the application. Process termination requires a separate product decision because it can close other windows or discard work.
+
+## D13 — Debug Host ICE ports are machine-specific
+
+The desktop uses ICE UDP port 43000. The laptop does not use that port. Store an
+optional port override in the ignored local configuration or pass it explicitly;
+the shared launcher retains the supervisor default when no override is present.
+This does not create a router mapping or require TURN.
 
 ## Not decided in this file
 

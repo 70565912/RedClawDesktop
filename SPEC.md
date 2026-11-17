@@ -32,8 +32,12 @@ Product version metadata is 0.1.12. The last published package remains the v0.1.
 1. Windows x64 Host and Controller in one desktop GUI: local machine code, peer machine code, connection password, wait/connect, and a playback area. The GUI shows connection progress and errors. Runtime diagnostics are written to local log files.
 2. Connection password required. Passwordless v0.1.3 and earlier builds are rejected. See [connection password](docs/architecture/connection-password-v1.md).
 3. Public-DHT rendezvous and ICE/STUN direct connect. TURN can be configured by the user. It is not a product dependency. See the ICE section of [README.md](README.md) and [network exit selection](docs/architecture/network-exit-selection-analysis.md).
+
+Debug Host launchers accept an ICE UDP port per machine. An optional ignored
+`local/debug-host-ice-port.txt` supplies the port, while an explicit launcher
+argument takes precedence. Without either, the existing supervisor default applies.
 4. Real desktop capture (Windows Graphics Capture / Desktop Duplication) and a real encode, transport, decode, and present path. Codec per [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) (branch `cursor/hevc-preferred-codec-5649`, not yet on `main`): the Host sends HEVC when both sides have hardware HEVC and H.264 otherwise, including with older peers; `stream_video_codec=h264` forces H.264. Until that pull request merges, `main` still sends H.264 only.
-5. Authorized keyboard and mouse. Missing capability, lease, or lifecycle channel fails closed. Secure-desktop ambiguity refuses or pauses input. See [ordinary desktop input](docs/architecture/ordinary-desktop-remote-input-v1.md).
+5. Authorized keyboard and mouse. Missing capability, lease, or lifecycle channel fails closed. Secure-desktop ambiguity refuses or pauses input. The ordinary-desktop recovery prompt keeps remote input responsive and lets the user dismiss the prompt, switch windows, or ask the Host to close the window that triggered the prompt. See [ordinary desktop input](docs/architecture/ordinary-desktop-remote-input-v1.md).
 6. Control, Media, and Agent channels. Codex and Cursor providers run on the Host inside registered projects. See [remote Agent bridge](docs/architecture/remote-development-agent-bridge-v1.md).
 7. Capabilities already described for v0.1.12, enabled only by the common negotiated set: paste-time clipboard, confirmed file transfer, remote system audio, embedded terminal, directory upgrade, and Host update-restart protection. A connected Controller shows paste failures over playback. The Connection overlay handles reconnect status while File/Clipboard keeps the interrupted result and its current visibility. See [D7](DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
 8. Cross-version interoperability. DHT, session, media, control, Agent, and Debug Bridge protocols are versioned. Still-supported releases connect through the common capability set. The same Git commit, product version, or binary is not a connection requirement. See root [AGENTS.md](AGENTS.md) and the protocol contract in the solution architecture.
@@ -54,6 +58,7 @@ This list points at existing gates. It does not create new ones.
 - Release automation follows [test-matrix.md](docs/testing/test-matrix.md). Only unattended cases are release gates. Physical keys, visual judgment, UAC, and special hardware or topology are optional developer evaluation. An unrun case is not a pass.
 - GitHub-hosted virtual machines are not the real-desktop acceptance environment ([GitHub Actions validation](docs/testing/github-actions-validation.md)).
 - Security fail-closed rules in root [AGENTS.md](AGENTS.md) stay in force.
+- Independent reviews use a read-only subtask, as specified by [D8](DECISIONS.md#d8--reader-specific-agent-rules-and-on-demand-subtask-reviews) and D11.
 
 ## Out of scope for this agent
 

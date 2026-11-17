@@ -6,7 +6,6 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#include <dwmapi.h>
 #include <algorithm>
 
 namespace redclaw::input {
@@ -55,6 +54,74 @@ constexpr COLORREF kRecoveryBorder = RGB(36, 50, 68);
 constexpr COLORREF kRecoveryText = RGB(226, 232, 240);
 constexpr COLORREF kRecoveryMuted = RGB(148, 163, 184);
 constexpr COLORREF kRecoveryAccent = RGB(125, 211, 252);
+constexpr int kClosePromptId = 1;
+constexpr int kCloseTargetId = 2;
+constexpr int kPromptWidth = 480;
+constexpr int kPromptHeight = 316;
+constexpr std::uint64_t kCloseObservationMs = 2000;
+// This window is pumped by the Host runtime. A system menu, caption drag or
+// caption button could enter a modal loop while the next remote event is queued.
+constexpr DWORD kRecoveryStyle = WS_POPUP | WS_BORDER | WS_CLIPCHILDREN;
+constexpr DWORD kRecoveryExStyle = WS_EX_TOOLWINDOW;
+
+enum class TargetCloseState {
+    kUnavailable, kReady, kRequested, kPending, kClosed, kDenied, kFailed, kUnconfirmed,
+};
+
+struct RecoveryPrompt {
+    HWND window = nullptr;
+    HWND target = nullptr;
+    DWORD target_thread = 0;
+    DWORD target_process = 0;
+    wchar_t title[128]{};
+    TargetCloseState close_state = TargetCloseState::kUnavailable;
+    std::uint64_t close_requested_ms = 0;
+
+    [[nodiscard]] bool target_matches() const {
+        DWORD process = 0;
+        return target_thread && GetWindowThreadProcessId(target, &process) == target_thread &&
+            process == target_process;
+    }
+
+    void set_close_state(TargetCloseState state) {
+        close_state = state;
+        InvalidateRect(window, nullptr, FALSE);
+    }
+
+    void update_target_close(std::uint64_t now_ms) {
+        if (close_state == TargetCloseState::kRequested) {
+            if (!target_matches()) {
+                set_close_state(TargetCloseState::kClosed);
+            } else if (!IsWindowVisible(target) || GetAncestor(target, GA_ROOT) != target) {
+                set_close_state(TargetCloseState::kUnavailable);
+            } else if (PostMessageW(target, WM_CLOSE, 0, 0)) {
+                close_requested_ms = now_ms;
+                set_close_state(TargetCloseState::kPending);
+            } else {
+                set_close_state(GetLastError() == ERROR_ACCESS_DENIED ?
+                    TargetCloseState::kDenied : TargetCloseState::kFailed);
+            }
+        } else if (close_state == TargetCloseState::kPending) {
+            if (!target_matches()) set_close_state(TargetCloseState::kClosed);
+            else if (now_ms - close_requested_ms >= kCloseObservationMs)
+                set_close_state(TargetCloseState::kUnconfirmed);
+        }
+    }
+};
+
+const wchar_t* target_close_text(TargetCloseState state) {
+    switch (state) {
+    case TargetCloseState::kUnavailable: return L"\u539f\u7a97\u53e3\u4e0d\u53ef\u5173\u95ed\u3002";
+    case TargetCloseState::kReady: return L"";
+    case TargetCloseState::kRequested:
+    case TargetCloseState::kPending: return L"\u5df2\u8bf7\u6c42\u5173\u95ed\uff0c\u7b49\u5f85\u539f\u7a97\u53e3\u54cd\u5e94\u3002";
+    case TargetCloseState::kClosed: return L"\u539f\u7a97\u53e3\u5df2\u5173\u95ed\u3002";
+    case TargetCloseState::kDenied: return L"Windows \u62d2\u7edd\u5173\u95ed\u539f\u7a97\u53e3\u3002";
+    case TargetCloseState::kFailed: return L"\u65e0\u6cd5\u53d1\u9001\u5173\u95ed\u8bf7\u6c42\u3002";
+    case TargetCloseState::kUnconfirmed: return L"\u672a\u786e\u8ba4\u539f\u7a97\u53e3\u5173\u95ed\u3002";
+    }
+    return L"";
+}
 
 void draw_recovery_text(HDC dc, RECT rect, const wchar_t* text, UINT dpi,
                         int points, int weight, COLORREF color) {
@@ -68,14 +135,14 @@ void draw_recovery_text(HDC dc, RECT rect, const wchar_t* text, UINT dpi,
     if (font) DeleteObject(font);
 }
 
-void paint_recovery_content(HDC dc, const RECT& client, UINT dpi) {
+void paint_recovery_content(HDC dc, const RECT& client, UINT dpi, const RecoveryPrompt& prompt) {
     const auto px = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
     const int saved = SaveDC(dc);
     SetBkMode(dc, TRANSPARENT);
     SetDCBrushColor(dc, kRecoveryBackground);
     FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-    draw_recovery_text(dc, {px(24), px(20), client.right - px(24), px(54)},
-        L"\u8f93\u5165\u6062\u590d\u63d0\u793a", dpi, 14, FW_SEMIBOLD, kRecoveryText);
+    draw_recovery_text(dc, {px(24), px(20), client.right - px(120), px(54)},
+        L"RedClaw \u8f93\u5165\u6062\u590d\u63d0\u793a", dpi, 14, FW_SEMIBOLD, kRecoveryText);
 
     SelectObject(dc, GetStockObject(DC_BRUSH));
     SelectObject(dc, GetStockObject(DC_PEN));
@@ -87,10 +154,14 @@ void paint_recovery_content(HDC dc, const RECT& client, UINT dpi) {
         dpi, 10, FW_NORMAL, kRecoveryText);
     draw_recovery_text(dc, {px(40), px(128), client.right - px(40), px(154)},
         L"\u8bf7\u5173\u95ed\u6b64\u8f6f\u4ef6\u7a97\u53e3\u3002", dpi, 11, FW_SEMIBOLD, kRecoveryAccent);
-    draw_recovery_text(dc, {px(24), px(186), client.right - px(24), client.bottom - px(20)},
+    draw_recovery_text(dc, {px(24), px(178), client.right - px(24), px(204)},
+        prompt.title, dpi, 10, FW_SEMIBOLD, kRecoveryText);
+    draw_recovery_text(dc, {px(24), px(207), client.right - px(24), px(263)},
         L"\u8bf7\u79fb\u52a8\u9f20\u6807\uff0c\u5207\u6362\u5230\u5176\u4ed6\u7a97\u53e3\u7ee7\u7eed\u64cd\u4f5c\u3002\n"
         L"\u5207\u6362\u7a97\u53e3\u540e\uff0c\u6b64\u63d0\u793a\u4f1a\u81ea\u52a8\u5173\u95ed\u3002",
         dpi, 10, FW_NORMAL, kRecoveryMuted);
+    draw_recovery_text(dc, {px(24), px(278), client.right - px(160), client.bottom - px(10)},
+        target_close_text(prompt.close_state), dpi, 10, FW_NORMAL, kRecoveryAccent);
     if (saved) RestoreDC(dc, saved);
 }
 
@@ -99,9 +170,51 @@ LRESULT CALLBACK recovery_window_proc(HWND window, UINT message, WPARAM wparam, 
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
             reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
     }
+    auto* prompt = reinterpret_cast<RecoveryPrompt*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCDESTROY) {
-        auto* owned_window = reinterpret_cast<HWND*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (owned_window && *owned_window == window) *owned_window = nullptr;
+        if (prompt && prompt->window == window) prompt->window = nullptr;
+    }
+    if (message == WM_CREATE) {
+        const auto& create = *reinterpret_cast<const CREATESTRUCTW*>(lparam);
+        const auto button = [&](int id, const wchar_t* label) {
+            return CreateWindowExW(0, L"BUTTON", label, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                create.hInstance, nullptr);
+        };
+        const HWND close_target = button(kCloseTargetId, L"\u5173\u95ed\u539f\u7a97\u53e3");
+        if (!close_target || !button(kClosePromptId, L"\u5173\u95ed\u63d0\u793a")) return -1;
+        EnableWindow(close_target, prompt->close_state == TargetCloseState::kReady);
+        return 0;
+    }
+    if (message == WM_SIZE) {
+        const UINT dpi = GetDpiForWindow(window);
+        const auto px = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+        RECT client{};
+        GetClientRect(window, &client);
+        SetWindowPos(GetDlgItem(window, kClosePromptId), nullptr,
+            client.right - px(104), px(16), px(80), px(30), SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(GetDlgItem(window, kCloseTargetId), nullptr,
+            client.right - px(152), px(268), px(128), px(32), SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
+    if (message == WM_SYSCOMMAND) {
+        const auto command = wparam & 0xfff0;
+        if (command == SC_KEYMENU || command == SC_MOUSEMENU || command == SC_MOVE || command == SC_SIZE)
+            return 0;
+    }
+    if (message == WM_COMMAND && HIWORD(wparam) == BN_CLICKED) {
+        const auto id = LOWORD(wparam);
+        const auto button = reinterpret_cast<HWND>(lparam);
+        if (id == kClosePromptId && button && button == GetDlgItem(window, id)) {
+            DestroyWindow(window);
+            return 0;
+        }
+        if (id == kCloseTargetId && button && button == GetDlgItem(window, id) &&
+            prompt->close_state == TargetCloseState::kReady) {
+            prompt->set_close_state(TargetCloseState::kRequested);
+            EnableWindow(button, FALSE);
+            return 0;
+        }
     }
     if (message == WM_ERASEBKGND) return 1;
     if (message == WM_DPICHANGED) {
@@ -115,7 +228,7 @@ LRESULT CALLBACK recovery_window_proc(HWND window, UINT message, WPARAM wparam, 
         PAINTSTRUCT paint{};
         const HDC dc = BeginPaint(window, &paint);
         RECT client{}; GetClientRect(window, &client);
-        paint_recovery_content(dc, client, GetDpiForWindow(window));
+        paint_recovery_content(dc, client, GetDpiForWindow(window), *prompt);
         EndPaint(window, &paint);
         return 0;
     }
@@ -143,7 +256,7 @@ public:
         result.cursor = {cursor.x, cursor.y};
         result.foreground = reinterpret_cast<std::uintptr_t>(foreground);
         result.target_window = reinterpret_cast<std::uintptr_t>(target_window);
-        result.recovery_foreground = window_ && foreground == window_;
+        result.recovery_foreground = prompt_.window && foreground == prompt_.window;
         return result;
     }
 
@@ -164,48 +277,56 @@ public:
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
         MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
         if (!GetMonitorInfoW(MonitorFromPoint({target.x, target.y}, MONITOR_DEFAULTTONULL), &monitor)) return false;
-        const int width = std::min(480L, monitor.rcWork.right - monitor.rcWork.left);
-        window_ = CreateWindowExW(WS_EX_TOOLWINDOW, class_name, L"RedClaw \u8f93\u5165\u6062\u590d",
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, monitor.rcWork.right - width - 12,
-            monitor.rcWork.top + 12, width, 252, nullptr, nullptr, instance, &window_);
-        if (!window_) return false;
-        const UINT dpi = GetDpiForWindow(window_);
-        RECT bounds{0, 0, MulDiv(480, static_cast<int>(dpi), 96), MulDiv(252, static_cast<int>(dpi), 96)};
-        AdjustWindowRectExForDpi(&bounds, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_TOOLWINDOW, dpi);
+        const HWND target_window = reinterpret_cast<HWND>(expected_foreground);
+        prompt_.target = target_window;
+        prompt_.target_thread = GetWindowThreadProcessId(target_window, &prompt_.target_process);
+        if (prompt_.target_thread && prompt_.target_process != GetCurrentProcessId() &&
+            target_window != GetShellWindow() && target_window != GetDesktopWindow() &&
+            IsWindowVisible(target_window) && GetAncestor(target_window, GA_ROOT) == target_window) {
+            GetWindowTextW(target_window, prompt_.title, static_cast<int>(std::size(prompt_.title)));
+            prompt_.close_state = TargetCloseState::kReady;
+        }
+        const int width = std::min(static_cast<LONG>(kPromptWidth), monitor.rcWork.right - monitor.rcWork.left);
+        auto& window = prompt_.window;
+        window = CreateWindowExW(kRecoveryExStyle, class_name, L"RedClaw \u8f93\u5165\u6062\u590d",
+            kRecoveryStyle, monitor.rcWork.right - width - 12,
+            monitor.rcWork.top + 12, width, kPromptHeight, nullptr, nullptr, instance, &prompt_);
+        if (!window) { close_window(); return false; }
+        const UINT dpi = GetDpiForWindow(window);
+        RECT bounds{0, 0, MulDiv(kPromptWidth, static_cast<int>(dpi), 96),
+            MulDiv(kPromptHeight, static_cast<int>(dpi), 96)};
+        AdjustWindowRectExForDpi(&bounds, kRecoveryStyle, FALSE, kRecoveryExStyle, dpi);
         const int margin = MulDiv(12, static_cast<int>(dpi), 96);
         const int outer_width = std::min(bounds.right - bounds.left, monitor.rcWork.right - monitor.rcWork.left);
         const int outer_height = std::min(bounds.bottom - bounds.top, monitor.rcWork.bottom - monitor.rcWork.top);
-        SetWindowPos(window_, nullptr, std::max(monitor.rcWork.left, monitor.rcWork.right - outer_width - margin),
+        SetWindowPos(window, nullptr, std::max(monitor.rcWork.left, monitor.rcWork.right - outer_width - margin),
             std::min(monitor.rcWork.top + margin, monitor.rcWork.bottom - outer_height), outer_width, outer_height,
             SWP_NOZORDER | SWP_NOACTIVATE);
-        const BOOL dark = TRUE;
-        (void)DwmSetWindowAttribute(window_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-        (void)DwmSetWindowAttribute(window_, DWMWA_CAPTION_COLOR, &kRecoveryBackground, sizeof(kRecoveryBackground));
-        (void)DwmSetWindowAttribute(window_, DWMWA_TEXT_COLOR, &kRecoveryText, sizeof(kRecoveryText));
-        (void)DwmSetWindowAttribute(window_, DWMWA_BORDER_COLOR, &kRecoveryBorder, sizeof(kRecoveryBorder));
         // No synthetic Alt, AttachThreadInput, lock timeout changes or escalation.
-        ShowWindow(window_, SW_SHOWNORMAL);
-        (void)SetForegroundWindow(window_);
-        if (GetForegroundWindow() != window_) { close_window(); return false; }
-        UpdateWindow(window_);
+        if (GetForegroundWindow() != target_window) { close_window(); return false; }
+        ShowWindow(window, SW_SHOWNORMAL);
+        (void)SetForegroundWindow(window);
+        if (GetForegroundWindow() != window) { close_window(); return false; }
+        UpdateWindow(window);
         return true;
     }
 
-    InputRecoveryWindowClose pump_window(std::uint64_t) override {
-        if (!window_) return InputRecoveryWindowClose::kNone;
-        if (!IsWindow(window_)) { window_ = nullptr; return InputRecoveryWindowClose::kUser; }
+    InputRecoveryWindowClose pump_window(std::uint64_t now_ms) override {
+        auto& window = prompt_.window;
+        if (!window) return InputRecoveryWindowClose::kNone;
+        if (!IsWindow(window)) { prompt_ = {}; return InputRecoveryWindowClose::kUser; }
         auto reason = InputRecoveryWindowClose::kNone;
         if (!ordinary_input_desktop()) reason = InputRecoveryWindowClose::kDesktopUnavailable;
-        else if (GetForegroundWindow() != window_) reason = InputRecoveryWindowClose::kForegroundLost;
+        else if (GetForegroundWindow() != window) reason = InputRecoveryWindowClose::kForegroundLost;
         // A timed close while we still own foreground can reactivate the same
         // blocking application. Let the user choose the next foreground instead.
         if (reason != InputRecoveryWindowClose::kNone) {
             close_window(); return reason;
         }
         MSG message{};
-        // Only this owned window's queue; never consume the caller's other UI.
-        for (unsigned count = 0; count < 32 && window_ &&
-            PeekMessageW(&message, window_, 0, 0, PM_REMOVE); ++count) {
+        // The filter includes the buttons and excludes the caller's other UI.
+        for (unsigned count = 0; count < 32 && window &&
+            PeekMessageW(&message, window, 0, 0, PM_REMOVE); ++count) {
             if (message.message == WM_QUIT) {
                 PostQuitMessage(static_cast<int>(message.wParam));
                 break;
@@ -213,15 +334,21 @@ public:
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        return window_ ? InputRecoveryWindowClose::kNone : InputRecoveryWindowClose::kUser;
+        if (!window) { prompt_ = {}; return InputRecoveryWindowClose::kUser; }
+        if (prompt_.close_state == TargetCloseState::kRequested &&
+            (!ordinary_input_desktop() || GetForegroundWindow() != window)) {
+            prompt_.set_close_state(TargetCloseState::kUnavailable);
+        }
+        prompt_.update_target_close(now_ms);
+        return InputRecoveryWindowClose::kNone;
     }
 
     void close_window() override {
-        if (window_ && IsWindow(window_)) DestroyWindow(window_);
-        window_ = nullptr;
+        if (prompt_.window && IsWindow(prompt_.window)) DestroyWindow(prompt_.window);
+        prompt_ = {};
     }
 private:
-    HWND window_ = nullptr;
+    RecoveryPrompt prompt_;
 };
 } // namespace
 

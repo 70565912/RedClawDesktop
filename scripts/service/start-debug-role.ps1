@@ -5,6 +5,11 @@ param(
 
     [string]$ConnectionCredentialFile = '',
 
+    [string]$SessionCode = '',
+
+    [ValidateRange(1, 65535)]
+    [int]$IceUdpPort,
+
     [switch]$DryRun
 )
 
@@ -96,6 +101,8 @@ $arguments = @{
     AutoStart = $true
 }
 if ($ConnectionCredentialFile) { $arguments.ConnectionCredentialFile = $ConnectionCredentialFile }
+if ($SessionCode) { $arguments.SessionCode = $SessionCode }
+if ($IceUdpPort) { $arguments.IceUdpPort = $IceUdpPort }
 if ($DryRun) {
     $arguments.DryRun = $true
 }
