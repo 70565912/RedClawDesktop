@@ -34,10 +34,19 @@ PlaybackControlHintOverlay::PlaybackControlHintOverlay(QWidget* canvas)
 }
 
 void PlaybackControlHintOverlay::show_hint(const QString& message, int duration_ms) {
-    if (duration_ms > 0 && isVisible() && !hide_timer_->isActive()) {
+    show_hint(message, duration_ms, duration_ms > 0 ? HintKind::kControl : HintKind::kPersistent);
+}
+
+void PlaybackControlHintOverlay::show_clipboard_failure(const QString& message) {
+    show_hint(message, 4000, HintKind::kClipboardFailure);
+}
+
+void PlaybackControlHintOverlay::show_hint(const QString& message, int duration_ms, HintKind kind) {
+    if (kind != HintKind::kPersistent && isVisible() && kind_ == HintKind::kPersistent) {
         return; // A disconnected-frame warning owns the surface until recovery.
     }
     message_ = message;
+    kind_ = kind;
     reposition();
     show();
     raise();
@@ -54,8 +63,14 @@ void PlaybackControlHintOverlay::hide_hint() {
     hide();
 }
 
+void PlaybackControlHintOverlay::hide_control_hint() {
+    if (kind_ == HintKind::kControl) {
+        hide_hint();
+    }
+}
+
 void PlaybackControlHintOverlay::hide_persistent_hint() {
-    if (!hide_timer_->isActive()) {
+    if (kind_ == HintKind::kPersistent) {
         hide_hint();
     }
 }

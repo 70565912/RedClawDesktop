@@ -119,7 +119,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-10
+Updated: 2026-11-16
+
+Clipboard feedback during reconnect (2026-11-16, M10-T03) — preserves File/Clipboard visibility during session cleanup and shows connected paste failures over playback. See [local validation](../../PROGRESS.md#2026-11-16--clipboard-feedback-during-reconnect-m10-t03).
 
 Runtime log display removal (2026-11-10, M10-T02) — remove the remaining connection-page and diagnostic log displays. Keep connection status, error messages, and file logging. See [local validation](../../PROGRESS.md#2026-11-10--runtime-logs-go-to-files-m10-t02).
 

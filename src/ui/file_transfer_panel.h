@@ -22,6 +22,7 @@ public:
     void cancel_clipboard_paste();
     void set_busy_callback(std::function<void(bool)> callback);
     void set_activity_callback(std::function<void()> callback);
+    void set_clipboard_failure_callback(std::function<void(const QString&)> callback);
     [[nodiscard]] bool busy() const;
     TransferCoordinator& coordinator();
 private:

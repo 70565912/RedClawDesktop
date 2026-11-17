@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-16 — Clipboard feedback during reconnect (M10-T03)
+
+- The Controller keeps its File/Clipboard tool in the user-selected state when a pending paste ends during reconnection. Connected paste failures use the existing playback hint, and confirmed file paste uses the existing progress window. See [PROGRESS](../../PROGRESS.md#2026-11-16--clipboard-feedback-during-reconnect-m10-t03).
+
 ## 2026-11-09 — Keep the Host recovery prompt responsive (M05-T03)
 
 - Replace the native caption and system menu with a fixed prompt and a client-area close button. This keeps Windows menu and caption loops off the Host runtime thread while it drains input. The existing foreground activation, detector and eligibility rules still apply. See the [recovery contract](../architecture/ordinary-desktop-remote-input-v1.md#bounded-ordinary-window-recovery) and [verification status](../../PROGRESS.md#2026-11-09--host-input-recovery-prompt-m05-t03).

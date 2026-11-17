@@ -1207,7 +1207,7 @@ TEST(PlaybackControlHintOverlay, IsMouseTransparentAndReusesOneTimedSurface) {
   overlay.show_hint(QString::fromUtf8("当前为仅观看模式"), 2000);
   EXPECT_TRUE(overlay.isVisible());
   EXPECT_EQ(overlay.message(), QString::fromUtf8("当前为仅观看模式"));
-  overlay.hide_hint();
+  overlay.hide_control_hint();
   EXPECT_FALSE(overlay.isVisible());
 }
 

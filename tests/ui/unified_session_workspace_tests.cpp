@@ -2,6 +2,8 @@
 #include "ui/connection_overlay.h"
 #include "ui/connection_progress_page.h"
 #include "ui/desktop_task_workspace.h"
+#include "ui/file_transfer_panel.h"
+#include "ui/playback_control_hint_overlay.h"
 #include "ui/playback_window_fullscreen_controller.h"
 #include "ui/playback_window_geometry_controller.h"
 #include <gtest/gtest.h>
@@ -32,12 +34,25 @@
 
 namespace {
 using namespace redclaw::ui;
+using namespace redclaw::protocol;
 void settle() { QApplication::processEvents(); QApplication::processEvents(); }
 ConnectionFlowSnapshot connected() {
     ConnectionFlowSnapshot flow; flow.role = ConnectionFlowRole::kController;
     flow.view = ConnectionFlowView::kConnecting; flow.status = ConnectionFlowStatus::kComplete;
     flow.stages.fill(ConnectionStageState::kComplete); flow.current_stage = 3;
     flow.transport_ready = true; flow.attempt = 1; flow.can_exit = true; return flow;
+}
+StreamControlMessageV1 pending_clipboard_image() {
+    StreamControlMessageV1 message;
+    message.type = StreamControlMessageTypeV1::kWorkspace;
+    message.request_id = "pending-image";
+    auto& details = message.workspace.emplace();
+    details.purpose = WorkspaceTransferPurposeV1::kClipboard;
+    details.action = WorkspaceActionV1::kClipboardNativePending;
+    details.clipboard_mode = 6;
+    details.clipboard_token = "image-version";
+    details.clipboard_formats = 32;
+    return message;
 }
 class UnifiedSessionFixture : public testing::Test {
 protected:
@@ -62,6 +77,12 @@ protected:
         tools->connection_button()->click(); settle();
     }
     ConnectionOverlay* overlay() const { return workspace->connection_overlay(); }
+    FileTransferPanel* add_file_tool() {
+        auto* panel = new FileTransferPanel([](const auto&, QString*) { return true; });
+        tools->add_task(DesktopTask::kFiles, "Files/Clipboard", panel, QSize(640, 420));
+        panel->set_activity_callback([this] { tools->set_task_visible(DesktopTask::kFiles, true); });
+        return panel;
+    }
     void TearDown() override { tools.reset(); workspace.reset(); }
 };
 
@@ -173,6 +194,105 @@ TEST_F(UnifiedSessionFixture, IncidentsAutoExpandWithoutFocusAndRecoveryHidesOnl
     EXPECT_TRUE(tools->connection_button()->text().contains(QString::fromUtf8("连接失败")));
     EXPECT_TRUE(tools->connection_button()->toolTip().contains(QString::fromUtf8("连接状态")));
     EXPECT_FALSE(tools->connection_button()->toolTip().contains(QString::fromUtf8("日志")));
+}
+
+TEST_F(UnifiedSessionFixture, ReconnectEndsAnImagePasteWithoutChangingFileToolVisibility) {
+    auto* panel = add_file_tool();
+    auto* status = panel->findChild<QLabel*>("fileTransferStatus");
+    ASSERT_NE(status, nullptr);
+    int notices = 0;
+    panel->set_clipboard_failure_callback([&](const QString&) { ++notices; });
+
+    auto reconnecting = connected();
+    reconnecting.status = ConnectionFlowStatus::kRetryWaiting;
+    reconnecting.transport_ready = false;
+    for (const bool initially_open : {false, true}) {
+        tools->set_task_visible(DesktopTask::kFiles, initially_open);
+        for (const auto* error : {"workspace_disconnected", "workspace_connection_lost", "clipboard_session_changed"}) {
+            SCOPED_TRACE(error);
+            SCOPED_TRACE(initially_open);
+            overlay()->set_state(ConnectionOverlayState::kHidden);
+            auto message = pending_clipboard_image();
+            panel->receive(message);
+            // The runtime can report completion before its reconnect diagnostic.
+            message.workspace->action = WorkspaceActionV1::kFinished;
+            message.workspace->error_code = error;
+            panel->receive(message);
+            workspace->update_connection(reconnecting);
+            settle();
+
+            EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kExpanded);
+            EXPECT_EQ(tools->task_visible(DesktopTask::kFiles), initially_open);
+            EXPECT_EQ(tools->task_window(DesktopTask::kFiles)->isVisible(), initially_open);
+            EXPECT_TRUE(status->text().contains(QString::fromUtf8("本次粘贴已结束")));
+            EXPECT_EQ(status->toolTip(), QString::fromLatin1(error));
+            EXPECT_EQ(notices, 0);
+
+            workspace->update_connection(connected());
+            StreamControlMessageV1 available;
+            available.type = StreamControlMessageTypeV1::kWorkspace;
+            available.file_transfer_version = 1;
+            available.clipboard_version = 5;
+            available.workspace.emplace().action = WorkspaceActionV1::kAvailability;
+            panel->receive(available);
+            settle();
+            EXPECT_EQ(overlay()->state(), ConnectionOverlayState::kHidden);
+            EXPECT_EQ(tools->task_window(DesktopTask::kFiles)->isVisible(), initially_open);
+            EXPECT_TRUE(status->text().contains(QString::fromUtf8("本次粘贴已结束")));
+        }
+    }
+}
+
+TEST_F(UnifiedSessionFixture, PasteFailuresUseTheNonActivatingPlaybackHintAndPreserveFrozenFrameWarning) {
+    auto* panel = add_file_tool();
+    auto* status = panel->findChild<QLabel*>("fileTransferStatus");
+    ASSERT_NE(status, nullptr);
+    PlaybackControlHintOverlay hint(canvas);
+    panel->set_clipboard_failure_callback([&](const QString& message) { hint.show_clipboard_failure(message); });
+    overlay()->set_state(ConnectionOverlayState::kHidden);
+    canvas->setFocus();
+    settle();
+    const auto* focus = QApplication::focusWidget();
+
+    panel->request_clipboard_paste(0);
+    EXPECT_TRUE(hint.isVisible());
+    EXPECT_TRUE(hint.message().contains(QString::fromUtf8("剪贴板不可用")));
+    EXPECT_FALSE(tools->task_window(DesktopTask::kFiles)->isVisible());
+    hint.hide_hint();
+
+    auto message = pending_clipboard_image();
+    panel->receive(message);
+    message.workspace->action = WorkspaceActionV1::kFinished;
+    message.workspace->error_code = "clipboard_busy";
+    panel->receive(message);
+    settle();
+    ASSERT_TRUE(hint.isVisible());
+    hint.hide_control_hint(); // An input-status acknowledgment clears only control guidance.
+    hint.hide_persistent_hint(); // Both playback paths refresh this on new frames.
+    ASSERT_TRUE(hint.isVisible());
+    EXPECT_EQ(hint.message(), status->text());
+    EXPECT_TRUE(hint.message().contains(QString::fromUtf8("剪贴板被其他程序占用")));
+    EXPECT_EQ(QApplication::focusWidget(), focus);
+    EXPECT_FALSE(tools->task_window(DesktopTask::kFiles)->isVisible());
+    hint.hide_hint();
+
+    panel->receive(pending_clipboard_image());
+    message.workspace->error_code = "transfer_cancelled";
+    panel->receive(message);
+    EXPECT_FALSE(hint.isVisible());
+
+    hint.show_hint("Connection interrupted", 0);
+    hint.hide_control_hint();
+    ASSERT_TRUE(hint.isVisible());
+    panel->receive(pending_clipboard_image());
+    message.workspace->error_code = "clipboard_move_result_unknown";
+    message.workspace->clipboard_move = true;
+    panel->receive(message);
+    EXPECT_EQ(hint.message(), QString("Connection interrupted"));
+    EXPECT_TRUE(status->text().contains(QString::fromUtf8("源端移动结果未知")));
+    EXPECT_FALSE(tools->task_window(DesktopTask::kFiles)->isVisible());
+    hint.hide_persistent_hint();
+    EXPECT_FALSE(hint.isVisible());
 }
 
 TEST_F(UnifiedSessionFixture, MissingTransportEvidenceRemainsUnknownRatherThanImplyingNegotiationOrDirect) {

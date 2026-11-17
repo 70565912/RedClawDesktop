@@ -61,6 +61,7 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - Shortcut paste is input the user just typed in the authorized remote view. It does not need a transfer gate. It still needs the unchanged eligibility revision: same input lease, focus, and ordinary desktop. It is refused while a transfer gate is held. `paste_verified_clipboard` keeps its gate requirement for the older paste-after-transfer modes.
 - A side that cannot serve a demand or an invoke replies with `kCancel` and an error code. Silence is not allowed. Examples are a stale token, a busy slot, or no native port.
 - A text or image reservation the peer has not answered within 15 s is released. That also ends a blocked native `GetData`. After the peer answers, the old rule stands: only completion, cancel, or session loss ends it. File flows keep explicit-cancel semantics, because enumeration and confirmation can take long.
+- Controller feedback (Ryan, 2026-11-16). Connected paste failures use a timed playback hint that leaves keyboard focus in place. A connection loss or session change records the interrupted paste in File/Clipboard and leaves the panel in its current open or closed state. The Connection overlay reports reconnection. Confirmed file paste still opens progress once, and an uncertain move result remains available in File/Clipboard.
 - A dead native clipboard port is restarted with a 1 s to 30 s backoff instead of staying off for the session.
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
@@ -127,16 +128,20 @@ Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The as
 
 Made 2026-11-12. Ryan decided that GitHub ruleset 27011669 requires only `docs-guard`. The `build-and-test` workflow may still run, but it is not a required check.
 
+Updated 2026-11-16 with Ryan's approval. The validation scope follows the change.
+
 A merge into `main` needs all of the following at the final head:
 
-- Local build and unit tests passing on both of Ryan's machines (the desktop and the laptop).
+- A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
 - A clean Codex CLI re-review in a fresh read-only find-issues session, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
-- On-device acceptance passing when the change needs device evaluation.
+- Passing dual-machine acceptance when behavior depends on both endpoints. For codec, hardware, driver, installation, or rolling-upgrade changes, verify the relevant devices and configurations. Include mixed-version tests when peer or upgrade compatibility is affected.
 - `docs-guard` green on GitHub.
+
+Build and test evidence carries forward across a verified documentation-only delta. The read-only re-review and `docs-guard` cover the final head.
 
 `build-and-test` is advisory. A failure already visible there should be noted, but the merge does not wait for that job to finish.
 
-Source: Ryan, 2026-11-12.
+Source: Ryan, 2026-11-12 and 2026-11-16.
 
 ## D12 — Keep the Host input recovery prompt modeless
 
