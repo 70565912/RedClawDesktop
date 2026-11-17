@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-11-17 — Independent review subtask
+
+Ryan changed the review convention from a separate Codex CLI invocation to an
+independent read-only subtask. D8, D11 and the Agent guides describe the updated
+workflow. The lead verifies findings and retains development and test ownership.
+
 ## 2026-11-17 — Per-machine Debug Host port
 
 The Debug Host launcher accepts an explicit ICE UDP port or an ignored

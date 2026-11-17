@@ -58,6 +58,7 @@ This list points at existing gates. It does not create new ones.
 - Release automation follows [test-matrix.md](docs/testing/test-matrix.md). Only unattended cases are release gates. Physical keys, visual judgment, UAC, and special hardware or topology are optional developer evaluation. An unrun case is not a pass.
 - GitHub-hosted virtual machines are not the real-desktop acceptance environment ([GitHub Actions validation](docs/testing/github-actions-validation.md)).
 - Security fail-closed rules in root [AGENTS.md](AGENTS.md) stay in force.
+- Independent reviews use a read-only subtask, as specified by [D8](DECISIONS.md#d8--reader-specific-agent-rules-and-on-demand-subtask-reviews) and D11.
 
 ## Out of scope for this agent
 
