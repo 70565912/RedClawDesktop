@@ -197,7 +197,7 @@ $buildPreset = if ($Configuration -eq "Release") {
 
 # Ninja needs the compiler's matching headers and libraries. A shell may have
 # inherited a different Visual Studio developer environment than the compiler
-# fixed by a local preset or the existing CMake cache.
+# fixed by a local preset.
 function Get-ConfiguredCompiler {
     param([string]$PresetName)
 

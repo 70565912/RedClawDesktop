@@ -11,6 +11,7 @@ struct CaptureStreamSnapshot {
     std::uint64_t first_frame_id = 0;
     bool presented = false;
     std::uint64_t input_pause_revision = 0;
+    std::uint64_t navigation_timeout_revision = 0;
     std::uint64_t input_reset_revision = 0;
     bool navigation_pending = false;
 };
@@ -74,8 +75,9 @@ public:
         state_.first_frame_id = frame_id;
         return true;
     }
-    bool presented(std::uint64_t frame_id) {
+    bool presented(std::uint64_t frame_id, std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
+        expire_navigation_locked(now_ms);
         if (state_.availability != CaptureAvailability::kRunning || state_.first_frame_id == 0
             || frame_id < state_.first_frame_id || state_.presented) { return false; }
         state_.presented = true;
@@ -83,16 +85,18 @@ public:
         return true;
     }
     CaptureStreamSnapshot snapshot() const { std::lock_guard lock(mutex_); return state_; }
-    CaptureStreamSnapshot input_snapshot(std::uint64_t now_ms, bool& navigation_expired) {
+    CaptureStreamSnapshot input_snapshot(std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
-        navigation_expired = state_.navigation_pending && now_ms >= navigation_deadline_ms_;
-        if (navigation_expired) {
-            state_.navigation_pending = false;
-            ++state_.input_pause_revision;
-        }
+        expire_navigation_locked(now_ms);
         return state_;
     }
 private:
+    void expire_navigation_locked(std::uint64_t now_ms) {
+        if (state_.navigation_pending && now_ms >= navigation_deadline_ms_) {
+            state_.navigation_pending = false;
+            state_.navigation_timeout_revision = ++state_.input_pause_revision;
+        }
+    }
     bool accepts_locked(std::uint64_t generation) const {
         return state_.availability == CaptureAvailability::kRunning && state_.generation == generation
             && generation > navigation_generation_;

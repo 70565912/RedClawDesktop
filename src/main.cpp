@@ -3647,28 +3647,38 @@ int run_runtime_mode(
             message.capture_first_frame_id = capture.first_frame_id;
             // Capture-status v1 already represents planned first-frame waits as running
             // with no frame ID. Publishing recovering here makes older Controllers re-arm.
-            message.capture_status = capture.navigation_pending
-                || capture.availability == redclaw::capture::CaptureAvailability::kRunning ? 1U
-                : capture.availability == redclaw::capture::CaptureAvailability::kPaused ? 3U : 2U;
+            const bool expired_unpresented = !capture.navigation_pending && !capture.presented
+                && capture.navigation_timeout_revision != 0
+                && capture.navigation_timeout_revision == capture.input_pause_revision;
+            message.capture_status = capture.availability == redclaw::capture::CaptureAvailability::kPaused ? 3U
+                : capture.navigation_pending || (!expired_unpresented
+                    && capture.availability == redclaw::capture::CaptureAvailability::kRunning) ? 1U : 2U;
         }
         return message;
     };
 
-    auto publish_source_activity = [&](
-                                      const redclaw::session::DesktopSourceActivitySnapshot& snapshot) {
+    auto publish_source_activity = [&](const redclaw::session::DesktopSourceActivitySnapshot& snapshot,
+        bool force_capture_status = false) {
         bool control_open = false;
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             control_open = stream_control_channel_open;
         }
-        if (!control_open || (snapshot.revision == 0 && peer_capture_status_version.load() == 0)
-            || (snapshot.state == redclaw::session::DesktopSourceActivityState::kStaticPending
-                && (snapshot.reference_frame_id == 0
-                    || snapshot.reference_keyframe_id == 0))) {
+        const bool missing_reference = snapshot.state == redclaw::session::DesktopSourceActivityState::kStaticPending
+            && (snapshot.reference_frame_id == 0 || snapshot.reference_keyframe_id == 0);
+        const bool capture_status_available = peer_capture_status_version.load() >= 1;
+        if (!control_open || (snapshot.revision == 0 && !capture_status_available)
+            || (missing_reference && !(force_capture_status && capture_status_available))) {
             return false;
         }
+        auto message = make_source_activity_message(snapshot);
+        if (missing_reference) {
+            message.source_activity_state = redclaw::protocol::DesktopSourceActivityStateV1::kUnknown;
+            message.reference_frame_id = 0;
+            message.reference_keyframe_id = 0;
+        }
         std::string send_error;
-        return send_control_message(make_source_activity_message(snapshot), &send_error);
+        return send_control_message(message, &send_error);
     };
 
     auto apply_source_activity_update = [&](
@@ -5161,7 +5171,9 @@ int run_runtime_mode(
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_receiver_stats_snapshot = control;
                 }
-                if (stream_capture_gate.presented(control.latest_presented_frame_id)) {
+                const bool capture_presented =
+                    stream_capture_gate.presented(control.latest_presented_frame_id, now_steady_ms());
+                if (capture_presented) {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     append_timeline(redclaw::render::RuntimeStatusSeverity::kInfo, "capture",
                         "capture recovery confirmed by new frame presentation");
@@ -5173,8 +5185,8 @@ int run_runtime_mode(
                         control.observed_source_activity_revision,
                         control.latest_displayable_keyframe_id);
                 }
-                if (activity_update.state_changed) {
-                    (void)publish_source_activity(activity_update.snapshot);
+                if (activity_update.state_changed || capture_presented) {
+                    (void)publish_source_activity(activity_update.snapshot, capture_presented);
                 }
                 return;
             }
@@ -7977,8 +7989,7 @@ int run_runtime_mode(
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
             }
             remote_input_session.set_transfer_blocked(transfer_operation_gate.blocks_mutation(), now_unix_ms());
-            bool navigation_expired = false;
-            const auto capture_state = stream_capture_gate.input_snapshot(runtime_loop_now_ms, navigation_expired);
+            const auto capture_state = stream_capture_gate.input_snapshot(now_steady_ms());
             if (capture_display_removed.exchange(false)) {
                 remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kGeometryChanged, "capture_display_removed");
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
@@ -7994,10 +8005,20 @@ int run_runtime_mode(
                 && (peer_capture_status_version.load() == 0 || capture_state.presented);
             const bool capture_input_pause_pending = capture_state.input_pause_revision != applied_capture_input_pause_revision;
             if ((!capture_available && !capture_state.navigation_pending) || capture_input_pause_pending) {
+                const bool navigation_expired =
+                    capture_state.navigation_timeout_revision > applied_capture_input_pause_revision;
                 applied_capture_input_pause_revision = capture_state.input_pause_revision;
                 status_changed = redclaw::runtime::pause_remote_input_for_capture(
                     remote_input_session, remote_input_messages,
                     navigation_expired ? "capture_navigation_deadline" : "capture_gate") || status_changed;
+                if (navigation_expired) {
+                    redclaw::session::DesktopSourceActivitySnapshot activity;
+                    {
+                        std::lock_guard source_lock(stream_source_activity_mutex);
+                        activity = stream_source_activity_tracker.snapshot();
+                    }
+                    (void)publish_source_activity(activity, true);
+                }
             } else if (capture_state.navigation_pending) {
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages, true);
             }
