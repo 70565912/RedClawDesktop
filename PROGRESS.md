@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-11-18 — v0.1.13 Windows x64 Developer Preview
+
+Package the mainline changes since v0.1.12, including hardware HEVC negotiation, visibility-aware playback, clipboard feedback during reconnect, the Host recovery prompt and the display-switch control fix. See the [release notes](docs/releases/v0.1.13.md) and [GitHub Release](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.13) for assets and checksums.
+
+Both machines passed the Debug display-switch acceptance for PR #13. The Start Control button became available after the new picture and geometry were ready, and the active control grant survived the return switch. A separate 23-minute idle observation produced no new first-pause event on either side. The idle issue remains open.
+
 ## 2026-11-18 — Display switch and control readiness (M05-T01)
 
 In the original live reproduction, a switch to a new capture generation produced a Host `no_video` pause while authorization remained valid. After the first new frame, Start Control stayed disabled for at least 26 seconds. The display-switch path now tolerates an initial timeout on the expected generation and the GUI refreshes the control button when the capture wait ends. Host and Controller log the first transition out of active input with bounded, non-payload diagnostics. The independent idle exit did not reproduce in a 106-second visible-window sample before the fix. Its cause remains open and the lease duration is unchanged. See [D14](DECISIONS.md#d14--separate-planned-display-waits-from-input-pauses).
@@ -32,7 +38,7 @@ session suites passed 16 and 18 cases respectively. Laptop validation is pending
 
 As of 2026-11-12 (Asia/Shanghai). The clipboard and mainline sections were written 2026-11-06.
 
-`main` includes the clipboard paste fix at `c8ec2a2` (PR #5). Product version metadata is 0.1.12 so the Windows publish script can run after this preparation merges. That script has not been run. The published GitHub package remains v0.1.11, and there is no v0.1.12 tag.
+`main` includes the clipboard paste fix at `c8ec2a2` (PR #5). The previous Windows x64 package was published as [v0.1.12](https://github.com/70565912/RedClawDesktop/releases/tag/v0.1.12).
 
 Intent and acceptance: [SPEC.md](SPEC.md). Decisions: [DECISIONS.md](DECISIONS.md). Agent gate: [AGENTS.md](AGENTS.md).
 
@@ -201,7 +207,7 @@ D11 was recorded in `cdc01b3`; the previous review head `2748350` adjusted the v
 - `40b80cc` is the merge of PR #1, "Remove the Connection overlay log and clean logs on startup" (https://github.com/70565912/RedClawDesktop/pull/1). Author Ryan Chen. Merged 2026-11-05 14:46 UTC (2026-11-05 22:46 Asia/Shanghai).
 - The floating Connection panel no longer shows the scrolling runtime log. Progress, pairing, handshake, live link, path and picture status, and reconnect/disconnect stay. The connection page keeps its own log. Diagnostics stay in capacity-limited files. The same behavior is described in [README.md](README.md) and the 2026-11-05 section of [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md).
 - PR #1 checks that completed before merge: `docs-guard` success, `hint` success, `build-and-test` success (Actions run `42042846320`). The PR body says the authoring environment had no VS2022 toolchain. No new dual-machine visual acceptance for this merge is written in the tree.
-- The last published package is the v0.1.11 Developer Preview ([release notes](docs/releases/v0.1.11.md)). Version metadata and [v0.1.12 release notes](docs/releases/v0.1.12.md) are prepared. `main` since that tag includes the dark workspace, the connection overlay, overlay-log removal (PR #1, `40b80cc`), the root status files (PR #4, `eca4b31`), and the clipboard paste repair (`c8ec2a2`).
+- The v0.1.12 Developer Preview followed v0.1.11 and included the dark workspace, the connection overlay, overlay-log removal (PR #1, `40b80cc`), the root status files (PR #4, `eca4b31`), and the clipboard paste repair (`c8ec2a2`). See the [v0.1.12 release notes](docs/releases/v0.1.12.md).
 - The Android spike is not on `main`. Searches for `android-controller-spike` and `M11-S0` found nothing. Kanban `M11-T01` remains `planned`.
 - On `main`, the Host selects H.264 in `src/main.cpp` at the startup/resize profile (`preferred_codec`), the bridge request (`codec`), and the adaptive profile (`preferred_codec`), all `EncoderCodec::kH264`. `EncoderCodec::kHevc` mapping exists. A search of `src/` found no `video_decode` capability field. That matches the "Host sends H.264" and "no decoder capability" claims in PR #3. The rest of that PR's risk table was not re-measured here.
 
@@ -244,4 +250,4 @@ Items 1–5 remain open. Item 6 is the publish step after this preparation is on
 3. Keep the Windows product on direct-first P2P. TURN stays optional and user-provided. Do not add a product-owned relay to paper over the cellular ICE failure.
 4. The next phase named in [README.md](README.md) — wider cross-site and TURN coverage, unattended install and upgrade, code signing, and lower GUI / Agent scheduling cost — stays backlog. It is not the next edit unless Ryan assigns it.
 5. Ryan confirms the open questions in [SPEC.md](SPEC.md): Flutter companion versus the sealed spike, and whether `RC7TST01` is still relevant.
-6. From a clean Windows checkout of `main`, run `scripts/release/publish-github-release.ps1 -Version 0.1.12`. That step creates the tag and the GitHub Pre-release. This preparation does not run it.
+6. Publish v0.1.13 from a clean Windows checkout of `main` using `scripts/release/publish-github-release.ps1 -Version 0.1.13`. The GitHub Release page records publication.

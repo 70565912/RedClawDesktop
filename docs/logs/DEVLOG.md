@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-18 — v0.1.13 Windows x64 Developer Preview
+
+- Version and release notes cover the mainline changes since v0.1.12. See the [release notes](../releases/v0.1.13.md) and [progress](../../PROGRESS.md#2026-11-18--v0113-windows-x64-developer-preview).
+
 ## 2026-11-18 — Keep control available across planned display switches
 
 - Preserve the input grant during the planned first-frame wait, refresh the Controller controls when the new region and presentation are ready, and record the first input pause at both endpoints. See [progress](../../PROGRESS.md#2026-11-18--display-switch-and-control-readiness-m05-t01).
