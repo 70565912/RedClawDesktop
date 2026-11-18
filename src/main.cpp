@@ -3196,6 +3196,7 @@ int run_runtime_mode(
     StreamRttTelemetry stream_rtt_telemetry_snapshot;
     StreamAdaptiveControlState stream_adaptive_control_snapshot;
     std::mutex stream_source_activity_mutex;
+    std::mutex stream_source_activity_publish_mutex;
     redclaw::session::DesktopSourceActivityTracker stream_source_activity_tracker;
     redclaw::session::HostStreamWorkCoordinator stream_work_coordinator;
     redclaw::session::ControllerDecoderRecoveryCoordinator
@@ -3671,6 +3672,9 @@ int run_runtime_mode(
             || (missing_reference && !(force_capture_status && capture_status_available))) {
             return false;
         }
+        // Sample the capture gate in the same order the notices go on the wire.
+        // A timeout notice racing a presentation ACK must not restore a stale wait.
+        std::lock_guard publish_lock(stream_source_activity_publish_mutex);
         auto message = make_source_activity_message(snapshot);
         if (missing_reference) {
             message.source_activity_state = redclaw::protocol::DesktopSourceActivityStateV1::kUnknown;
