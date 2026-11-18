@@ -47,7 +47,7 @@ TEST(AdaptiveSenderDecodeIntegration, OutputReservationRejectsBeforeAllocationAn
     EXPECT_FALSE(pixels.pixels.empty());
 }
 
-TEST(AdaptiveSenderDecodeIntegration, ReservedFifoReusesBuffersAndDecodesBothSharedSlots) {
+TEST(AdaptiveSenderDecodeIntegration, ReservedFifoReusesBuffersAndDecodesSharedRing) {
     redclaw::capture::EncoderConfigProfile profile;
     std::string error;
     ASSERT_TRUE(redclaw::capture::build_low_latency_encoder_profile(
@@ -87,7 +87,8 @@ TEST(AdaptiveSenderDecodeIntegration, ReservedFifoReusesBuffersAndDecodesBothSha
         if (result.status == EncodedVideoReassemblyStatus::kComplete) {
             const auto& frame = result.frame;
             const auto sequence = frame.frame_id;
-            auto* slot = direct_frame_shared_slot_header(mapping.data(), static_cast<std::uint32_t>((sequence - 1) % 2));
+            const auto slot_index = static_cast<std::uint32_t>((sequence - 1) % header->slot_count);
+            auto* slot = direct_frame_shared_slot_header(mapping.data(), slot_index);
             slot->frame = {};
             std::memcpy(slot->frame.magic, kDirectFrameChannelMagic, sizeof(kDirectFrameChannelMagic));
             slot->frame.width = frame.width; slot->frame.height = frame.height;
@@ -98,8 +99,8 @@ TEST(AdaptiveSenderDecodeIntegration, ReservedFifoReusesBuffersAndDecodesBothSha
             std::memcpy(direct_frame_shared_slot_payload(slot), frame.payload.data(), frame.payload.size());
             direct_frame_atomic_store_i64(&slot->committed_sequence, sequence);
             direct_frame_atomic_store_i64(&header->latest_sequence, sequence);
-            // Deliberately consume in pairs through the unmodified two-slot
-            // read planner and snapshot API, then the real software decoder.
+            // Consume in pairs through the shared-ring read planner and snapshot
+            // API, then the real software decoder.
             if (sequence % 2 == 0) {
                 for (unsigned j = 0; j < 2; ++j) {
                     const auto plan = plan_direct_frame_shared_read(mapping.data(), header, consumed, false);

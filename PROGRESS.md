@@ -209,7 +209,7 @@ D11 was recorded in `cdc01b3`; the previous review head `2748350` adjusted the v
 - PR #1 checks that completed before merge: `docs-guard` success, `hint` success, `build-and-test` success (Actions run `42042846320`). The PR body says the authoring environment had no VS2022 toolchain. No new dual-machine visual acceptance for this merge is written in the tree.
 - The v0.1.12 Developer Preview followed v0.1.11 and included the dark workspace, the connection overlay, overlay-log removal (PR #1, `40b80cc`), the root status files (PR #4, `eca4b31`), and the clipboard paste repair (`c8ec2a2`). See the [v0.1.12 release notes](docs/releases/v0.1.12.md).
 - The Android spike is not on `main`. Searches for `android-controller-spike` and `M11-S0` found nothing. Kanban `M11-T01` remains `planned`.
-- On `main`, the Host selects H.264 in `src/main.cpp` at the startup/resize profile (`preferred_codec`), the bridge request (`codec`), and the adaptive profile (`preferred_codec`), all `EncoderCodec::kH264`. `EncoderCodec::kHevc` mapping exists. A search of `src/` found no `video_decode` capability field. That matches the "Host sends H.264" and "no decoder capability" claims in PR #3. The rest of that PR's risk table was not re-measured here.
+- PR #10 (`3587d5d`) added hardware HEVC negotiation, H.264 fallback and Controller playback recovery to `main`. See [D10](DECISIONS.md#d10--hevc-is-preferred-when-both-peers-have-hardware-hevc-h264-stays-the-fallback) for the codec selection policy.
 
 ## Open pull requests
 
