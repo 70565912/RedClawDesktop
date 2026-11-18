@@ -92,6 +92,8 @@ Updated: 2026-10-16
 
 ## M07 Service
 
+Debug launcher build environment (2026-11-17) — repaired configured MSVC environment selection; standard Debug build, publication, startup freshness and mismatched-environment compile checks passed. See [progress](../../PROGRESS.md#2026-11-17--match-msvc-environment-during-debug-builds).
+
 - `M07-T01` Windows service and pre-login handoff scaffolding — in-progress.
 - `M07-T02` Signed unattended installer and upgrade — planned.
 

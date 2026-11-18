@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-11-17 — Match MSVC environment during Debug builds
+
+The desktop Debug Host launch selected a published runtime as stale after the main checkout refreshed source timestamps. Its automatic build combined the configured VS2022 MSVC 14.44 compiler with MSVC 14.51 headers and failed with STL1001. The build wrapper now resolves an explicitly configured MSVC compiler through preset inheritance and initializes its matching Visual Studio developer environment before configure and build. Presets without an explicit MSVC path keep their existing environment.
+
+On the desktop, the standard Debug application build and publication passed. An intentionally mismatched MSVC 14.51 environment rebuilt an input object and relinked the Debug application with MSVC 14.44. The published runtime passed its startup freshness check and a restricted-PATH `--help` probe. The existing startup-freshness fixture passed all 16 cases. A verified pre-publication runtime backup is under `build/reports/debug-build-fix-rollback-20261117-170958`. The Host was not started as part of this check.
+
 ## 2026-11-17 — Independent review subtask
 
 Ryan changed the review convention from a separate Codex CLI invocation to an
