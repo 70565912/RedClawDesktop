@@ -37,6 +37,7 @@ public:
     }
     bool control_allowed() const { return !waiting() && !rearm_required_; }
     bool rearm_required() const { return rearm_required_; }
+    std::uint64_t generation() const { return generation_; }
 private:
     void complete_navigation() {
         if (navigation_pending_ && generation_ > navigation_generation_ && !waiting())

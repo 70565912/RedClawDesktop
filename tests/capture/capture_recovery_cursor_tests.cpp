@@ -180,19 +180,19 @@ TEST(CaptureRecovery, OldFramesAreRejectedAndRecoveryRequiresPresentation) {
     CaptureStreamGate gate;
     EXPECT_TRUE(gate.update(CaptureAvailability::kRunning, 1));
     EXPECT_TRUE(gate.submitted_keyframe(1, 10));
-    EXPECT_FALSE(gate.presented(9));
-    EXPECT_TRUE(gate.presented(10));
+    EXPECT_FALSE(gate.presented(9, 1));
+    EXPECT_TRUE(gate.presented(10, 1));
     EXPECT_TRUE(gate.update(CaptureAvailability::kPaused, 1));
     EXPECT_FALSE(gate.accepts(1));
-    EXPECT_FALSE(gate.presented(100));
+    EXPECT_FALSE(gate.presented(100, 1));
     EXPECT_TRUE(gate.update(CaptureAvailability::kRecovering, 2));
     EXPECT_FALSE(gate.accepts(1));
     EXPECT_FALSE(gate.update(CaptureAvailability::kRunning, 2));
     EXPECT_FALSE(gate.snapshot().presented);
     EXPECT_FALSE(gate.submitted_keyframe(1, 101));
     EXPECT_TRUE(gate.submitted_keyframe(2, 102));
-    EXPECT_FALSE(gate.presented(101));
-    EXPECT_TRUE(gate.presented(102));
+    EXPECT_FALSE(gate.presented(101, 1));
+    EXPECT_TRUE(gate.presented(102, 1));
 }
 
 TEST(CaptureRecovery, FastRecoveryLatchesInputPauseAndRejectsInflightSubmission) {
@@ -213,21 +213,27 @@ TEST(CaptureRecovery, NavigationRejectsOldGenerationAndRetainsConsentUntilNewPre
     CaptureStreamGate gate;
     gate.update(CaptureAvailability::kRunning, 1);
     gate.submitted_keyframe(1, 10);
-    gate.presented(10);
+    gate.presented(10, 1);
     const auto pause_revision = gate.snapshot().input_pause_revision;
-    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    gate.started_capture(2);
     EXPECT_EQ(gate.snapshot().input_reset_revision, 1U);
     EXPECT_TRUE(gate.snapshot().navigation_pending);
     EXPECT_FALSE(gate.accepts(1));
     EXPECT_FALSE(gate.submitted_keyframe(1, 11));
-    EXPECT_FALSE(gate.presented(11));
-    EXPECT_TRUE(gate.update(CaptureAvailability::kRunning, 2));
+    EXPECT_FALSE(gate.presented(11, 2));
+    EXPECT_TRUE(gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout));
+    EXPECT_FALSE(gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout));
+    EXPECT_TRUE(gate.snapshot().navigation_pending);
+    EXPECT_EQ(gate.snapshot().input_pause_revision, pause_revision);
+    EXPECT_FALSE(gate.accepts(2));
+    EXPECT_FALSE(gate.update(CaptureAvailability::kRunning, 2));
     EXPECT_EQ(gate.snapshot().input_pause_revision, pause_revision);
     EXPECT_TRUE(gate.accepts(2));
     EXPECT_TRUE(gate.submitted_keyframe(2, 20));
-    EXPECT_FALSE(gate.presented(19));
+    EXPECT_FALSE(gate.presented(19, 3));
     EXPECT_TRUE(gate.snapshot().navigation_pending);
-    EXPECT_TRUE(gate.presented(20));
+    EXPECT_TRUE(gate.presented(20, 4));
     EXPECT_FALSE(gate.snapshot().navigation_pending);
     EXPECT_TRUE(gate.snapshot().presented);
 }
@@ -236,17 +242,65 @@ TEST(CaptureRecovery, NavigationCannotHideCaptureFailureOrSubsequentUnexpectedRe
     CaptureStreamGate gate;
     gate.update(CaptureAvailability::kRunning, 1);
     const auto pause_revision = gate.snapshot().input_pause_revision;
-    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    gate.started_capture(2);
     gate.update(CaptureAvailability::kPaused, 2);
     EXPECT_GT(gate.snapshot().input_pause_revision, pause_revision);
     EXPECT_FALSE(gate.snapshot().navigation_pending);
     EXPECT_FALSE(gate.accepts(2));
     gate.update(CaptureAvailability::kRunning, 3);
     gate.submitted_keyframe(3, 30);
-    gate.presented(30);
+    gate.presented(30, 2);
     const auto recovered_revision = gate.snapshot().input_pause_revision;
     gate.update(CaptureAvailability::kRunning, 4);
     EXPECT_GT(gate.snapshot().input_pause_revision, recovered_revision);
+}
+
+TEST(CaptureRecovery, DisplaySwitchDeadlineRetainsOldFrameFenceAndRequiresRearm) {
+    CaptureStreamGate gate;
+    gate.update(CaptureAvailability::kRunning, 1);
+    const auto pause_revision = gate.snapshot().input_pause_revision;
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    EXPECT_TRUE(gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs).navigation_pending);
+    const auto since_expiry = gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs + 1);
+    EXPECT_FALSE(since_expiry.navigation_pending);
+    EXPECT_GT(since_expiry.input_pause_revision, pause_revision);
+    EXPECT_FALSE(gate.accepts(1));
+    EXPECT_FALSE(gate.presented(10, CaptureStreamGate::kNavigationTimeoutMs + 1));
+    EXPECT_EQ(gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs + 2).input_pause_revision,
+        since_expiry.input_pause_revision);
+}
+
+TEST(CaptureRecovery, LatePresentationBeforeInputPollStillLatchesNavigationTimeout) {
+    CaptureStreamGate gate;
+    gate.update(CaptureAvailability::kRunning, 1);
+    const auto pause_revision = gate.snapshot().input_pause_revision;
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    gate.started_capture(2);
+    gate.update(CaptureAvailability::kRunning, 2);
+    ASSERT_TRUE(gate.submitted_keyframe(2, 20));
+    // The late frame is displayable, but the input loop must still pause.
+    ASSERT_TRUE(gate.presented(20, CaptureStreamGate::kNavigationTimeoutMs + 1));
+    const auto state = gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs + 2);
+    EXPECT_FALSE(state.navigation_pending);
+    EXPECT_TRUE(state.presented);
+    EXPECT_EQ(state.input_pause_revision, pause_revision + 1);
+    EXPECT_EQ(state.navigation_timeout_revision, state.input_pause_revision);
+}
+
+TEST(CaptureRecovery, OtherGenerationOrCaptureFailureEndsPlannedWait) {
+    for (const auto kind : {CaptureStreamUpdate::kObservation, CaptureStreamUpdate::kAcquireTimeout}) {
+        CaptureStreamGate gate;
+        gate.update(CaptureAvailability::kRunning, 1);
+        const auto pause_revision = gate.snapshot().input_pause_revision;
+        gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+        gate.started_capture(2);
+        gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout);
+        const auto generation = kind == CaptureStreamUpdate::kObservation ? 2 : 3;
+        EXPECT_TRUE(gate.update(CaptureAvailability::kRecovering, generation, kind));
+        EXPECT_FALSE(gate.snapshot().navigation_pending);
+        EXPECT_GT(gate.snapshot().input_pause_revision, pause_revision);
+    }
 }
 
 TEST(CapturePlayback, NavigationRunningGenerationWaitDoesNotRequireNewControlRequest) {

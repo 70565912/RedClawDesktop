@@ -47,7 +47,9 @@ Local PR #10 review fixes for M02-T03 cover static-desktop recovery, D3D11 cover
 
 ## M05 Input
 
-Updated: 2026-11-13
+Updated: 2026-11-18
+
+Planned display switch and control readiness (2026-11-18, M05-T01) — preserve control during the first-frame wait and refresh the button after presentation. Both endpoints record the first pause for the separate idle-exit investigation. See [progress](../../PROGRESS.md#2026-11-18--display-switch-and-control-readiness-m05-t01).
 
 Recovery prompt input stall (2026-11-09, M05-T03) — fixed the prompt's modal caption path and added a user-triggered close request for the original window. Local Debug validation passes. The broader historical input incident remains open. See [progress and validation](../../PROGRESS.md#2026-11-09--host-input-recovery-prompt-m05-t03).
 
@@ -91,6 +93,8 @@ Updated: 2026-10-16
 - `M06-T02` Long-duration cross-site stability — planned.
 
 ## M07 Service
+
+Debug launcher build environment (2026-11-17) — repaired configured MSVC environment selection; standard Debug build, publication, startup freshness and mismatched-environment compile checks passed. See [progress](../../PROGRESS.md#2026-11-17--match-msvc-environment-during-debug-builds).
 
 - `M07-T01` Windows service and pre-login handoff scaffolding — in-progress.
 - `M07-T02` Signed unattended installer and upgrade — planned.

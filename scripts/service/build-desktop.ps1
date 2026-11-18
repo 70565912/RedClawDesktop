@@ -194,6 +194,83 @@ $buildPreset = if ($Configuration -eq "Release") {
         -AvailableNames $buildPresetNames `
         -PresetKind "Debug build"
 }
+
+# Ninja needs the compiler's matching headers and libraries. A shell may have
+# inherited a different Visual Studio developer environment than the compiler
+# fixed by a local preset.
+function Get-ConfiguredCompiler {
+    param([string]$PresetName)
+
+    $presets = @{}
+    foreach ($presetFile in @('CMakePresets.json', 'CMakeUserPresets.json')) {
+        $document = Get-PresetDocument -PresetPath (Join-Path $repoRoot $presetFile)
+        if ($null -ne $document) {
+            foreach ($preset in @($document.configurePresets)) {
+                if ($null -ne $preset -and $preset.name) { $presets[$preset.name] = $preset }
+            }
+        }
+    }
+    function Find-Compiler([string]$Name, [System.Collections.Generic.HashSet[string]]$Visited) {
+        if (-not $Visited.Add($Name) -or -not $presets.ContainsKey($Name)) { return $null }
+        $preset = $presets[$Name]
+        $variables = $preset.PSObject.Properties['cacheVariables']
+        if ($null -ne $variables -and $null -ne $variables.Value) {
+            $compiler = $variables.Value.PSObject.Properties['CMAKE_CXX_COMPILER']
+            if ($null -ne $compiler) {
+                if ($compiler.Value -is [string]) { return $compiler.Value }
+                if ($null -ne $compiler.Value.value) { return [string]$compiler.Value.value }
+            }
+        }
+        foreach ($parent in @($preset.inherits)) {
+            if ($parent) {
+                $found = Find-Compiler $parent $Visited
+                if ($found) { return $found }
+            }
+        }
+        return $null
+    }
+    return Find-Compiler $PresetName ([System.Collections.Generic.HashSet[string]]::new())
+}
+
+function Initialize-MsvcEnvironment {
+    param([string]$Compiler)
+
+    if ([string]::IsNullOrWhiteSpace($Compiler)) { return }
+    $normalized = $Compiler.Replace('/', '\')
+    $match = [regex]::Match($normalized, '^(?<root>.+)\\VC\\Tools\\MSVC\\(?<version>\d+\.\d+\.\d+)\\bin\\Host(?<host>x64|x86)\\(?<target>x64|x86|arm64)\\cl\.exe$', 'IgnoreCase')
+    if (-not $match.Success) { return }
+    if (-not (Test-Path -LiteralPath $normalized -PathType Leaf)) { throw 'Configured MSVC compiler not found.' }
+    $setup = Join-Path $match.Groups['root'].Value 'Common7\Tools\VsDevCmd.bat'
+    if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Visual Studio developer environment not found for configured compiler.' }
+    $version = $match.Groups['version'].Value
+    $hostArch = $match.Groups['host'].Value.ToLowerInvariant()
+    $targetArch = $match.Groups['target'].Value.ToLowerInvariant()
+    # VsDevCmd uses inherited VSINSTALLDIR to find the selected toolset.
+    $reset = @('VSCMD_VER', 'INCLUDE', 'LIB', 'LIBPATH', 'VSINSTALLDIR', 'VCINSTALLDIR',
+        'VCToolsInstallDir', 'VCToolsVersion', 'VCToolsRedistDir', 'VisualStudioVersion') |
+        ForEach-Object { "set `"$_=`"" }
+    $setupCommand = ($reset -join '&& ') + "&& call `"$setup`" -no_logo -host_arch=$hostArch -arch=$targetArch"
+    $environment = & cmd.exe /d /s /c "$setupCommand -vcvars_ver=$version >nul && set"
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to initialize the configured MSVC developer environment.' }
+    foreach ($line in $environment) {
+        if ($line -match '^(?<name>[^=]+)=(?<value>.*)$') {
+            $environmentName = $Matches.name
+            $environmentValue = $Matches.value
+            if ($environmentName -match '^(PATH|INCLUDE|LIB|LIBPATH|VC.*|VS.*|WindowsSdk.*|UniversalCRT.*|UCRT.*|NETFXSDK.*|Framework.*|DevEnvDir|ExtensionSdkDir)$') {
+                Set-Item -LiteralPath ('Env:' + $environmentName) -Value $environmentValue
+            }
+        }
+    }
+    $activeCompiler = Get-Command cl.exe -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $activeCompiler.Source).Hash -ne (Get-FileHash -LiteralPath $normalized).Hash) {
+        throw 'Active MSVC compiler does not match the configured compiler.'
+    }
+    Write-Host "[build] Using matching MSVC $version ($hostArch -> $targetArch)." -ForegroundColor Cyan
+}
+
+$configuredCompiler = Get-ConfiguredCompiler -PresetName $resolvedConfigurePreset
+Initialize-MsvcEnvironment -Compiler $configuredCompiler
+
 $guardArgsPrefix = @()
 if (-not [string]::IsNullOrWhiteSpace($CMakePath)) {
     $guardArgsPrefix += @("-CMakePath", $CMakePath)

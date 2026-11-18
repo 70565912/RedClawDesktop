@@ -1,5 +1,15 @@
 # Progress
 
+## 2026-11-18 — Display switch and control readiness (M05-T01)
+
+In the original live reproduction, a switch to a new capture generation produced a Host `no_video` pause while authorization remained valid. After the first new frame, Start Control stayed disabled for at least 26 seconds. The display-switch path now tolerates an initial timeout on the expected generation and the GUI refreshes the control button when the capture wait ends. Host and Controller log the first transition out of active input with bounded, non-payload diagnostics. The independent idle exit did not reproduce in a 106-second visible-window sample before the fix. Its cause remains open and the lease duration is unchanged. See [D14](DECISIONS.md#d14--separate-planned-display-waits-from-input-pauses).
+
+## 2026-11-17 — Match MSVC environment during Debug builds
+
+The desktop Debug Host launch selected a published runtime as stale after the main checkout refreshed source timestamps. Its automatic build combined the configured VS2022 MSVC 14.44 compiler with MSVC 14.51 headers and failed with STL1001. The build wrapper now resolves an explicitly configured MSVC compiler through preset inheritance and initializes its matching Visual Studio developer environment before configure and build. Presets without an explicit MSVC path keep their existing environment.
+
+On the desktop, the standard Debug application build and publication passed. An intentionally mismatched MSVC 14.51 environment rebuilt an input object and relinked the Debug application with MSVC 14.44. The published runtime passed its startup freshness check and a restricted-PATH `--help` probe. The existing startup-freshness fixture passed all 16 cases. A verified pre-publication runtime backup is under `build/reports/debug-build-fix-rollback-20261117-170958`. The Host was not started as part of this check.
+
 ## 2026-11-17 — Independent review subtask
 
 Ryan changed the review convention from a separate Codex CLI invocation to an

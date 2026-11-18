@@ -1368,12 +1368,20 @@ TEST(ControllerRemoteInputCapture, AcknowledgmentLimitStillStopsInputWithItsActu
   using Peer = redclaw::ui::ControllerRemoteInputCaptureTestPeer;
   redclaw::ui::ControllerRemoteInputCapture capture(nullptr);
   QString reason;
-  capture.set_paused_callback([&](const QString& value) { reason = value; });
+  std::vector<std::string> sources;
+  capture.set_paused_callback([&](const QString& value, const auto& event) {
+    reason = value;
+    sources.emplace_back(event.source);
+    EXPECT_EQ(event.last_ack_age_ms, -1);
+    EXPECT_GE(event.last_sync_sent_age_ms, 0);
+  });
   capture.set_send_message_callback([](const auto&, QString*) { return true; });
   Peer::start(capture);
   for (int i = 0; i <= 256; ++i) Peer::synchronize(capture);
   EXPECT_FALSE(capture.control_enabled());
   EXPECT_TRUE(reason.contains("acknowledgments stalled"));
+  capture.pause(false, "late host status", "host_input_status");
+  EXPECT_EQ(sources, (std::vector<std::string>{"ack_window_full"}));
 }
 
 TEST(ControllerRemoteInputCapture, ReadsLoopbackMarkerFromWindowsMessageQueue) {

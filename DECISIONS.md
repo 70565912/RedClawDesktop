@@ -155,6 +155,10 @@ optional port override in the ignored local configuration or pass it explicitly;
 the shared launcher retains the supervisor default when no override is present.
 This does not create a router mapping or require TURN.
 
+## D14 — Separate planned display waits from input pauses
+
+An accepted display switch may wait up to five seconds for the new capture and presentation. While waiting, Host keeps the active grant and filters input to empty state syncs and Stop. Only first-frame timeouts on the requested capture generation receive this treatment. A real failure, display removal, deadline expiry, or invalid input lease still pauses control. Controller refreshes the control button when the relevant frame and geometry confirmation complete. The wire protocol and three-second input lease are unchanged. Both sides record the first pause with its local trigger and recent input timing to investigate any separate idle exit.
+
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).

@@ -1,5 +1,13 @@
 # Development Log
 
+## 2026-11-18 — Keep control available across planned display switches
+
+- Preserve the input grant during the planned first-frame wait, refresh the Controller controls when the new region and presentation are ready, and record the first input pause at both endpoints. See [progress](../../PROGRESS.md#2026-11-18--display-switch-and-control-readiness-m05-t01).
+
+## 2026-11-17 — Match the configured MSVC environment
+
+- Initialize the Visual Studio environment matching the compiler configured through CMake preset inheritance, preventing mixed-version MSVC headers during the Debug Host's automatic build. See [build verification](../../PROGRESS.md#2026-11-17--match-msvc-environment-during-debug-builds).
+
 ## 2026-11-16 — Clipboard feedback during reconnect (M10-T03)
 
 - The Controller keeps its File/Clipboard tool in the user-selected state when a pending paste ends during reconnection. Connected paste failures use the existing playback hint, and confirmed file paste uses the existing progress window. See [PROGRESS](../../PROGRESS.md#2026-11-16--clipboard-feedback-during-reconnect-m10-t03).

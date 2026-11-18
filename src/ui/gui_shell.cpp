@@ -2429,6 +2429,9 @@ bool launch_gui_shell(
         ? QString::fromUtf8("关闭声音")
         : QString::fromUtf8("播放声音"));
   };
+  const auto control_waiting_for_capture = [&]() {
+    return capture_playback_state.waiting() || remote_input_capture->pending_capture_region_revision() != 0;
+  };
   auto refresh_remote_control_ui = [&]() {
     refresh_audio_ui();
     if (remote_input_capture->active()) {
@@ -2458,7 +2461,7 @@ bool launch_gui_shell(
         && remote_input_supported
         && remote_input_authorized
         && remote_input_frame_ready
-        && !capture_playback_state.waiting()
+        && !control_waiting_for_capture()
         && !remote_input_request_pending
         && !file_transfer_panel->busy());
     if (!remote_input_supported) {
@@ -2467,6 +2470,8 @@ bool launch_gui_shell(
       remote_control_status->setText("View only — Host did not authorize keyboard and mouse control.");
     } else if (!remote_input_frame_ready) {
       remote_control_status->setText("Control available after the first real desktop frame is displayed.");
+    } else if (control_waiting_for_capture()) {
+      remote_control_status->setText(QString::fromUtf8("正在等待新画面和显示区域确认。"));
     } else if (remote_input_request_pending) {
       remote_control_status->setText("Requesting control from Host…");
     } else {
@@ -2487,7 +2492,17 @@ bool launch_gui_shell(
     append_log(QString("Clipboard shortcut intercepted clipboard_sequence=%1").arg(sequence));
     file_transfer_panel->request_clipboard_paste(sequence);
   });
-  remote_input_capture->set_paused_callback([&](const QString& reason) {
+  remote_input_capture->set_paused_callback([&](const QString& reason, const ControllerInputPauseObservation& event) {
+    const auto host_reason = redclaw::protocol::to_string(remote_input_reason);
+    append_log(QString("Remote input first_pause role=controller source=%1 host_reason=%2 last_ack_age_ms=%3 last_sync_sent_age_ms=%4 capture_generation=%5 capture_waiting=%6 geometry_revision=%7 pending_region_request=%8")
+        .arg(QString::fromLatin1(event.source))
+        .arg(QString::fromLatin1(host_reason.data(), static_cast<int>(host_reason.size())))
+        .arg(event.last_ack_age_ms)
+        .arg(event.last_sync_sent_age_ms)
+        .arg(capture_playback_state.generation())
+        .arg(capture_playback_state.waiting())
+        .arg(event.geometry_revision)
+        .arg(event.pending_region_request));
     file_transfer_panel->cancel_clipboard_paste();
     remote_input_request_pending = false;
     playback_control_hint->hide_control_hint();
@@ -2522,11 +2537,11 @@ bool launch_gui_shell(
   };
   QObject::connect(remote_control_button, &QPushButton::clicked, [&]() {
     if (remote_input_capture->active()) {
-      remote_input_capture->pause(true, "Paused by Controller user.");
+      remote_input_capture->pause(true, "Paused by Controller user.", "user_stop");
       (void)send_input_control_request(false);
       return;
     }
-    if (!capture_playback_state.request_control()) { return; }
+    if (control_waiting_for_capture() || !capture_playback_state.request_control()) { return; }
     remote_input_request_pending = true;
     if (!send_input_control_request(true)) {
       return;
@@ -3539,6 +3554,7 @@ bool launch_gui_shell(
         if (QString::fromStdString(display_id) != desktop_navigation_panel->confirmed_display_id())
           capture_playback_state.begin_navigation();
         remote_input_capture->begin_capture_region_change(revision);
+        refresh_remote_control_ui();
         return true;
       });
 
@@ -3571,7 +3587,7 @@ bool launch_gui_shell(
                                     bool hide_window, bool preserve_frozen_frame = false) {
     const bool keep_agent_workspace_visible = playback_window->isVisible()
         && role_combo->currentText() == "controller";
-    remote_input_capture->pause(true, "Playback surface reset.");
+    remote_input_capture->pause(true, "Playback surface reset.", "playback_reset");
     playback_control_hint->hide_hint();
     remote_input_supported = false;
     remote_input_authorized = false;
@@ -3739,6 +3755,7 @@ bool launch_gui_shell(
         app.latency.record(GuiStage::kDisplayedFrame, 0);
       } else app.latency.record(GuiStage::kRedraw, 0);
       receiver_rendered_frames = direct_frame_presented_frames;
+      const bool was_waiting_for_control_frame = control_waiting_for_capture();
       capture_playback_state.presented(direct_frame.frame_id);
       retry_capture_button->setVisible(capture_playback_state.retry_available());
       direct_frame_last_present_error.clear();
@@ -3784,12 +3801,15 @@ bool launch_gui_shell(
           set_runtime_banner("Live desktop connected.", "good");
         }
       }
-      if (!remote_input_frame_ready && !capture_playback_state.waiting()) {
+      const bool input_frame_became_ready = !remote_input_frame_ready && !capture_playback_state.waiting();
+      if (input_frame_became_ready) {
         remote_input_frame_ready = true;
         playback_control_hint->hide_persistent_hint();
-        refresh_remote_control_ui();
         present_playback_window();
         playback_geometry_controller->publish_initial_viewport();
+      }
+      if (input_frame_became_ready || (was_waiting_for_control_frame && !control_waiting_for_capture())) {
+        refresh_remote_control_ui();
       }
       if (connection_flow_model.snapshot().status != ConnectionFlowStatus::kComplete) {
         apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
@@ -4309,14 +4329,14 @@ bool launch_gui_shell(
 #endif
               capture_playback_state = {};
               remote_input_frame_ready = false;
-              remote_input_capture->pause(true, "Host session changed; waiting for a new frame.");
+              remote_input_capture->pause(true, "Host session changed; waiting for a new frame.", "session_changed");
             }
             const bool was_waiting = capture_playback_state.waiting();
             capture_playback_state.observe(control);
             retry_capture_button->setVisible(capture_playback_state.retry_available());
             if (capture_playback_state.waiting()) {
               if (capture_playback_state.rearm_required()) {
-                remote_input_capture->pause(true, "Host capture unavailable.");
+                remote_input_capture->pause(true, "Host capture unavailable.", "host_capture_state");
                 remote_input_frame_ready = false;
                 remote_input_request_pending = false;
                 set_playback_status_text(QString::fromUtf8("画面已暂停。恢复后请重新点击 Start Control 开启控制。"));
@@ -4393,7 +4413,7 @@ bool launch_gui_shell(
             desktop_navigation_panel->observe_capture_region_revision(
                 control.desktop_geometry_revision);
             if (!remote_input_authorized && remote_input_capture->active()) {
-              remote_input_capture->pause(false, "Host authorization was revoked.");
+              remote_input_capture->pause(false, "Host authorization was revoked.", "host_authorization");
             }
             append_log(
                 QString("Remote input capabilities supported=%1 authorized=%2 geometry_revision=%3")
@@ -4429,7 +4449,7 @@ bool launch_gui_shell(
                 input_reason_name.data(), static_cast<qsizetype>(input_reason_name.size()));
             if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive
                 && capture_playback_state.rearm_required()) {
-              remote_input_capture->pause(false, "Capture recovery requires a new user control request.");
+              remote_input_capture->pause(false, "Capture recovery requires a new user control request.", "capture_rearm");
               (void)send_input_control_request(false);
             } else if (control.input_state == redclaw::protocol::RemoteInputControlStateV1::kActive) {
               QString activation_error;
@@ -4443,7 +4463,7 @@ bool launch_gui_shell(
             } else if (remote_input_capture->active()) {
               remote_input_capture->pause(
                   false,
-                  QString("Host input state changed: %1").arg(input_reason_text));
+                  QString("Host input state changed: %1").arg(input_reason_text), "host_input_status");
             }
             if (status_changed
                 || static_cast<qint64>(ack_now_ms) - last_remote_input_metrics_log_ms >= 1000) {
@@ -4623,11 +4643,11 @@ bool launch_gui_shell(
               set_link_status(remote_input_frame_ready ? "Connected. Remote desktop live."
                   : "Connected. Waiting for the first remote desktop frame.", "good");
             } else if (remote_description_applied) {
-              remote_input_capture->pause(true, "Connection is not active.");
+              remote_input_capture->pause(true, "Connection is not active.", "connection_inactive");
               set_runtime_banner("Secure pairing completed. Finalizing the live connection.", "info");
               set_link_status("Connecting: secure offer/answer applied; establishing the ICE path.", "warn");
             } else {
-              remote_input_capture->pause(true, "Connection is not active.");
+              remote_input_capture->pause(true, "Connection is not active.", "connection_inactive");
               set_runtime_banner("Exchanging secure pairing details.", "warn");
               set_link_status("Connecting: waiting for secure offer/answer exchange.", "warn");
             }
@@ -4778,7 +4798,7 @@ bool launch_gui_shell(
 
 
         if (trimmed.startsWith("Runtime rebuilding signaling session")) {
-          remote_input_capture->pause(true, "Connection is reconnecting.");
+          remote_input_capture->pause(true, "Connection is reconnecting.", "reconnect");
           remote_input_request_pending = false;
           refresh_remote_control_ui();
 #if defined(_WIN32)
@@ -4802,7 +4822,7 @@ bool launch_gui_shell(
   auto* runtime_stdio_reader = new RuntimeStdioReader(controller.process(), handle_runtime_control,
       handle_runtime_diagnostic, [&](const QString& error, bool control_failed) {
         if (control_failed) {
-          remote_input_capture->pause(true, error);
+          remote_input_capture->pause(true, error, "runtime_error");
           remote_input_authorized = false;
           refresh_remote_control_ui();
         } else diagnostic_writer.record_external_loss(error);
