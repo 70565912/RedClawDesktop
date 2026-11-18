@@ -3185,6 +3185,7 @@ int run_runtime_mode(
     std::optional<bool> stream_last_published_budget_wait; // Runtime loop owned.
     bool stream_capture_started = false;
     redclaw::capture::CaptureStreamGate stream_capture_gate;
+    std::atomic<bool> capture_display_removed{false};
     std::atomic<std::uint32_t> peer_capture_status_version{0};
     std::uint64_t applied_capture_input_pause_revision = 0;
     std::uint64_t applied_capture_input_reset_revision = 0;
@@ -3644,7 +3645,10 @@ int run_runtime_mode(
             message.rate_revision = std::max<std::uint64_t>(1, message.rate_revision);
             message.capture_generation = capture.generation;
             message.capture_first_frame_id = capture.first_frame_id;
-            message.capture_status = capture.availability == redclaw::capture::CaptureAvailability::kRunning ? 1U
+            // Capture-status v1 already represents planned first-frame waits as running
+            // with no frame ID. Publishing recovering here makes older Controllers re-arm.
+            message.capture_status = capture.navigation_pending
+                || capture.availability == redclaw::capture::CaptureAvailability::kRunning ? 1U
                 : capture.availability == redclaw::capture::CaptureAvailability::kPaused ? 3U : 2U;
         }
         return message;
@@ -4052,9 +4056,9 @@ int run_runtime_mode(
         return redclaw::protocol::RemoteInputControlStateV1::kUnavailable;
     };
 
-    auto input_status_reason = [&]() {
+    const auto protocol_input_reason = [](redclaw::input::RemoteInputPauseReason reason) {
         using Reason = redclaw::input::RemoteInputPauseReason;
-        switch (remote_input_session.pause_reason()) {
+        switch (reason) {
         case Reason::kNone: return redclaw::protocol::RemoteInputStatusReasonV1::kNone;
         case Reason::kNotAuthorized: return redclaw::protocol::RemoteInputStatusReasonV1::kNotAuthorized;
         case Reason::kNoVideo: return redclaw::protocol::RemoteInputStatusReasonV1::kNoVideo;
@@ -4068,6 +4072,23 @@ int run_runtime_mode(
         }
         return redclaw::protocol::RemoteInputStatusReasonV1::kNone;
     };
+    const auto input_status_reason = [&]() { return protocol_input_reason(remote_input_session.pause_reason()); };
+
+    if (options.role == RuntimeRole::kHost) {
+        remote_input_session.set_pause_observer([&](const redclaw::input::RemoteInputPauseObservation& observation) {
+            const auto capture = stream_capture_gate.snapshot();
+            std::cout << "Runtime remote input first_pause role=host"
+                      << " source=" << observation.source
+                      << " reason=" << redclaw::protocol::to_string(protocol_input_reason(observation.reason))
+                      << " last_sync_age_ms=" << observation.last_sync_age_ms
+                      << " applied_sequence=" << observation.applied_sequence
+                      << " capture_generation=" << capture.generation
+                      << " capture_availability=" << static_cast<unsigned>(capture.availability)
+                      << " capture_presented=" << capture.presented
+                      << " navigation_pending=" << capture.navigation_pending
+                      << " capture_pause_revision=" << capture.input_pause_revision << '\n';
+        });
+    }
 
     auto send_input_status = [&]() {
         if (options.role != RuntimeRole::kHost) {
@@ -6006,9 +6027,10 @@ int run_runtime_mode(
         kFailure,
     };
 
-    auto apply_capture_availability = [&](const redclaw::capture::CaptureBackendTelemetry& telemetry) {
+    auto apply_capture_availability = [&](const redclaw::capture::CaptureBackendTelemetry& telemetry,
+        redclaw::capture::CaptureStreamUpdate kind = redclaw::capture::CaptureStreamUpdate::kObservation) {
         const auto previous = stream_capture_gate.snapshot();
-        if (stream_capture_gate.update(telemetry.availability, telemetry.generation)) {
+        if (stream_capture_gate.update(telemetry.availability, telemetry.generation, kind)) {
             navigation_thumbnails.invalidate();
             {
                 std::lock_guard<std::mutex> lock(stream_capture_frame_mutex);
@@ -6093,8 +6115,8 @@ int run_runtime_mode(
                         stream_capture_session.stop();
                         stream_capture_started = false;
                     }
-                    remote_input_session.pause(
-                        redclaw::input::RemoteInputPauseReason::kGeometryChanged);
+                    capture_display_removed.store(true);
+                    runtime_loop_wake.notify();
                     stream_keyframe_refresh_request_generation.fetch_add(1);
                 }
                 navigation_thumbnails.invalidate();
@@ -6144,7 +6166,7 @@ int run_runtime_mode(
                     || stream_selected_display->id != requested_display->id;
                 stream_capture_gate.begin_geometry_change(display_changed
                     ? redclaw::capture::CaptureGeometryChange::kDisplay
-                    : redclaw::capture::CaptureGeometryChange::kRegion);
+                    : redclaw::capture::CaptureGeometryChange::kRegion, now_steady_ms());
                 if (display_changed) {
                     stream_capture_region_rollback_display = stream_selected_display;
                     stream_capture_region_rollback_region = stream_active_capture_region;
@@ -6223,6 +6245,7 @@ int run_runtime_mode(
 
             stream_capture_started = true;
             const auto capture_telemetry = stream_capture_session.telemetry();
+            stream_capture_gate.started_capture(capture_telemetry.generation);
             const std::string capture_backend = capture_backend_to_string(capture_telemetry.active_backend);
             std::cout << "Runtime desktop capture session started role=" << role_name
                       << " backend=" << capture_backend
@@ -6268,7 +6291,9 @@ int run_runtime_mode(
                     .count());
             const auto capture_telemetry = stream_capture_session.telemetry();
             const bool capture_timeout = capture_error == "timeout waiting for desktop frame";
-            const bool availability_changed = apply_capture_availability(capture_telemetry);
+            const bool availability_changed = apply_capture_availability(capture_telemetry, capture_timeout
+                ? redclaw::capture::CaptureStreamUpdate::kAcquireTimeout
+                : redclaw::capture::CaptureStreamUpdate::kObservation);
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 stream_host_stage_telemetry_snapshot.total_capture_us += capture_us;
@@ -7443,7 +7468,7 @@ int run_runtime_mode(
             }
         }
         if (local_control_output.failed()) {
-            remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected);
+            remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected, "local_control_output");
             remote_input_session.release_all();
             ice_wrapper.close();
             stop_stream_workers();
@@ -7594,7 +7619,7 @@ int run_runtime_mode(
             }
             if (options.role == RuntimeRole::kHost
                 && command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll) {
-                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause);
+                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause, "local_control_release");
                 bool local_control_open = false;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
@@ -7952,7 +7977,13 @@ int run_runtime_mode(
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
             }
             remote_input_session.set_transfer_blocked(transfer_operation_gate.blocks_mutation(), now_unix_ms());
-            const auto capture_state = stream_capture_gate.snapshot();
+            bool navigation_expired = false;
+            const auto capture_state = stream_capture_gate.input_snapshot(runtime_loop_now_ms, navigation_expired);
+            if (capture_display_removed.exchange(false)) {
+                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kGeometryChanged, "capture_display_removed");
+                redclaw::runtime::discard_obsolete_remote_input(remote_input_messages);
+                status_changed = true;
+            }
             if (capture_state.input_reset_revision != applied_capture_input_reset_revision) {
                 applied_capture_input_reset_revision = capture_state.input_reset_revision;
                 remote_input_session.reset_for_geometry_change();
@@ -7965,17 +7996,18 @@ int run_runtime_mode(
             if ((!capture_available && !capture_state.navigation_pending) || capture_input_pause_pending) {
                 applied_capture_input_pause_revision = capture_state.input_pause_revision;
                 status_changed = redclaw::runtime::pause_remote_input_for_capture(
-                    remote_input_session, remote_input_messages) || status_changed;
+                    remote_input_session, remote_input_messages,
+                    navigation_expired ? "capture_navigation_deadline" : "capture_gate") || status_changed;
             } else if (capture_state.navigation_pending) {
                 redclaw::runtime::discard_obsolete_remote_input(remote_input_messages, true);
             }
             if (disconnected) {
-                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected);
+                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kDisconnected, "input_channel_closed");
                 remote_input_messages.clear();
                 status_changed = true;
             }
             if (queue_overflow) {
-                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kQueueOverflow);
+                remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kQueueOverflow, "input_inbox_overflow");
                 remote_input_messages.clear();
                 status_changed = true;
             }
@@ -8001,7 +8033,7 @@ int run_runtime_mode(
                 if (!redclaw::input::is_valid_desktop_geometry(current_geometry)
                     || (geometry_shape_changed && !geometry_revision_changed)) {
                     remote_input_session.pause(
-                        redclaw::input::RemoteInputPauseReason::kGeometryChanged);
+                        redclaw::input::RemoteInputPauseReason::kGeometryChanged, "geometry_changed");
                 } else {
                     remote_input_session.reset_for_geometry_change();
                 }
@@ -8014,17 +8046,17 @@ int run_runtime_mode(
                 std::string input_error;
                 if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputControlRequest) {
                     if (!command.input_requested_active) {
-                        remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause);
+                        remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause, "peer_stop");
                     } else if (redclaw::input::is_valid_desktop_geometry(current_geometry)) {
                         (void)remote_input_session.request_active(now_unix_ms(), &input_error);
                     } else {
-                        remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo);
+                        remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo, "start_invalid_geometry");
                     }
                     status_changed = true;
                     continue;
                 }
                 if (command.type == redclaw::protocol::StreamControlMessageTypeV1::kInputReleaseAll) {
-                    remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause);
+                    remote_input_session.pause(redclaw::input::RemoteInputPauseReason::kLocalPause, "peer_release_all");
                     status_changed = true;
                     continue;
                 }

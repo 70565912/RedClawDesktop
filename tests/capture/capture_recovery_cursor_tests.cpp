@@ -215,13 +215,19 @@ TEST(CaptureRecovery, NavigationRejectsOldGenerationAndRetainsConsentUntilNewPre
     gate.submitted_keyframe(1, 10);
     gate.presented(10);
     const auto pause_revision = gate.snapshot().input_pause_revision;
-    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    gate.started_capture(2);
     EXPECT_EQ(gate.snapshot().input_reset_revision, 1U);
     EXPECT_TRUE(gate.snapshot().navigation_pending);
     EXPECT_FALSE(gate.accepts(1));
     EXPECT_FALSE(gate.submitted_keyframe(1, 11));
     EXPECT_FALSE(gate.presented(11));
-    EXPECT_TRUE(gate.update(CaptureAvailability::kRunning, 2));
+    EXPECT_TRUE(gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout));
+    EXPECT_FALSE(gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout));
+    EXPECT_TRUE(gate.snapshot().navigation_pending);
+    EXPECT_EQ(gate.snapshot().input_pause_revision, pause_revision);
+    EXPECT_FALSE(gate.accepts(2));
+    EXPECT_FALSE(gate.update(CaptureAvailability::kRunning, 2));
     EXPECT_EQ(gate.snapshot().input_pause_revision, pause_revision);
     EXPECT_TRUE(gate.accepts(2));
     EXPECT_TRUE(gate.submitted_keyframe(2, 20));
@@ -236,7 +242,8 @@ TEST(CaptureRecovery, NavigationCannotHideCaptureFailureOrSubsequentUnexpectedRe
     CaptureStreamGate gate;
     gate.update(CaptureAvailability::kRunning, 1);
     const auto pause_revision = gate.snapshot().input_pause_revision;
-    gate.begin_geometry_change(CaptureGeometryChange::kDisplay);
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    gate.started_capture(2);
     gate.update(CaptureAvailability::kPaused, 2);
     EXPECT_GT(gate.snapshot().input_pause_revision, pause_revision);
     EXPECT_FALSE(gate.snapshot().navigation_pending);
@@ -247,6 +254,40 @@ TEST(CaptureRecovery, NavigationCannotHideCaptureFailureOrSubsequentUnexpectedRe
     const auto recovered_revision = gate.snapshot().input_pause_revision;
     gate.update(CaptureAvailability::kRunning, 4);
     EXPECT_GT(gate.snapshot().input_pause_revision, recovered_revision);
+}
+
+TEST(CaptureRecovery, DisplaySwitchDeadlineRetainsOldFrameFenceAndRequiresRearm) {
+    CaptureStreamGate gate;
+    gate.update(CaptureAvailability::kRunning, 1);
+    const auto pause_revision = gate.snapshot().input_pause_revision;
+    gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+    bool expired = false;
+    EXPECT_TRUE(gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs, expired).navigation_pending);
+    EXPECT_FALSE(expired);
+    const auto since_expiry = gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs + 1, expired);
+    EXPECT_TRUE(expired);
+    EXPECT_FALSE(since_expiry.navigation_pending);
+    EXPECT_GT(since_expiry.input_pause_revision, pause_revision);
+    EXPECT_FALSE(gate.accepts(1));
+    EXPECT_FALSE(gate.presented(10));
+    EXPECT_EQ(gate.input_snapshot(CaptureStreamGate::kNavigationTimeoutMs + 2, expired).input_pause_revision,
+        since_expiry.input_pause_revision);
+    EXPECT_FALSE(expired);
+}
+
+TEST(CaptureRecovery, OtherGenerationOrCaptureFailureEndsPlannedWait) {
+    for (const auto kind : {CaptureStreamUpdate::kObservation, CaptureStreamUpdate::kAcquireTimeout}) {
+        CaptureStreamGate gate;
+        gate.update(CaptureAvailability::kRunning, 1);
+        const auto pause_revision = gate.snapshot().input_pause_revision;
+        gate.begin_geometry_change(CaptureGeometryChange::kDisplay, 1);
+        gate.started_capture(2);
+        gate.update(CaptureAvailability::kRecovering, 2, CaptureStreamUpdate::kAcquireTimeout);
+        const auto generation = kind == CaptureStreamUpdate::kObservation ? 2 : 3;
+        EXPECT_TRUE(gate.update(CaptureAvailability::kRecovering, generation, kind));
+        EXPECT_FALSE(gate.snapshot().navigation_pending);
+        EXPECT_GT(gate.snapshot().input_pause_revision, pause_revision);
+    }
 }
 
 TEST(CapturePlayback, NavigationRunningGenerationWaitDoesNotRequireNewControlRequest) {

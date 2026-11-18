@@ -105,6 +105,30 @@ TEST(RemoteInputSessionTests, DeniedSessionNeverInvokesBackend) {
     EXPECT_EQ(session.state(), redclaw::input::RemoteInputSessionState::kDenied);
 }
 
+TEST(RemoteInputSessionTests, ObservesFirstPauseBeforeLaterReasonsOverwriteIt) {
+    using namespace redclaw::input;
+    InputPolicyGate gate;
+    InMemoryInputInjectorBackend backend;
+    RemoteInputSession session(gate, backend);
+    std::vector<RemoteInputPauseObservation> pauses;
+    session.set_pause_observer([&](const auto& pause) { pauses.push_back(pause); });
+    session.set_authorized(true);
+    ASSERT_TRUE(session.request_active(1000));
+    ASSERT_TRUE(session.synchronize_state(4, {}, 0, 1010));
+    ASSERT_TRUE(session.expire_lease(4010));
+    session.pause(RemoteInputPauseReason::kLocalPause, "peer_stop");
+    ASSERT_EQ(pauses.size(), 1U);
+    EXPECT_EQ(pauses.front().reason, RemoteInputPauseReason::kLeaseExpired);
+    EXPECT_EQ(pauses.front().source, "expire_lease");
+    EXPECT_EQ(pauses.front().applied_sequence, 4U);
+    EXPECT_GE(pauses.front().last_sync_age_ms, 0);
+    ASSERT_TRUE(session.request_active(4020));
+    session.set_authorized(false);
+    ASSERT_EQ(pauses.size(), 2U);
+    EXPECT_EQ(pauses.back().reason, RemoteInputPauseReason::kNotAuthorized);
+    EXPECT_EQ(pauses.back().last_sync_age_ms, -1);
+}
+
 TEST(RemoteInputSessionTests, ExistingControllerShiftFlagsDoNotReleaseHeldChords) {
     using Type = redclaw::input::InputEventType;
     redclaw::input::InputPolicyGate gate;

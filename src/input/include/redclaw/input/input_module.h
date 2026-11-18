@@ -260,6 +260,13 @@ struct InputInjectionReceipt {
     bool injected = false;
 };
 
+struct RemoteInputPauseObservation {
+    RemoteInputPauseReason reason;
+    std::string_view source;
+    std::uint64_t applied_sequence;
+    std::int64_t last_sync_age_ms;
+};
+
 class RemoteInputSession final {
 public:
 	static constexpr std::size_t kQueueCapacity = 256;
@@ -298,12 +305,13 @@ public:
 		std::string* error = nullptr);
 	[[nodiscard]] bool drain(std::uint64_t now_ms, std::string* error = nullptr);
 	[[nodiscard]] bool expire_lease(std::uint64_t now_ms);
-	void pause(RemoteInputPauseReason reason);
+	void pause(RemoteInputPauseReason reason, std::string_view source = "runtime");
 	void release_all();
     // Discard input tied to the old capture geometry while retaining consent
     // and its existing lease. A geometry reset never starts a paused session.
     void reset_for_geometry_change();
     void set_injection_observer(std::function<void(const InputInjectionReceipt&)> observer);
+    void set_pause_observer(std::function<void(const RemoteInputPauseObservation&)> observer);
 
 	[[nodiscard]] bool authorized() const;
 	[[nodiscard]] RemoteInputSessionState state() const;
@@ -315,7 +323,8 @@ private:
 	[[nodiscard]] static std::uint32_t key_identity(const InputEvent& event);
 	[[nodiscard]] static std::uint32_t button_mask(MouseButton button);
 	[[nodiscard]] std::vector<InputEvent> build_release_events() const;
-	void fail_closed(RemoteInputPauseReason reason);
+	void fail_closed(RemoteInputPauseReason reason, std::string_view source);
+    void observe_pause(RemoteInputPauseReason reason, std::string_view source) const;
 	[[nodiscard]] bool inject_fixed_paste(std::string* error);
 
 	InputPolicyGate& policy_gate_;
@@ -323,6 +332,8 @@ private:
 	bool authorized_ = false;
     bool transfer_blocked_ = false;
     std::uint64_t eligibility_revision_ = 0;
+    std::uint64_t last_sync_monotonic_ms_ = 0;
+    std::function<void(const RemoteInputPauseObservation&)> pause_observer_;
 	RemoteInputSessionState state_ = RemoteInputSessionState::kDenied;
 	RemoteInputPauseReason pause_reason_ = RemoteInputPauseReason::kNotAuthorized;
     struct QueuedEvent { InputEvent event; std::uint64_t sequence; };

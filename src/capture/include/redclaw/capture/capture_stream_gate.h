@@ -4,6 +4,7 @@
 
 namespace redclaw::capture {
 enum class CaptureGeometryChange { kRegion, kDisplay };
+enum class CaptureStreamUpdate { kObservation, kAcquireTimeout };
 struct CaptureStreamSnapshot {
     CaptureAvailability availability = CaptureAvailability::kStopped;
     std::uint64_t generation = 0;
@@ -17,28 +18,45 @@ struct CaptureStreamSnapshot {
 // Input authorization remains in RemoteInputSession, including explicit re-arm.
 class CaptureStreamGate {
 public:
-    void begin_geometry_change(CaptureGeometryChange change) {
+    static constexpr std::uint64_t kNavigationTimeoutMs = 5000;
+
+    void begin_geometry_change(CaptureGeometryChange change, std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
         ++state_.input_reset_revision;
         if (change != CaptureGeometryChange::kDisplay) return;
-        if (state_.availability != CaptureAvailability::kRunning) return;
+        if (state_.availability != CaptureAvailability::kRunning && !state_.navigation_pending) return;
         state_.navigation_pending = true;
         navigation_generation_ = state_.generation;
+        navigation_start_generation_ = 0;
+        navigation_deadline_ms_ = now_ms + kNavigationTimeoutMs;
         state_.first_frame_id = 0;
         state_.presented = false;
     }
-    bool update(CaptureAvailability availability, std::uint64_t generation) {
+    void started_capture(std::uint64_t generation) {
         std::lock_guard lock(mutex_);
+        if (state_.navigation_pending && navigation_start_generation_ == 0)
+            navigation_start_generation_ = generation;
+    }
+    bool update(CaptureAvailability availability, std::uint64_t generation,
+        CaptureStreamUpdate kind = CaptureStreamUpdate::kObservation) {
+        std::lock_guard lock(mutex_);
+        const bool waiting_for_first_frame = kind == CaptureStreamUpdate::kAcquireTimeout
+            && availability == CaptureAvailability::kRecovering
+            && generation > navigation_generation_ && generation == navigation_start_generation_;
+        const bool planned_generation = generation == navigation_start_generation_;
+        const bool lost_navigation = state_.navigation_pending
+            && !(planned_generation && availability == CaptureAvailability::kRunning)
+            && !waiting_for_first_frame;
         const bool invalidate = generation != state_.generation
             || (availability != CaptureAvailability::kRunning && state_.availability == CaptureAvailability::kRunning);
-        if (invalidate) {
+        if (invalidate || lost_navigation) {
             state_.first_frame_id = 0; state_.presented = false;
-            if (!state_.navigation_pending || availability != CaptureAvailability::kRunning)
+            if (!state_.navigation_pending || lost_navigation)
                 ++state_.input_pause_revision;
         }
-        if (availability != CaptureAvailability::kRunning) state_.navigation_pending = false;
+        if (lost_navigation) state_.navigation_pending = false;
         state_.availability = availability; state_.generation = generation;
-        return invalidate;
+        return invalidate || lost_navigation;
     }
     bool accepts(std::uint64_t generation) const {
         std::lock_guard lock(mutex_);
@@ -65,13 +83,24 @@ public:
         return true;
     }
     CaptureStreamSnapshot snapshot() const { std::lock_guard lock(mutex_); return state_; }
+    CaptureStreamSnapshot input_snapshot(std::uint64_t now_ms, bool& navigation_expired) {
+        std::lock_guard lock(mutex_);
+        navigation_expired = state_.navigation_pending && now_ms >= navigation_deadline_ms_;
+        if (navigation_expired) {
+            state_.navigation_pending = false;
+            ++state_.input_pause_revision;
+        }
+        return state_;
+    }
 private:
     bool accepts_locked(std::uint64_t generation) const {
         return state_.availability == CaptureAvailability::kRunning && state_.generation == generation
-            && (!state_.navigation_pending || generation > navigation_generation_);
+            && generation > navigation_generation_;
     }
     mutable std::mutex mutex_;
     CaptureStreamSnapshot state_;
     std::uint64_t navigation_generation_ = 0;
+    std::uint64_t navigation_start_generation_ = 0;
+    std::uint64_t navigation_deadline_ms_ = 0;
 };
 }

@@ -581,6 +581,7 @@ RemoteInputSession::~RemoteInputSession() {
 void RemoteInputSession::set_authorized(bool authorized) {
     ++eligibility_revision_;
     if (!authorized) {
+        observe_pause(RemoteInputPauseReason::kNotAuthorized, "authorization_revoked");
         release_all();
         queue_.clear();
         authorized_ = false;
@@ -608,6 +609,7 @@ bool RemoteInputSession::request_active(std::uint64_t now_ms, std::string* error
     queue_.clear();
     state_ = RemoteInputSessionState::kActive;
     pause_reason_ = RemoteInputPauseReason::kNone;
+    last_sync_monotonic_ms_ = 0;
     lease_expires_at_ms_ = now_ms + kLeaseDurationMs;
     if (error != nullptr) {
         error->clear();
@@ -644,7 +646,7 @@ bool RemoteInputSession::enqueue_batch(
     if (events.empty() || events.size() > kQueueCapacity
         || queue_.size() + events.size() > kQueueCapacity) {
         ++stats_.rejected_batches;
-        fail_closed(RemoteInputPauseReason::kQueueOverflow);
+        fail_closed(RemoteInputPauseReason::kQueueOverflow, "enqueue_batch");
         if (error != nullptr) {
             *error = "remote input queue overflow";
         }
@@ -725,7 +727,7 @@ bool RemoteInputSession::synchronize_state(
     if (!releases.empty()) {
         const auto result = adapter_.inject_events(releases);
         if (!result.injected) {
-            fail_closed(RemoteInputPauseReason::kInjectionFailed);
+            fail_closed(RemoteInputPauseReason::kInjectionFailed, "state_sync_release");
             if (error != nullptr) {
                 *error = result.reason;
             }
@@ -742,6 +744,8 @@ bool RemoteInputSession::synchronize_state(
     pressed_mouse_buttons_ &= pressed_mouse_buttons;
     lease_expires_at_ms_ = now_ms + kLeaseDurationMs;
     stats_.last_applied_sequence = sequence;
+    last_sync_monotonic_ms_ = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
     if (error != nullptr) {
         error->clear();
     }
@@ -814,7 +818,7 @@ bool RemoteInputSession::drain(std::uint64_t now_ms, std::string* error) {
         }
     }
     if (!result.injected) {
-        fail_closed(RemoteInputPauseReason::kInjectionFailed);
+        fail_closed(RemoteInputPauseReason::kInjectionFailed, "drain_batch");
         if (error != nullptr) {
             *error = result.reason;
         }
@@ -836,12 +840,24 @@ bool RemoteInputSession::expire_lease(std::uint64_t now_ms) {
         || now_ms < lease_expires_at_ms_) {
         return false;
     }
-    fail_closed(RemoteInputPauseReason::kLeaseExpired);
+    fail_closed(RemoteInputPauseReason::kLeaseExpired, "expire_lease");
     return true;
 }
 
 void RemoteInputSession::set_injection_observer(std::function<void(const InputInjectionReceipt&)> observer) {
     injection_observer_ = std::move(observer);
+}
+
+void RemoteInputSession::set_pause_observer(std::function<void(const RemoteInputPauseObservation&)> observer) {
+    pause_observer_ = std::move(observer);
+}
+
+void RemoteInputSession::observe_pause(RemoteInputPauseReason reason, std::string_view source) const {
+    if (state_ != RemoteInputSessionState::kActive || !pause_observer_) return;
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    pause_observer_({reason, source, stats_.last_applied_sequence,
+        last_sync_monotonic_ms_ == 0 ? -1 : now_ms - static_cast<std::int64_t>(last_sync_monotonic_ms_)});
 }
 
 void RemoteInputSession::set_transfer_blocked(bool blocked, std::uint64_t now_ms) {
@@ -856,7 +872,8 @@ void RemoteInputSession::set_transfer_blocked(bool blocked, std::uint64_t now_ms
     transfer_blocked_ = blocked;
 }
 
-void RemoteInputSession::pause(RemoteInputPauseReason reason) {
+void RemoteInputSession::pause(RemoteInputPauseReason reason, std::string_view source) {
+    observe_pause(reason, source);
     ++eligibility_revision_;
     release_all();
     queue_.clear();
@@ -929,7 +946,8 @@ std::vector<InputEvent> RemoteInputSession::build_release_events() const {
     return releases;
 }
 
-void RemoteInputSession::fail_closed(RemoteInputPauseReason reason) {
+void RemoteInputSession::fail_closed(RemoteInputPauseReason reason, std::string_view source) {
+    observe_pause(reason, source);
     ++eligibility_revision_;
     release_all();
     queue_.clear();
@@ -980,7 +998,7 @@ bool RemoteInputSession::inject_fixed_paste(std::string* error) {
         // SendInput may have accepted part of its batch. Release the two keys
         // through the same policy, then retain the normal fail-closed pause.
         (void)adapter_.inject_events({v_up, control_up});
-        fail_closed(RemoteInputPauseReason::kInjectionFailed);
+        fail_closed(RemoteInputPauseReason::kInjectionFailed, "clipboard_injection");
         if (error) *error = "clipboard_input_injection_failed";
         return false;
     }

@@ -24,7 +24,8 @@ inline void discard_obsolete_remote_input(
 
 inline bool pause_remote_input_for_capture(
     redclaw::input::RemoteInputSession& session,
-    std::deque<redclaw::protocol::StreamControlMessageV1>& messages) {
+    std::deque<redclaw::protocol::StreamControlMessageV1>& messages,
+    std::string_view source = "capture_gate") {
     using Type = redclaw::protocol::StreamControlMessageTypeV1;
     const bool requested = std::any_of(messages.begin(), messages.end(), [](const auto& message) {
         return message.type == Type::kInputControlRequest && message.input_requested_active;
@@ -33,7 +34,7 @@ inline bool pause_remote_input_for_capture(
     // paused. Keep its original cause, while still rejecting a fresh Start.
     const bool pause = session.state() == redclaw::input::RemoteInputSessionState::kActive
         || (requested && session.authorized());
-    if (pause) session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo);
+    if (pause) session.pause(redclaw::input::RemoteInputPauseReason::kNoVideo, source);
     discard_obsolete_remote_input(messages);
     return pause;
 }

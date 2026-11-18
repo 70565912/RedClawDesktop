@@ -30,6 +30,7 @@ namespace {
 
 constexpr std::size_t kSendBatchEventLimit = 48;
 constexpr std::size_t kApplicationAckSampleLimit = 128;
+constexpr char kInputAckStalled[] = "Input acknowledgments stalled; the pending acknowledgment limit was reached.";
 
 #if defined(_WIN32)
 ControllerRemoteInputCapture* g_active_keyboard_capture = nullptr;
@@ -174,6 +175,7 @@ bool ControllerRemoteInputCapture::acknowledge_input_sequence(
         if (qa_ack_observer_) qa_ack_observer_(ack);
         if (auto* probe = gui_latency_probe()) probe->input_ack(ack);
         if (!ack.valid()) return;
+        last_application_ack_us_ = ack.consumed_us;
         last_application_ack_rtt_ms_ = (ack.consumed_us - ack.sent_us) / 1000;
         application_ack_samples_ms_.push_back(last_application_ack_rtt_ms_);
         if (application_ack_samples_ms_.size() > kApplicationAckSampleLimit) {
@@ -227,6 +229,8 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     local_suspension_release_sent_ = false;
     clear_local_input_state();
     pending_input_acks_.clear();
+    last_application_ack_us_ = 0;
+    last_sync_sent_us_ = 0;
     flush_timer_->start();
     state_sync_timer_->start();
     if (error != nullptr) {
@@ -235,12 +239,19 @@ bool ControllerRemoteInputCapture::activate(QString* error) {
     return true;
 }
 
-void ControllerRemoteInputCapture::pause(bool notify_peer, const QString& reason) {
+void ControllerRemoteInputCapture::pause(bool notify_peer, const QString& reason, const char* source) {
     if (pausing_) {
         return;
     }
     pausing_ = true;
     const bool was_active = active_;
+    const auto paused_us = was_active ? gui_monotonic_us() : 0;
+    const auto age_ms = [paused_us](std::uint64_t timestamp_us) -> std::int64_t {
+        return timestamp_us != 0 && paused_us >= timestamp_us
+            ? static_cast<std::int64_t>((paused_us - timestamp_us) / 1000) : -1;
+    };
+    const ControllerInputPauseObservation observation{source, age_ms(last_application_ack_us_),
+        age_ms(last_sync_sent_us_), desktop_geometry_revision_, pending_capture_region_revision_};
     active_ = false;
     canvas_keyboard_target_ = false;
     local_suspension_release_sent_ = false;
@@ -258,7 +269,7 @@ void ControllerRemoteInputCapture::pause(bool notify_peer, const QString& reason
     pending_input_acks_.clear();
     pausing_ = false;
     if (was_active && paused_callback_) {
-        paused_callback_(reason);
+        paused_callback_(reason, observation);
     }
 }
 
@@ -551,7 +562,7 @@ bool ControllerRemoteInputCapture::eventFilter(QObject* watched, QEvent* event) 
     }
     if (watched == window_ && watched != canvas_) {
         if (active_ && close_pauses_capture_ && event->type() == QEvent::Close) {
-            pause(true, "Playback window was closed.");
+            pause(true, "Playback window was closed.", "playback_closed");
         } else if (event->type() == QEvent::WindowDeactivate) {
             set_local_suspension(LocalInputSuspensionReason::kWindowInactive, true);
         } else if (event->type() == QEvent::WindowActivate) {
@@ -807,7 +818,8 @@ void ControllerRemoteInputCapture::flush_batch() {
     }
     QString error;
     if (!send_message(std::move(message), &error)) {
-        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error);
+        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error,
+            error == kInputAckStalled ? "ack_window_full" : "input_batch_send");
         return;
     }
     ++sent_batch_count_;
@@ -841,9 +853,11 @@ void ControllerRemoteInputCapture::send_state_sync(bool release_during_transfer)
     }
     QString error;
     if (!send_message(std::move(message), &error)) {
-        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error);
+        pause(true, error.isEmpty() ? "The runtime input channel is unavailable." : error,
+            error == kInputAckStalled ? "ack_window_full" : "state_sync_send");
         return;
     }
+    last_sync_sent_us_ = gui_monotonic_us();
 }
 
 void ControllerRemoteInputCapture::send_release_all() {
@@ -887,7 +901,7 @@ bool ControllerRemoteInputCapture::send_message(
         const auto kind = message.type == redclaw::protocol::StreamControlMessageTypeV1::kInputBatch ? InputAckKind::kBatch
             : message.pressed_scan_codes.empty() && message.pressed_mouse_buttons == 0 ? InputAckKind::kEmptySync : InputAckKind::kStateSync;
         if (!pending_input_acks_.remember(message.input_sequence, sent_us, kind)) {
-            if (error_detail) *error_detail = "Input acknowledgments stalled; the pending acknowledgment limit was reached.";
+            if (error_detail) *error_detail = kInputAckStalled;
             return false;
         }
     }
@@ -1037,7 +1051,7 @@ std::intptr_t ControllerRemoteInputCapture::handle_low_level_keyboard(
         return 1;
     }
     if (emergency) {
-        pause(true, "Emergency shortcut Ctrl+Alt+Shift+Esc was pressed.");
+        pause(true, "Emergency shortcut Ctrl+Alt+Shift+Esc was pressed.", "emergency_stop");
         return 1;
     }
     if (virtual_key == VK_DELETE

@@ -36,12 +36,20 @@ enum class LocalInputSuspensionReason : std::uint32_t {
     kCaptureRegionChange = 1U << 5U,
 };
 
+struct ControllerInputPauseObservation {
+    const char* source;
+    std::int64_t last_ack_age_ms;
+    std::int64_t last_sync_sent_age_ms;
+    std::uint64_t geometry_revision;
+    std::uint64_t pending_region_request;
+};
+
 class ControllerRemoteInputCapture final : public QObject, public QAbstractNativeEventFilter {
 public:
     using ControlSender = std::function<bool(
         const redclaw::protocol::StreamControlMessageV1&,
         QString*)>;
-    using PausedCallback = std::function<void(const QString&)>;
+    using PausedCallback = std::function<void(const QString&, const ControllerInputPauseObservation&)>;
     using ForwardingChangedCallback = std::function<void()>;
     using BlockedClickCallback = std::function<void()>;
     using QaSendObserver = std::function<void(const redclaw::protocol::StreamControlMessageV1&, std::uint64_t)>;
@@ -68,7 +76,7 @@ public:
     void present_capture_region(std::uint64_t revision);
     bool acknowledge_input_sequence(std::uint64_t sequence, std::uint64_t consumed_us, std::uint64_t runtime_received_us);
     [[nodiscard]] bool activate(QString* error = nullptr);
-    void pause(bool notify_peer, const QString& reason);
+    void pause(bool notify_peer, const QString& reason, const char* source = "local");
     void shutdown();
     bool nativeEventFilter(const QByteArray& event_type, void* message, qintptr* result) override;
     void set_local_suspension(LocalInputSuspensionReason reason, bool suspended);
@@ -190,6 +198,8 @@ private:
     InputAckTracker pending_input_acks_;
     std::deque<std::uint64_t> application_ack_samples_ms_;
     std::uint64_t last_application_ack_rtt_ms_ = 0;
+    std::uint64_t last_application_ack_us_ = 0;
+    std::uint64_t last_sync_sent_us_ = 0;
 #if defined(_WIN32)
     void* keyboard_hook_ = nullptr;
 #endif
