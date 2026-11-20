@@ -35,6 +35,7 @@ public:
     bool pump();
     bool complete(PreparedClipboardPayload& payload, std::string* error);
     bool paste(std::string* error);
+    bool paste(std::string* error, const std::function<bool()>& submission_guard);
     bool publish(PreparedClipboardPayload& payload, std::string* error, const std::function<bool()>& additional_guard = {});
     bool publish_eligible() const;
     void cancel();

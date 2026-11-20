@@ -22,7 +22,7 @@ TransferRuntimeBridge::TransferRuntimeBridge(bool host, std::string epoch, std::
     : host_role_(host), local_epoch_(std::move(epoch)), spool_directory_(std::move(spool)), gate_(gate),
       peer_send_(std::move(peer)), gui_send_(std::move(gui)), bulk_send_(std::move(bulk)), ensure_(std::move(ensure)),
       clipboard_paste_(clipboard_actions), clipboard_capture_(std::move(clipboard_actions.capture)),
-      clipboard_sequence_number_(std::move(clipboard_actions.sequence)) {
+      clipboard_sequence_number_(clipboard_actions.sequence) {
     if (clipboard_actions.native_demand || clipboard_actions.demand_port) {
         auto port = clipboard_actions.demand_port ? clipboard_actions.demand_port : make_native_clipboard_demand_port();
         native_clipboard_ = std::make_unique<ClipboardDemandSession>(host_role_, local_epoch_, spool_directory_, std::move(port),

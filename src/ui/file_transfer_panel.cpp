@@ -530,6 +530,8 @@ void FileTransferPanel::receive(const Control& message) {
                 : details.error_code == "clipboard_description_too_large" ? QString::fromUtf8("所选文件数量或路径信息过多，请分批粘贴；源文件保留。")
                 : details.error_code == "clipboard_native_unavailable" ? QString::fromUtf8("剪贴板服务暂不可用，正在自动恢复；请稍后重试粘贴。")
                 : details.error_code == "clipboard_peer_timeout" ? QString::fromUtf8("对端未响应粘贴请求，已取消；请重试。")
+                : details.error_code == "clipboard_native_read_timeout" ? QString::fromUtf8("未取得目标应用的剪贴板读取回执，粘贴结果未确认。")
+                : details.error_code == "clipboard_native_ready_timeout" ? QString::fromUtf8("目标剪贴板未按时就绪，粘贴已取消；请重试。")
                 : details.error_code == "clipboard_shortcut_timeout" ? QString::fromUtf8("读取本机剪贴板超时，粘贴未执行；请重试。")
                 : details.error_code == "clipboard_capture_failed" ? QString::fromUtf8("本机剪贴板暂时无法读取，粘贴未执行；请重新复制后重试。")
                 : details.error_code == "workspace_transfer_busy" ? QString::fromUtf8("粘贴未执行：另一项传送仍在进行，请等待完成后重试。")

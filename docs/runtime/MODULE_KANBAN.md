@@ -123,7 +123,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-16
+Updated: 2026-11-20
+
+Clipboard paste transaction ownership (2026-11-20, M10-T03) — done; final Windows Debug build and 74 affected automated cases passed, four focused UI cases pass, one foreground case skipped. Both 331-file candidates verified. Actual bidirectional text, repeated Ctrl+V and Shift+Insert, native right-click paste, and confirmation-gated small-file transfer passed on the desktop Host and laptop Controller. Seven operation IDs are correlated with successful Host logs; the laptop reconnected. See [progress](../../PROGRESS.md#2026-11-20--clipboard-paste-transaction-ownership-m10-t03).
 
 Clipboard feedback during reconnect (2026-11-16, M10-T03) — preserves File/Clipboard visibility during session cleanup and shows connected paste failures over playback. See [local validation](../../PROGRESS.md#2026-11-16--clipboard-feedback-during-reconnect-m10-t03).
 

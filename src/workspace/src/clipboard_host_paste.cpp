@@ -69,7 +69,8 @@ bool ClipboardHostPaste::publish(PreparedClipboardPayload& payload, std::string*
     if (!eligible()) return fail(error, "clipboard_input_revoked");
     return actions_.publish ? actions_.publish(payload, eligible, error) : payload.publish(eligible, error);
 }
-bool ClipboardHostPaste::paste(std::string* error) {
+bool ClipboardHostPaste::paste(std::string* error) { return paste(error, {}); }
+bool ClipboardHostPaste::paste(std::string* error, const std::function<bool()>& submission_guard) {
     if (operation_.empty() || !guard_.verified(epoch_, operation_)) return fail(error, "clipboard_paste_not_pending");
     const auto eligibility = actions_.eligibility();
     const auto current = snapshot();
@@ -79,6 +80,7 @@ bool ClipboardHostPaste::paste(std::string* error) {
     if (snapshot() != current || !again.eligible || again.revision != eligibility.revision) {
         cancel(); return fail(error, "clipboard_focus_changed");
     }
+    if (submission_guard && !submission_guard()) { cancel(); return fail(error, "clipboard_source_changed"); }
     const bool result = actions_.submit_paste(eligibility.revision, error);
     cancel(); return result;
 }

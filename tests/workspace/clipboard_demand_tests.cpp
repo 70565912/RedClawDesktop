@@ -26,6 +26,8 @@ public:
     std::shared_ptr<PreparedClipboardPayload> prepared;
     std::filesystem::path received, owned_root;
     int approved = 0, delivered = 0, cancelled = 0, commits = 0, source_queries = 0, installed = 0;
+    bool native_result_on_payload = false, drop_shortcut_validation = false;
+    std::uint32_t native_sequence = 42;
     void connected(bool, std::string) override {}
     std::optional<ClipboardDemandEvent> take_event() override {
         if (events.empty()) return {}; auto result = events.front(); events.pop_front(); return result;
@@ -48,8 +50,18 @@ public:
         ++approved;
         events.push_back({ClipboardDemandEventKind::kRead, operation, remote});
     }
-    void payload(std::string, std::shared_ptr<PreparedClipboardPayload> value, std::filesystem::path directory, std::string) override {
+    void payload(std::string operation, std::shared_ptr<PreparedClipboardPayload> value, std::filesystem::path directory, std::string) override {
         prepared = std::move(value); received = std::move(directory); ++delivered;
+        if (native_result_on_payload) plain_read(operation, std::chrono::steady_clock::now());
+    }
+    void plain_read(const std::string& operation, std::chrono::steady_clock::time_point started) {
+        ClipboardDemandEvent event{ClipboardDemandEventKind::kNativeResult, operation, remote, true, 1};
+        event.native_read_started = started; events.push_back(std::move(event));
+    }
+    void validate_shortcut_ready(std::string operation, ClipboardDemandOffer offer) override {
+        if (drop_shortcut_validation) return;
+        ClipboardDemandEvent event{ClipboardDemandEventKind::kPayloadReady, std::move(operation), std::move(offer)};
+        event.native_sequence = native_sequence; events.push_back(std::move(event));
     }
     void cancel(std::string) override { ++cancelled; }
     void commit_source(std::string operation, std::string token, std::shared_ptr<ClipboardDescription> description) override {
@@ -81,6 +93,7 @@ protected:
     ClipboardFocusToken focus{1, 2, 3, 4, 5, 6, 7};
     int injected = 0;
     int published = 0;
+    bool paste_payload_ready = false, paste_gate_blocked = false;
     std::string formats_descriptor;
     std::uint64_t now = 0, sequence = 0;
     bool send(Control value, std::deque<Control>& queue) {
@@ -92,10 +105,13 @@ protected:
         queue.push_back(parsed.value); return true;
     }
     ClipboardHostActions actions(std::shared_ptr<FakePort> port) {
-        ClipboardHostActions result; result.demand_port = std::move(port);
+        ClipboardHostActions result; result.demand_port = port;
+        result.sequence = [port] { return port->native_sequence; };
         result.publish_eligible = [] { return true; }; result.eligibility = [] { return ClipboardInputEligibility{true, 1}; };
         result.focus_snapshot = [this] { return std::optional<ClipboardFocusToken>(focus); };
-        result.submit_paste = [this](auto, auto*) { ++injected; return true; };
+        result.submit_paste = [this, port](auto, auto*) {
+            ++injected; paste_payload_ready = bool(port->prepared); paste_gate_blocked = hg.blocks_mutation(); return true;
+        };
         result.publish = [this](auto&, const auto& guard, auto*) { if (!guard || !guard()) return false; ++published; return true; };
         result.capture = [this](ClipboardSnapshot& snapshot, const auto& spool, auto, const auto& cancelled, auto* error) {
             ++captures;
@@ -301,6 +317,55 @@ TEST(ClipboardDescription, SimulatedThirteenGigabytesHasOnlyBoundedMetadata) {
     ASSERT_TRUE(parsed) << error; EXPECT_EQ(parsed->totals.bytes, bytes); EXPECT_EQ(parsed->totals.files, 31U);
 }
 #ifdef _WIN32
+TEST_F(DemandPair, TextShortcutWaitsForVerifiedPayloadAndGateReleaseBeforeInjection) {
+    redclaw::protocol::wire::ClipboardSourceV1 descriptor; descriptor.set_schema_version(1);
+    auto* format = descriptor.add_formats(); format->set_kind(1);
+    const std::wstring text = L"ready before paste";
+    format->set_data(reinterpret_cast<const char*>(text.c_str()), (text.size() + 1) * sizeof(wchar_t));
+    formats_descriptor = descriptor.SerializeAsString();
+    cp->local = {"plain-shortcut", 1, 42, false}; cp->files.clear();
+    cp->events.push_back({ClipboardDemandEventKind::kOffer, {}, cp->local});
+    for (int i = 0; i < 5; ++i) step();
+    EXPECT_EQ(captures, 0);
+    Control request; request.type = StreamControlMessageTypeV1::kWorkspace; request.request_id = "paste";
+    auto& data = request.workspace.emplace(); data.action = Action::kClipboardShortcut;
+    data.purpose = WorkspaceTransferPurposeV1::kClipboard; data.clipboard_mode = 6;
+    data.clipboard_token = "local-shortcut"; data.clipboard_sequence = 42;
+    // A clipboard reader may finish before the real key is injected.
+    hp->native_result_on_payload = true;
+    controller->from_gui(request);
+    step(); step();
+    EXPECT_EQ(hp->installed, 1); EXPECT_EQ(injected, 0);
+    ASSERT_TRUE(wait([&] { return injected == 1; })) << "captures=" << captures << " delivered=" << hp->delivered
+        << " result=" << (event(Action::kFinished) ? event(Action::kFinished)->workspace->error_code : "pending");
+    EXPECT_FALSE(event(Action::kFinished));
+    EXPECT_EQ(captures, 1); EXPECT_EQ(hp->delivered, 1); EXPECT_EQ(injected, 1);
+    EXPECT_TRUE(paste_payload_ready); EXPECT_FALSE(paste_gate_blocked);
+    hp->plain_read("paste", std::chrono::steady_clock::now());
+    ASSERT_TRUE(wait([&] { return bool(event(Action::kFinished)); }));
+    EXPECT_TRUE(event(Action::kFinished)->workspace->error_code.empty());
+
+    hp->native_result_on_payload = false;
+    request.request_id = "paste-2";
+    controller->from_gui(request);
+    ASSERT_TRUE(wait([&] { return hp->delivered == 2 && injected == 2; }));
+    EXPECT_FALSE(event(Action::kFinished, "paste-2"));
+    now += 16000;
+    ASSERT_TRUE(wait([&] { return bool(event(Action::kFinished, "paste-2")); }));
+    EXPECT_EQ(event(Action::kFinished, "paste-2")->workspace->error_code, "clipboard_native_read_timeout");
+    EXPECT_EQ(captures, 2); EXPECT_EQ(injected, 2);
+
+    hp->drop_shortcut_validation = true;
+    request.request_id = "paste-3";
+    controller->from_gui(request);
+    ASSERT_TRUE(wait([&] { return hp->delivered == 3 && !hg.blocks_mutation() && !cg.blocks_mutation(); }));
+    EXPECT_EQ(injected, 2);
+    step(); now += 16000;
+    ASSERT_TRUE(wait([&] { return bool(event(Action::kFinished, "paste-3")); }));
+    EXPECT_EQ(event(Action::kFinished, "paste-3")->workspace->error_code, "clipboard_native_ready_timeout");
+    EXPECT_EQ(injected, 2);
+}
+
 TEST_F(DemandPair, CommonOldCapabilitiesRetainExplicitTextPasteWithoutPublishingTheInteractiveClipboard) {
     redclaw::protocol::wire::ClipboardSourceV1 descriptor; descriptor.set_schema_version(1);
     auto* format = descriptor.add_formats(); format->set_kind(1);
@@ -350,8 +415,15 @@ TEST_F(DemandPair, BothDirectionsPreserveEveryExistingTextRichTextAndImageFormat
         EXPECT_FALSE(event(Action::kClipboardConfirm, "plain"));
         std::vector<ClipboardDemandEvent> events;
         std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)> supply;
+        std::function<void()> activate;
         auto* object = static_cast<IDataObject*>(make_clipboard_data_object_for_test(destination->remote,
-            [&](auto event) { events.push_back(event); }, &supply));
+            [&](auto event) { events.push_back(event); }, &supply, &activate));
+        FORMATETC first{CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM early{};
+        EXPECT_EQ(object->QueryGetData(&first), S_OK);
+        EXPECT_EQ(object->GetData(&first, &early), E_ABORT);
+        EXPECT_TRUE(events.empty());
+        activate();
         supply(destination->prepared, {}, {});
         for (unsigned i = 0; i < 6; ++i) {
             FORMATETC request{static_cast<CLIPFORMAT>(formats[i]), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};

@@ -2,6 +2,7 @@
 #include "redclaw/workspace/clipboard_description.h"
 #include <optional>
 #include <functional>
+#include <chrono>
 
 namespace redclaw::workspace {
 inline constexpr std::uint32_t kClipboardFilesFormat = 64;
@@ -11,7 +12,7 @@ struct ClipboardDemandOffer {
     bool move = false;
 };
 // kDiagnostic carries a port health line in `error`; it never changes state.
-enum class ClipboardDemandEventKind { kOffer, kShortcutReady, kDescribe, kDemand, kRead, kNativeResult, kInstalled, kMoveReceipt, kUnavailable, kDiagnostic };
+enum class ClipboardDemandEventKind { kOffer, kShortcutReady, kDescribe, kDemand, kRead, kNativeResult, kInstalled, kPayloadReady, kMoveReceipt, kUnavailable, kDiagnostic };
 struct ClipboardDemandEvent {
     ClipboardDemandEventKind kind = ClipboardDemandEventKind::kOffer;
     std::string operation;
@@ -19,6 +20,8 @@ struct ClipboardDemandEvent {
     bool complete = false;
     std::uint32_t effect = 0;
     std::string error;
+    std::uint32_t native_sequence = 0;
+    std::chrono::steady_clock::time_point native_read_started{};
 };
 // A single native STA owns OLE objects. The runtime only enqueues commands and
 // takes bounded events. Source paths and native identities never cross the wire.
@@ -34,7 +37,11 @@ public:
     virtual void approve(std::string operation) = 0;
     virtual void payload(std::string operation, std::shared_ptr<PreparedClipboardPayload> payload,
         std::filesystem::path directory, std::string error) = 0;
+    virtual void validate_shortcut_ready(std::string, ClipboardDemandOffer) {}
     virtual void cancel(std::string operation) = 0;
+    // Re-advertise a cancelled native object only after the runtime's single
+    // reservation and bulk transfer are idle.
+    virtual void restore_cancelled_offer() {}
     virtual void finished(std::string, bool) {}
     virtual void commit_source(std::string operation, std::string token,
         std::shared_ptr<ClipboardDescription> description) = 0;
@@ -49,5 +56,6 @@ bool clipboard_has_files();
 // Returns IUnknown with one owned reference on Windows, null elsewhere.
 void* make_clipboard_data_object_for_test(ClipboardDemandOffer offer,
     std::function<void(ClipboardDemandEvent)> event,
-    std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)>* supply);
+    std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)>* supply,
+    std::function<void()>* activate = nullptr);
 }
