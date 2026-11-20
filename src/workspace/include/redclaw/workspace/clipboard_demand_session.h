@@ -38,7 +38,11 @@ private:
         bool demanded = false, asked = false, confirmed = false, read_requested = false, started = false, bulk_done = false;
         bool native_received = false, native_complete = false, committing = false;
         bool move_requested = false, peer_seen = false;
+        bool defer_shortcut = false, shortcut_validation_requested = false, shortcut_submitted = false;
         std::uint64_t since = 0;
+        std::uint64_t bulk_done_at = 0, shortcut_submitted_at = 0;
+        std::uint32_t shortcut_native_sequence = 0;
+        std::chrono::steady_clock::time_point shortcut_read_after{};
         std::uint32_t effect = 0;
         std::string native_error;
         std::shared_ptr<ClipboardDescription> description;
@@ -49,6 +53,7 @@ private:
     bool pending(std::string operation, ClipboardDemandOffer offer, protocol::TransferDirectionV1 direction);
     void describe(std::string operation, const ClipboardDemandOffer& offer);
     void demand(std::string operation, ClipboardDemandOffer offer, protocol::TransferDirectionV1 direction);
+    void host_demand();
     void approve();
     void settle();
     void finish(std::string error = {}, bool notify_peer = false);
@@ -60,7 +65,7 @@ private:
     void reject_gui(const std::string& operation, std::string error);
     void publish_offer();
     void log(std::string line) const;
-    bool host_, enabled_ = false, native_failed_ = false, offer_unsent_ = false;
+    bool host_, enabled_ = false, native_failed_ = false, offer_unsent_ = false, restore_pending_ = false;
     std::string epoch_, peer_epoch_;
     std::string shortcut_waiting_;
     std::uint64_t now_ = 0, shortcut_since_ = 0, restart_at_ = 0, restart_delay_ = 0;

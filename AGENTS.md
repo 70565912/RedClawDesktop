@@ -163,7 +163,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/service/run-cmak
 
 If configure/build reports active-operation or lock errors such as `another operation is already in progress`, `C1041`, `LNK1104`, or `MSB6003`, stop launching new builds and follow `docs/setup/cmake-tools-api-failure-troubleshooting.md`.
 
-Do not block the desktop-stream milestone on exhaustive module test sweeps. Use full CTest only before a release-style checkpoint or when broad shared behavior changed.
+By default, compile the affected application and run only the tests that directly cover the change and its affected interfaces. A Debug build, candidate rollout, or PR does not require a full CTest sweep. Run a full sweep only when Ryan explicitly requests it or a separately agreed release acceptance requires it; record the actual focused scope and results.
 
 For stream work, record both normal smoke evidence and strict capture evidence when possible. A run that only transmits synthetic preview frames is useful diagnostics, but it is not a real desktop proof.
 

@@ -16,14 +16,19 @@ class FakePort final : public ClipboardDemandPort {
 public:
     ClipboardDemandOffer local, remote;
     std::deque<ClipboardDemandEvent> events;
-    int cancelled = 0, installed = 0, restarts = 0;
-    bool restartable = true;
+    int cancelled = 0, installed = 0, restarts = 0, restored = 0, passive_installs = 0;
+    bool restartable = true, defer_install = false;
     void connected(bool, std::string) override {}
     std::optional<ClipboardDemandEvent> take_event() override {
         if (events.empty()) return {}; auto result = events.front(); events.pop_front(); return result;
     }
     void remote_offer(ClipboardDemandOffer offer, std::string invoke) override {
-        remote = offer; if (!invoke.empty()) { ++installed; events.push_back({ClipboardDemandEventKind::kInstalled, invoke, offer}); }
+        remote = offer;
+        if (invoke.empty()) ++passive_installs;
+        else {
+            ++installed;
+            if (!defer_install) events.push_back({ClipboardDemandEventKind::kInstalled, invoke, offer});
+        }
     }
     void refresh_for_shortcut(std::string operation, std::uint32_t sequence) override {
         if (sequence != local.sequence) return; // simulates a native capture that never answers
@@ -37,6 +42,7 @@ public:
     void approve(std::string operation) override { events.push_back({ClipboardDemandEventKind::kRead, operation, remote}); }
     void payload(std::string, std::shared_ptr<PreparedClipboardPayload>, std::filesystem::path, std::string) override {}
     void cancel(std::string) override { ++cancelled; }
+    void restore_cancelled_offer() override { ++restored; }
     void commit_source(std::string, std::string, std::shared_ptr<ClipboardDescription>) override {}
     bool restart() override { if (!restartable) return false; ++restarts; return true; }
 };
@@ -101,11 +107,12 @@ protected:
         host->pump(now, true); controller->pump(now, true);
     }
     void steps(int count) { for (int i = 0; i < count; ++i) step(); }
-    void offer_text_to_host() {
-        cp->local = {"controller-text", kTextFormat, 42, false};
+    void offer_to_host(std::uint32_t formats) {
+        cp->local = {formats == kTextFormat ? "controller-text" : "controller-files", formats, 42, false};
         cp->events.push_back({ClipboardDemandEventKind::kOffer, {}, cp->local});
         steps(5);
     }
+    void offer_text_to_host() { offer_to_host(kTextFormat); }
     void shortcut(const std::string& id, std::uint32_t clipboard_sequence = 42) {
         Control value; value.type = StreamControlMessageTypeV1::kWorkspace; value.request_id = id;
         auto& data = value.workspace.emplace(); data.action = Action::kClipboardShortcut;
@@ -130,8 +137,8 @@ TEST_F(Liveness, CopyPublishesAFreshOfferToTheHostAndLogsIt) {
     EXPECT_TRUE(logged("clipboard role=host event=offer_received"));
 }
 
-TEST_F(Liveness, HostShortcutPasteInjectsWithoutATransferGate) {
-    build(); offer_text_to_host();
+TEST_F(Liveness, HostFileShortcutPasteInjectsWithoutATransferGate) {
+    build(); offer_to_host(kClipboardFilesFormat);
     shortcut("shortcut"); steps(6);
     EXPECT_EQ(hp->installed, 1);
     ASSERT_EQ(backend.injected_events().size(), 4U);
@@ -140,8 +147,46 @@ TEST_F(Liveness, HostShortcutPasteInjectsWithoutATransferGate) {
     EXPECT_FALSE(finished("shortcut"));
 }
 
+TEST_F(Liveness, UnchangedCopyDoesNotRepublishForShortcut) {
+    build(); offer_to_host(kClipboardFilesFormat);
+    ASSERT_EQ(hp->passive_installs, 1);
+    log.clear(); shortcut("shortcut"); steps(6);
+    EXPECT_FALSE(logged("event=offer_published"));
+    EXPECT_EQ(hp->passive_installs, 1);
+    EXPECT_EQ(hp->installed, 1);
+}
+
+TEST_F(Liveness, CompetingNativeDemandCannotRestoreOfferWhileShortcutInstalls) {
+    build(); offer_to_host(kClipboardFilesFormat); hp->defer_install = true;
+    shortcut("shortcut"); steps(5);
+    ASSERT_EQ(hp->installed, 1);
+    EXPECT_TRUE(backend.injected_events().empty());
+    hp->events.push_back({ClipboardDemandEventKind::kDemand, "old-native", hp->remote});
+    steps(5);
+    EXPECT_TRUE(logged("event=reject op=old-nati"));
+    EXPECT_EQ(hp->cancelled, 1);
+    EXPECT_EQ(hp->restored, 0);
+    hp->events.push_back({ClipboardDemandEventKind::kInstalled, "shortcut", hp->remote});
+    step();
+    EXPECT_EQ(backend.injected_events().size(), 4U);
+    EXPECT_EQ(hp->restored, 0);
+    hp->events.push_back({ClipboardDemandEventKind::kDemand, "shortcut", hp->remote});
+    step();
+    EXPECT_TRUE(logged("event=demand_sent op=shortcut"));
+}
+
+TEST_F(Liveness, RejectedNativeOfferRestoresOnceAfterReservationTimesOut) {
+    build(); offer_text_to_host(); hp->defer_install = true;
+    shortcut("shortcut"); steps(5);
+    hp->events.push_back({ClipboardDemandEventKind::kDemand, "old-native", hp->remote});
+    steps(4); EXPECT_EQ(hp->restored, 0);
+    step(16000); steps(5);
+    EXPECT_EQ(hp->restored, 1);
+    EXPECT_TRUE(logged("event=reply_timeout op=shortcut"));
+}
+
 TEST_F(Liveness, LegacyGateOnlyPasteFailsVisiblyInsteadOfSilently) {
-    legacy_host_wiring = true; build(); offer_text_to_host();
+    legacy_host_wiring = true; build(); offer_to_host(kClipboardFilesFormat);
     shortcut("shortcut"); steps(8);
     EXPECT_TRUE(backend.injected_events().empty());
     ASSERT_TRUE(finished("shortcut"));
@@ -174,7 +219,7 @@ TEST_F(Liveness, UnansweredHostDemandIsReleasedAndFreesTheSlot) {
 }
 
 TEST_F(Liveness, ShortcutOnADeadPortIsVisibleAndThePortRestarts) {
-    build(); offer_text_to_host();
+    build(); offer_to_host(kClipboardFilesFormat);
     cp->events.push_back({ClipboardDemandEventKind::kUnavailable, {}, {}, false, 0, "listener_failed"});
     step();
     EXPECT_TRUE(logged("event=port_unavailable reason=listener_failed"));

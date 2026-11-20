@@ -96,7 +96,8 @@ struct DemandState {
     std::filesystem::path directory;
     std::vector<std::uint64_t> prefix;
     std::vector<bool> read;
-    bool described = false, requested = false, reading = false, approved = false, cancelled = false, reported = false;
+    bool published = true, described = false, requested = false, reading = false, approved = false, cancelled = false, reported = false;
+    bool track_shortcut_reads = false, shortcut_reads_closed = false;
     bool ended = false, end_ok = false;
     DWORD performed = 0, succeeded = 0, effect = 0;
     std::string error;
@@ -105,7 +106,7 @@ struct DemandState {
         {
             std::lock_guard lock(mutex);
             auto& sent = metadata ? described : requested;
-            if (sent || cancelled) return;
+            if (sent || !published || cancelled) return;
             sent = true; message.kind = metadata ? ClipboardDemandEventKind::kDescribe : ClipboardDemandEventKind::kDemand;
             message.operation = operation; message.offer = offer;
         }
@@ -113,7 +114,7 @@ struct DemandState {
     }
     void request_payload() {
         ClipboardDemandEvent message;
-        { std::lock_guard lock(mutex); if (reading || cancelled) return; reading = true;
+        { std::lock_guard lock(mutex); if (reading || !published || cancelled) return; reading = true;
           message.kind = ClipboardDemandEventKind::kRead; message.operation = operation; message.offer = offer; }
         if (event) event(std::move(message));
     }
@@ -133,11 +134,28 @@ struct DemandState {
     void cancel(std::string reason = "transfer_cancelled") {
         { std::lock_guard lock(mutex); cancelled = true; error = std::move(reason); } wake.notify_all();
     }
-    void result(bool plain = false) {
+    bool is_cancelled() {
+        std::lock_guard lock(mutex); return cancelled;
+    }
+    bool can_read() {
+        std::lock_guard lock(mutex); return published && !cancelled;
+    }
+    bool payload_is_ready() {
+        std::lock_guard lock(mutex); return published && !cancelled && bool(payload);
+    }
+    void close_shortcut_reads() {
+        std::lock_guard lock(mutex); shortcut_reads_closed = true;
+    }
+    void activate() {
+        std::lock_guard lock(mutex); published = true;
+    }
+    void result(bool plain = false, std::chrono::steady_clock::time_point read_started = {}) {
         ClipboardDemandEvent message;
         {
             std::lock_guard lock(mutex);
-            if (reported || cancelled) return;
+            const bool tracked_read = plain && track_shortcut_reads;
+            if (track_shortcut_reads && !plain) return;
+            if ((reported && !tracked_read) || shortcut_reads_closed || !published || cancelled) return;
             const bool files = (offer.formats & kClipboardFilesFormat) != 0;
             bool all = !files || (description && read.size() == description->entries.size());
             if (files && all) for (std::size_t i = 0; i < read.size(); ++i) {
@@ -151,8 +169,9 @@ struct DemandState {
             const bool finished = plain || move || copy || (ended && (!end_ok || effect != DROPEFFECT_MOVE || !offer.move));
             if (!finished) return;
             reported = true; message.kind = ClipboardDemandEventKind::kNativeResult; message.operation = operation;
-            message.offer = offer; message.complete = all && (!ended || end_ok);
-            message.effect = move ? 2U : effect == DROPEFFECT_MOVE ? 0U : 1U;
+            message.offer = offer; message.complete = tracked_read || (all && (!ended || end_ok));
+            message.effect = tracked_read ? 1U : move ? 2U : effect == DROPEFFECT_MOVE ? 0U : 1U;
+            if (tracked_read) message.native_read_started = read_started;
             if (!message.complete) message.error = "clipboard_native_paste_incomplete";
         }
         if (event) event(std::move(message));
@@ -255,6 +274,7 @@ public:
         return DV_E_FORMATETC;
     }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* value, STGMEDIUM* result) override {
+        const auto read_started = std::chrono::steady_clock::now();
         if (!result) return E_POINTER; *result = {};
         const auto available = QueryGetData(value); if (FAILED(available)) return available;
         const auto type = value->cfFormat;
@@ -265,6 +285,9 @@ public:
             return global_medium(result, &flag, sizeof(flag));
         }
         if (!ordinary_desktop()) return E_ACCESSDENIED;
+        // OleSetClipboard may call back before the port owns this candidate.
+        // Never wait for payload on an object the runtime cannot yet address.
+        if (!state_->can_read()) return E_ABORT;
         if (state_->offer.formats & kClipboardFilesFormat) {
             state_->request(true);
             if (!state_->wait([&] { return bool(state_->description); })) return E_ABORT;
@@ -300,7 +323,7 @@ public:
         for (std::uint32_t kind = 1; kind <= 6; ++kind) if (type == format(static_cast<ClipboardPayloadFormat>(kind))) {
             result->hGlobal = reinterpret_cast<HGLOBAL>(payload->clone_native_format(static_cast<ClipboardPayloadFormat>(kind)));
             if (!result->hGlobal) return DV_E_FORMATETC;
-            result->tymed = TYMED_HGLOBAL; state_->result(true); return S_OK;
+            result->tymed = TYMED_HGLOBAL; state_->result(true, read_started); return S_OK;
         }
         return DV_E_FORMATETC;
     }
@@ -308,6 +331,7 @@ public:
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* result) override { if (result) result->ptd = nullptr; return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE SetData(FORMATETC* value, STGMEDIUM* data, BOOL release) override {
         if (!value || !data || data->tymed != TYMED_HGLOBAL || !data->hGlobal || GlobalSize(data->hGlobal) < sizeof(DWORD)) return DV_E_FORMATETC;
+        if (!state_->can_read()) return E_ABORT;
         const auto* effect = static_cast<const DWORD*>(GlobalLock(data->hGlobal)); if (!effect) return E_INVALIDARG;
         bool known = true;
         { std::lock_guard lock(state_->mutex);
@@ -330,10 +354,11 @@ public:
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL value) override { async_ = value; return S_OK; }
     HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* value) override { if (!value) return E_POINTER; *value = async_; return S_OK; }
-    HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) override { in_operation_ = true; return S_OK; }
+    HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) override { if (!state_->can_read()) return E_ABORT; in_operation_ = true; return S_OK; }
     HRESULT STDMETHODCALLTYPE InOperation(BOOL* value) override { if (!value) return E_POINTER; *value = in_operation_; return S_OK; }
     HRESULT STDMETHODCALLTYPE EndOperation(HRESULT status, IBindCtx*, DWORD effect) override {
         in_operation_ = false;
+        if (!state_->can_read()) return E_ABORT;
         bool empty_folders = false;
         { std::lock_guard lock(state_->mutex); empty_folders = state_->description && !state_->description->totals.bytes; }
         if (SUCCEEDED(status) && empty_folders) state_->request_payload();
@@ -377,6 +402,13 @@ struct PortShared {
         if (event.kind == ClipboardDemandEventKind::kOffer) {
             for (auto& existing : events) if (existing.kind == event.kind) { existing = std::move(event); return; }
         }
+        if (event.kind == ClipboardDemandEventKind::kNativeResult && event.native_read_started != std::chrono::steady_clock::time_point{}) {
+            for (auto& existing : events) if (existing.kind == event.kind && existing.operation == event.operation
+                && existing.native_read_started != std::chrono::steady_clock::time_point{}) {
+                if (event.native_read_started >= existing.native_read_started) existing = std::move(event);
+                return;
+            }
+        }
         if (events.size() < 16) events.push_back(std::move(event));
         else { failure = "event_queue_overflow"; stopping = true; if (window) PostMessageW(window, WM_APP, 0, 0); }
     }
@@ -406,7 +438,8 @@ public:
             shared_->failure_reported = false; shared_->failure.clear(); shared_->exited = false; shared_->stopping = false;
         }
         { std::lock_guard lock(configuration_mutex_); configured_ = false; configured_epoch_.clear(); }
-        enabled_ = committed_ok_ = committing_source_ = listening_ = false; observed_ = 0;
+        enabled_ = committed_ok_ = committing_source_ = listening_ = installing_ = restore_requested_ = false;
+        clipboard_update_deferred_ = false; observed_ = 0;
         capture_attempts_ = install_attempts_ = 0; install_.reset();
         epoch_.clear(); committed_.clear(); committed_error_.clear();
         thread_ = std::thread([this] { run(); });
@@ -417,9 +450,10 @@ public:
           configured_ = enabled; configured_epoch_ = epoch; }
         post([this, enabled, epoch = std::move(epoch)] {
             if (enabled_ != enabled || epoch_ != epoch) {
+                enabled_ = false;
                 if (state_) state_->cancel("clipboard_session_changed");
                 if (proxy_ && OleIsCurrentClipboard(proxy_.Get()) == S_OK) OleSetClipboard(nullptr);
-                proxy_.Reset(); state_.reset(); original_.Reset(); install_.reset();
+                proxy_.Reset(); state_.reset(); original_.Reset(); install_.reset(); restore_requested_ = clipboard_update_deferred_ = false;
                 capture_attempts_ = install_attempts_ = 0;
                 if (window_) { KillTimer(window_, kCaptureRetryTimer); KillTimer(window_, kInstallRetryTimer); }
                 { std::lock_guard lock(shared_->mutex); shared_->source = {}; shared_->files.clear(); shared_->events.clear(); }
@@ -440,18 +474,25 @@ public:
     }
     void remote_offer(ClipboardDemandOffer offer, std::string invoke) override {
         post([this, offer = std::move(offer), invoke = std::move(invoke)] {
-            install_ = Install{offer, invoke}; install_attempts_ = 0; try_install();
+            if (install_ && !install_->invoke.empty() && invoke.empty() && install_->offer.token == offer.token) return;
+            install_ = std::make_shared<Install>(Install{offer, invoke}); install_attempts_ = 0; try_install();
         });
     }
     void refresh_for_shortcut(std::string operation, std::uint32_t sequence) override {
         post([this, operation = std::move(operation), sequence] {
             std::string error;
+            ClipboardDemandOffer offer;
             if (!enabled_) error = "clipboard_port_disabled";
             else if (!sequence || sequence != GetClipboardSequenceNumber()) error = "clipboard_source_changed";
-            else for (unsigned attempt = 0; attempt < 5; ++attempt) {
-                if (attempt) Sleep(20);
-                if (guarded_capture(&error)) { error.clear(); break; }
-                if (!error.starts_with("clipboard_open_failed")) break;
+            else {
+                for (unsigned attempt = 0; attempt < 5; ++attempt) {
+                    if (attempt) Sleep(20);
+                    if (guarded_capture(&error)) { error.clear(); break; }
+                    if (!error.starts_with("clipboard_open_failed")) break;
+                }
+                { std::lock_guard lock(shared_->mutex); offer = shared_->source; }
+                if (error.empty() && (offer.sequence != sequence || sequence != GetClipboardSequenceNumber()))
+                    error = "clipboard_source_changed";
             }
             if (!error.empty()) {
                 diagnostic("shortcut_capture_failed reason=" + error);
@@ -459,8 +500,8 @@ public:
                     error == "clipboard_source_changed" ? error : std::string("clipboard_capture_failed")});
                 return;
             }
-            ClipboardDemandOffer offer;
-            { std::lock_guard lock(shared_->mutex); offer = shared_->source; }
+            if (window_) KillTimer(window_, kCaptureRetryTimer);
+            capture_attempts_ = 0;
             shared_->emit({ClipboardDemandEventKind::kShortcutReady, operation, offer});
         });
     }
@@ -488,23 +529,57 @@ public:
     void payload(std::string operation, std::shared_ptr<PreparedClipboardPayload> payload, std::filesystem::path directory, std::string error) override {
         post([this, operation = std::move(operation), payload = std::move(payload), directory = std::move(directory), error = std::move(error)] {
             if (!state_ || state_->operation != operation) return;
-            if (!payload || !error.empty()) { state_->cancel(error); return; }
-            { std::lock_guard lock(state_->mutex); state_->payload = payload; state_->directory = directory; }
+            if (!payload || !error.empty() || !state_->can_read()) {
+                const auto failure = error.empty() ? "clipboard_source_changed" : error;
+                state_->cancel(failure);
+                shared_->emit({ClipboardDemandEventKind::kNativeResult, operation, state_->offer, false, 0, failure});
+                return;
+            }
+            { std::lock_guard lock(state_->mutex);
+              state_->payload = payload; state_->directory = directory;
+              if (!(state_->offer.formats & kClipboardFilesFormat)) state_->requested = true; }
             state_->wake.notify_all();
+        });
+    }
+    void validate_shortcut_ready(std::string operation, ClipboardDemandOffer offer) override {
+        post([this, operation = std::move(operation), offer = std::move(offer)] {
+            const auto state = state_;
+            const auto proxy = proxy_;
+            const auto sequence_before = GetClipboardSequenceNumber();
+            if (!enabled_ || !state || state->operation != operation || state->offer.token != offer.token
+                || !state->payload_is_ready() || !proxy || OleIsCurrentClipboard(proxy.Get()) != S_OK
+                || state_ != state || proxy_.Get() != proxy.Get() || !state->payload_is_ready()) {
+                shared_->emit({ClipboardDemandEventKind::kNativeResult, operation, offer, false, 0, "clipboard_source_changed"});
+                return;
+            }
+            ClipboardDemandEvent event{ClipboardDemandEventKind::kPayloadReady, operation, offer};
+            const auto sequence_after = GetClipboardSequenceNumber();
+            if (sequence_before && sequence_before == sequence_after) event.native_sequence = sequence_after;
+            shared_->emit(std::move(event));
         });
     }
     void cancel(std::string operation) override {
         post([this, operation = std::move(operation)] {
+            if (install_ && (operation.empty() || (!install_->invoke.empty() && install_->invoke == operation))) {
+                install_.reset(); install_attempts_ = 0;
+                if (window_) KillTimer(window_, kInstallRetryTimer);
+            }
             if (state_ && (operation.empty() || state_->operation == operation)) {
                 state_->cancel();
-                if (enabled_ && proxy_ && OleIsCurrentClipboard(proxy_.Get()) == S_OK) remote_offer(state_->offer, {});
             }
         });
     }
+    void restore_cancelled_offer() override {
+        post([this] {
+            if (!enabled_ || install_) return;
+            restore_requested_ = true;
+            try_install();
+        });
+    }
     void finished(std::string operation, bool moved) override {
-        if (!moved) return;
-        post([this, operation = std::move(operation)] {
+        post([this, operation = std::move(operation), moved] {
             if (state_ && state_->operation == operation) {
+                if (!moved) { state_->close_shortcut_reads(); return; }
                 state_->cancel("clipboard_move_completed");
                 if (proxy_ && OleIsCurrentClipboard(proxy_.Get()) == S_OK) OleSetClipboard(nullptr);
                 observed_ = GetClipboardSequenceNumber(); proxy_.Reset(); state_.reset();
@@ -565,6 +640,13 @@ private:
         const auto refuse = [error](std::string reason) { *error = std::move(reason); return false; };
         if (!ordinary_desktop()) return refuse("clipboard_desktop_not_ordinary");
         if (proxy_ && OleIsCurrentClipboard(proxy_.Get()) == S_OK) return refuse("clipboard_own_offer");
+        const auto current_sequence = GetClipboardSequenceNumber();
+        {
+            std::lock_guard lock(shared_->mutex);
+            // Both shortcut capture and a delayed listener retry preserve the
+            // published identity of an unchanged clipboard source.
+            if (original_ && current_sequence && shared_->source.sequence == current_sequence && !shared_->source.token.empty()) return true;
+        }
         ComPtr<IDataObject> data;
         if (const auto opened = OleGetClipboard(&data); FAILED(opened)) return refuse("clipboard_open_failed hr=" + hex(opened));
         ClipboardDemandOffer offer; offer.token = ClipboardCopyStore::new_id(); offer.sequence = GetClipboardSequenceNumber();
@@ -614,10 +696,46 @@ private:
         capture_attempts_ = 0;
     }
     void try_install() {
+        // OleSetClipboard and a nested GetData message loop can dispatch more
+        // port commands. A completed attempt must never erase a newer request.
+        if (installing_) return;
         if (window_) KillTimer(window_, kInstallRetryTimer);
+        if (!enabled_) { install_.reset(); restore_requested_ = false; return; }
+        installing_ = true;
+        struct InstallGuard {
+            bool& active;
+            bool& update_deferred;
+            HWND& window;
+            ~InstallGuard() {
+                active = false;
+                if (update_deferred && window) PostMessageW(window, WM_CLIPBOARDUPDATE, 0, 0);
+            }
+        } guard{installing_, clipboard_update_deferred_, window_};
+        const auto retry_new_request = [&] {
+            if (window_ && (install_ || restore_requested_)) SetTimer(window_, kInstallRetryTimer, kRetryDelayMs, nullptr);
+        };
+        if (restore_requested_) {
+            restore_requested_ = false;
+            const auto cancelled = state_;
+            const auto proxy = proxy_;
+            if (!install_ && cancelled && cancelled->is_cancelled() && proxy && OleIsCurrentClipboard(proxy.Get()) == S_OK
+                && !install_ && state_ == cancelled && proxy_.Get() == proxy.Get()) {
+                install_ = std::make_shared<Install>(Install{cancelled->offer, {}, cancelled});
+                install_attempts_ = 0;
+            }
+        }
         if (!install_) return;
-        if (!enabled_) { install_.reset(); return; }
-        const auto offer = install_->offer; const auto invoke = install_->invoke;
+        const auto request = install_;
+        const auto& offer = request->offer; const auto& invoke = request->invoke;
+        const auto epoch = epoch_;
+        if (request->restore_from) {
+            const auto proxy = proxy_;
+            const bool owns_cancelled_offer = state_ == request->restore_from && proxy && OleIsCurrentClipboard(proxy.Get()) == S_OK;
+            if (install_ != request) { retry_new_request(); return; }
+            if (!owns_cancelled_offer || state_ != request->restore_from || proxy_.Get() != proxy.Get()) {
+                install_.reset(); install_attempts_ = 0; return;
+            }
+        }
         // Release a GetData caller first; it may be the window holding the
         // clipboard open, and its cancellation is what lets a retry succeed.
         if (state_) state_->cancel("clipboard_source_changed");
@@ -625,11 +743,14 @@ private:
         if (!ordinary_desktop()) error = "clipboard_desktop_not_ordinary";
         else if (!offer.formats) {
             if (proxy_ && OleIsCurrentClipboard(proxy_.Get()) == S_OK) OleSetClipboard(nullptr);
-            observed_ = GetClipboardSequenceNumber(); proxy_.Reset(); state_.reset(); install_.reset();
+            observed_ = GetClipboardSequenceNumber(); proxy_.Reset(); state_.reset();
+            if (install_ == request) install_.reset();
+            retry_new_request();
             diagnostic("offer_cleared"); return;
         } else {
-            auto state = std::make_shared<DemandState>(); state->offer = offer;
+            auto state = std::make_shared<DemandState>(); state->offer = offer; state->published = false;
             if (!invoke.empty()) state->operation = invoke;
+            state->track_shortcut_reads = !invoke.empty() && !(offer.formats & kClipboardFilesFormat);
             std::weak_ptr<PortShared> weak = shared_;
             state->event = [weak](auto event) { if (auto shared = weak.lock()) shared->emit(std::move(event)); };
             state->stopped = [weak] { const auto shared = weak.lock(); return !shared || shared->stopping.load(); };
@@ -637,7 +758,27 @@ private:
             if (const auto installed = OleSetClipboard(proxy.Get()); FAILED(installed)) {
                 state->cancel("clipboard_busy"); error = "clipboard_busy hr=" + hex(installed);
             } else {
+                const bool owns_candidate = OleIsCurrentClipboard(proxy.Get()) == S_OK;
+                if (!enabled_ || epoch_ != epoch) {
+                    state->cancel("clipboard_session_changed");
+                    if (owns_candidate) OleSetClipboard(nullptr);
+                    observed_ = GetClipboardSequenceNumber(); retry_new_request(); return;
+                }
+                if (!owns_candidate) {
+                    state->cancel("clipboard_source_changed");
+                    if (install_ == request) {
+                        install_.reset(); install_attempts_ = 0;
+                        if (!invoke.empty()) shared_->emit({ClipboardDemandEventKind::kNativeResult, invoke, offer, false, 0,
+                            "clipboard_source_changed"});
+                    }
+                    clipboard_update_deferred_ = true;
+                    retry_new_request(); return;
+                }
                 state_ = std::move(state); proxy_ = std::move(proxy); observed_ = GetClipboardSequenceNumber();
+                if (install_ != request) {
+                    state_->cancel("clipboard_source_changed"); retry_new_request(); return;
+                }
+                state_->activate();
                 diagnostic("offer_installed formats=" + std::to_string(offer.formats) + " clipboard_sequence="
                     + std::to_string(observed_) + " attempts=" + std::to_string(install_attempts_ + 1)
                     + (invoke.empty() ? "" : " shortcut=1"));
@@ -646,6 +787,7 @@ private:
                 return;
             }
         }
+        if (install_ != request) { retry_new_request(); return; }
         const unsigned limit = invoke.empty() ? kInstallAttempts : kInvokeInstallAttempts;
         if (++install_attempts_ == 1) diagnostic("install_retry reason=" + error);
         if (install_attempts_ < limit && window_) { SetTimer(window_, kInstallRetryTimer, kRetryDelayMs, nullptr); return; }
@@ -667,9 +809,22 @@ private:
         if (self && message == WM_CLIPBOARDUPDATE) {
             const auto sequence = GetClipboardSequenceNumber();
             if (self->committing_source_) { self->observed_ = sequence; return 0; }
-            if (self->enabled_ && sequence != self->observed_) {
+            if (self->installing_) { self->clipboard_update_deferred_ = true; return 0; }
+            const bool deferred = self->clipboard_update_deferred_;
+            self->clipboard_update_deferred_ = false;
+            if (self->enabled_ && (sequence != self->observed_ || (deferred && self->proxy_))) {
                 self->observed_ = sequence;
-                if (!self->proxy_ || OleIsCurrentClipboard(self->proxy_.Get()) != S_OK) {
+                const auto proxy = self->proxy_;
+                if (!proxy || OleIsCurrentClipboard(proxy.Get()) != S_OK) {
+                    if (self->proxy_.Get() != proxy.Get() || self->installing_) {
+                        self->clipboard_update_deferred_ = true;
+                        PostMessageW(window, WM_CLIPBOARDUPDATE, 0, 0);
+                        return 0;
+                    }
+                    if (self->install_ && self->install_->restore_from) {
+                        self->install_.reset(); self->install_attempts_ = 0;
+                        KillTimer(window, kInstallRetryTimer);
+                    }
                     if (self->state_) self->state_->cancel("clipboard_local_changed");
                     self->capture_attempts_ = 0; self->try_capture();
                 }
@@ -728,14 +883,15 @@ private:
         OleUninitialize();
         shared_->exited = true;
     }
-    struct Install { ClipboardDemandOffer offer; std::string invoke; };
+    struct Install { ClipboardDemandOffer offer; std::string invoke; std::shared_ptr<DemandState> restore_from; };
     std::shared_ptr<PortShared> shared_;
     ComPtr<IDataObject> proxy_, original_;
     std::shared_ptr<DemandState> state_;
     HWND window_ = nullptr;
-    std::optional<Install> install_;
+    std::shared_ptr<Install> install_;
     unsigned capture_attempts_ = 0, install_attempts_ = 0;
     bool enabled_ = false, configured_ = false, committed_ok_ = false, committing_source_ = false, listening_ = false;
+    bool installing_ = false, restore_requested_ = false, clipboard_update_deferred_ = false;
     std::uint32_t observed_ = 0;
     std::string epoch_, configured_epoch_, committed_, committed_error_;
     std::mutex configuration_mutex_;
@@ -765,9 +921,11 @@ bool clipboard_has_files() {
 #endif
 }
 void* make_clipboard_data_object_for_test(ClipboardDemandOffer offer, std::function<void(ClipboardDemandEvent)> event,
-    std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)>* supply) {
+    std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)>* supply,
+    std::function<void()>* activate) {
 #ifdef _WIN32
     auto state = std::make_shared<DemandState>(); state->offer = std::move(offer); state->event = std::move(event);
+    if (activate) { state->published = false; *activate = [state] { state->activate(); }; }
     if (supply) *supply = [state](auto payload, auto description, auto directory) {
         { std::lock_guard lock(state->mutex); state->payload = std::move(payload); state->description = std::move(description);
           state->directory = std::move(directory);
@@ -776,7 +934,7 @@ void* make_clipboard_data_object_for_test(ClipboardDemandOffer offer, std::funct
     };
     return static_cast<IDataObject*>(new DemandObject(std::move(state)));
 #else
-    (void)offer; (void)event; (void)supply; return nullptr;
+    (void)offer; (void)event; (void)supply; (void)activate; return nullptr;
 #endif
 }
 }

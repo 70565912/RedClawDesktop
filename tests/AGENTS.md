@@ -33,7 +33,7 @@ For ordinary iterations, select affected areas once (replace the directory with 
 .\scripts\service\run-local-validation.ps1 -Area input,workspace -BuildDirectory build/ninja-x64
 ```
 
-This builds only selected test targets, deduplicates suites, runs serially and writes aggregate plus case-level results. The broad commands below are checkpoints, not prerequisites for every remote diagnosis.
+This builds only selected test targets, deduplicates suites, runs serially and writes aggregate plus case-level results. Select directly affected suites for ordinary builds, fixes, and PRs. The broader commands below are optional, separately agreed checkpoints.
 
 Build unit targets:
 
@@ -47,7 +47,7 @@ Run unit CTest gate:
 ctest --test-dir build/vs2022-x64 -C Debug --output-on-failure -E "_integration_tests|_e2e_tests"
 ```
 
-Run full local sweep only for release-style checkpoints or broad shared behavior changes:
+Run a full local sweep only when explicitly requested by Ryan or required by a separately agreed release acceptance:
 
 ```powershell
 cmake --build --preset debug-tests-local

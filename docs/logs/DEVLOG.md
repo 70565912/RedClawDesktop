@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-11-20 — Keep clipboard shortcut and native extraction transactions consistent
+
+- Preserve the source identity and explicit installation across rejected native read requests, guard asynchronous OLE publication and late recovery, and prepare text/image content before injecting a shortcut. Record the verified-content, native-owner and read-receipt boundaries and impact-based build/test scope. See [progress](../../PROGRESS.md#2026-11-20--clipboard-paste-transaction-ownership-m10-t03) and [D7](../../DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
+- Final two-machine Debug acceptance passed on matching 331-file runtime candidates for bidirectional text, repeated Ctrl+V/Shift+Insert, right-click paste and a confirmed 23-byte file copy. The Host records four prepared-payload injections and subsequent successful native receipts; target application results were confirmed by Ryan and the laptop Agent. See the operation evidence in [progress](../../PROGRESS.md#2026-11-20--clipboard-paste-transaction-ownership-m10-t03).
+
 ## 2026-11-18 — v0.1.13 Windows x64 Developer Preview
 
 - Version and release notes cover the mainline changes since v0.1.12. See the [release notes](../releases/v0.1.13.md) and [progress](../../PROGRESS.md#2026-11-18--v0113-windows-x64-developer-preview).

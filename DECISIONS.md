@@ -63,6 +63,8 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - A text or image reservation the peer has not answered within 15 s is released. That also ends a blocked native `GetData`. After the peer answers, the old rule stands: only completion, cancel, or session loss ends it. File flows keep explicit-cancel semantics, because enumeration and confirmation can take long.
 - Controller feedback (Ryan, 2026-11-16). Connected paste failures use a timed playback hint that leaves keyboard focus in place. A connection loss or session change records the interrupted paste in File/Clipboard and leaves the panel in its current open or closed state. The Connection overlay reports reconnection. Confirmed file paste still opens progress once, and an uncertain move result remains available in File/Clipboard.
 - A dead native clipboard port is restarted with a 1 s to 30 s backoff instead of staying off for the session.
+- Updated 2026-11-20: a shortcut for an unchanged clipboard sequence reuses its published offer identity. An obsolete native demand is cancelled without replacing an active shortcut installation. Re-advertisement of a cancelled native object waits for the paste reservation and shared transfer slot to become idle, and completed or cancelled installs cannot erase a newer pending install. Capability 5 and the wire messages remain unchanged.
+- A Controller-to-Host text/image shortcut itself expresses paste intent. The Host requests the content on that operation, waits for verified payload and the shared transfer slot to be released, then rechecks native clipboard ownership/sequence and the original input/focus authorization before submitting one paste. A native read started before submission cannot confirm that shortcut. Missing local readiness or post-submit read confirmation releases the reservation after a bounded wait and reports the result as unconfirmed. Files keep the native descriptor, confirmation, and stream path; copying alone still does not start an explicit transfer.
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
 
@@ -128,6 +130,8 @@ Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The as
 Made 2026-11-12. Ryan decided that GitHub ruleset 27011669 requires only `docs-guard`. The `build-and-test` workflow may still run, but it is not a required check.
 
 Updated 2026-11-16 with Ryan's approval. The validation scope follows the change.
+
+Updated 2026-11-20 at Ryan's request. Ordinary Debug/Release builds, candidate updates and pull requests run directly relevant automated tests. Full CTest is reserved for explicit requests or separately agreed release acceptance. Record the selected suites and their results; broad shared changes widen the relevant scope as needed.
 
 A merge into `main` needs all of the following at the final head:
 

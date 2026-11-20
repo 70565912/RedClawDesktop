@@ -30,7 +30,7 @@ void ClipboardDemandSession::log(std::string line) const {
 }
 void ClipboardDemandSession::reject(const std::string& operation, const ClipboardDemandOffer& offer, Direction direction, const char* error) {
     log(std::string("event=reject op=") + brief(operation) + " token=" + brief(offer.token) + " error=" + error);
-    if (port_) port_->cancel(operation);
+    if (port_) { port_->cancel(operation); restore_pending_ = true; }
     if (peer_) { auto rejected = message(Action::kCancel, operation, offer, direction);
         rejected.workspace->error_code = error; (void)peer_(rejected); }
 }
@@ -168,6 +168,13 @@ void ClipboardDemandSession::demand(std::string operation, ClipboardDemandOffer 
     }
     approve();
 }
+void ClipboardDemandSession::host_demand() {
+    if (!host_ || !pending_ || pending_->demanded) return;
+    pending_->demanded = true;
+    log("event=demand_sent op=" + brief(pending_->operation) + " token=" + brief(pending_->offer.token) + " read=0");
+    if (!peer_ || !peer_(message(Action::kClipboardDemand, pending_->operation, pending_->offer, pending_->direction)))
+        finish("workspace_send_unconfirmed");
+}
 void ClipboardDemandSession::approve() {
     if (!pending_ || pending_->started || host_) return;
     const bool local_source = pending_->direction == Direction::kToHost;
@@ -288,11 +295,15 @@ bool ClipboardDemandSession::from_peer(const Control& value) {
         if (pending(value.request_id, offer, data.direction)) {
             std::string error;
             if (!shortcut_paste_.begin(peer_epoch_, value.request_id, &error)) finish(error, true);
-            else port_->remote_offer(offer, value.request_id);
+            else {
+                pending_->defer_shortcut = !(offer.formats & kClipboardFilesFormat);
+                port_->remote_offer(offer, value.request_id);
+            }
         }
         return true;
     case Action::kClipboardNativeResult:
         if (!matches(value)) return true;
+        if (pending_->defer_shortcut && data.error_code.empty()) return true;
         pending_->native_received = true; pending_->native_complete = data.clipboard_complete;
         pending_->effect = data.clipboard_effect; pending_->native_error = data.error_code;
         if (!data.error_code.empty() && !pending_->started) finish(data.error_code);
@@ -327,11 +338,13 @@ void ClipboardDemandSession::bulk_finished(const Control& result, bool) {
     if (!matches(result)) return;
     if (!result.workspace->error_code.empty()) { finish(result.workspace->error_code, true); return; }
     pending_->bulk_done = true;
+    pending_->bulk_done_at = now_;
     pending_->bulk = *result.workspace;
     local_state(Action::kClipboardNativePending, "clipboard_awaiting_native_paste"); settle();
 }
 void ClipboardDemandSession::settle() {
     if (!pending_ || !pending_->bulk_done || !pending_->native_received) return;
+    if (pending_->defer_shortcut && !pending_->shortcut_submitted && pending_->native_complete && pending_->native_error.empty()) return;
     const bool destination = host_ == (pending_->direction == Direction::kToHost);
     if (destination) {
         auto result = message(Action::kClipboardNativeResult, pending_->operation, pending_->offer, pending_->direction);
@@ -374,7 +387,7 @@ void ClipboardDemandSession::finish(std::string error, bool notify_peer) {
     }
     if (!error.empty()) {
         if (cancel_) cancel_(operation);
-        if (port_) port_->cancel(operation);
+        if (port_) { port_->cancel(operation); restore_pending_ = true; }
     }
     if (port_) port_->finished(operation, error.empty() && pending_->offer.move && pending_->committing);
     local_state(Action::kFinished, std::move(error)); pending_.reset();
@@ -384,11 +397,10 @@ void ClipboardDemandSession::native(ClipboardDemandEvent event) {
     const auto direction = host_ ? Direction::kToHost : Direction::kToController;
     switch (event.kind) {
     case ClipboardDemandEventKind::kOffer:
-        if (pending_ && event.offer.token != local_offer_.token) finish("clipboard_local_changed", true);
-        if (event.offer.token != local_offer_.token) {
-            if (preview_) preview_->cancel();
-            preview_token_.clear(); source_description_.reset(); sending_metadata_.clear();
-        }
+        if (event.offer.token == local_offer_.token) break;
+        if (pending_) finish("clipboard_local_changed", true);
+        if (preview_) preview_->cancel();
+        preview_token_.clear(); source_description_.reset(); sending_metadata_.clear();
         local_offer_ = event.offer; publish_offer();
         break;
     case ClipboardDemandEventKind::kShortcutReady:
@@ -408,10 +420,21 @@ void ClipboardDemandSession::native(ClipboardDemandEvent event) {
         break;
     case ClipboardDemandEventKind::kInstalled:
         if (host_ && pending_ && pending_->operation == event.operation && pending_->offer.token == event.offer.token) {
+            // The explicit shortcut is itself the paste intent. For text/image
+            // let applications receive a ready clipboard instead of injecting
+            // while a delayed GetData still has to wait for network data.
+            if (pending_->defer_shortcut) { host_demand(); break; }
             std::string error;
             const bool pasted = shortcut_paste_.paste(&error);
             log("event=paste_inject op=" + brief(event.operation) + " result=" + (pasted ? "ok" : error));
             if (!pasted) finish(error, true);
+        }
+        break;
+    case ClipboardDemandEventKind::kPayloadReady:
+        if (host_ && pending_ && pending_->defer_shortcut && pending_->operation == event.operation
+            && pending_->offer.token == event.offer.token) {
+            pending_->shortcut_validation_requested = false;
+            pending_->shortcut_native_sequence = event.native_sequence;
         }
         break;
     case ClipboardDemandEventKind::kDiagnostic:
@@ -425,12 +448,7 @@ void ClipboardDemandSession::native(ClipboardDemandEvent event) {
         break;
     case ClipboardDemandEventKind::kDemand:
         if (host_) {
-            if (pending(event.operation, event.offer, direction)) {
-                pending_->demanded = true;
-                log("event=demand_sent op=" + brief(event.operation) + " token=" + brief(event.offer.token) + " read=0");
-                if (!peer_ || !peer_(message(Action::kClipboardDemand, event.operation, event.offer, direction)))
-                    finish("workspace_send_unconfirmed");
-            }
+            if (pending(event.operation, event.offer, direction)) host_demand();
         } else demand(event.operation, event.offer, direction);
         break;
     case ClipboardDemandEventKind::kRead:
@@ -448,6 +466,11 @@ void ClipboardDemandSession::native(ClipboardDemandEvent event) {
         break;
     case ClipboardDemandEventKind::kNativeResult:
         if (pending_ && pending_->operation == event.operation && pending_->offer.token == event.offer.token) {
+            // Background clipboard readers can consume the prepared content
+            // before the target sees the injected shortcut. Only a read that
+            // began after submission is a receipt for this shortcut.
+            if (pending_->defer_shortcut && event.error.empty()
+                && (!pending_->shortcut_submitted || event.native_read_started < pending_->shortcut_read_after)) break;
             pending_->native_received = true; pending_->native_complete = event.complete;
             pending_->effect = event.effect; pending_->native_error = event.error; settle();
             if (pending_ && !pending_->started && !event.error.empty()) finish(event.error, true);
@@ -478,6 +501,7 @@ void ClipboardDemandSession::pump(std::uint64_t now, bool enabled, std::string p
     now_ = now;
     if (enabled_ != enabled || peer_epoch_ != peer_epoch) {
         if (pending_) finish("clipboard_session_changed");
+        restore_pending_ = false;
         enabled_ = enabled; peer_epoch_ = std::move(peer_epoch);
         if (port_) port_->connected(enabled_, epoch_ + ":" + peer_epoch_);
     }
@@ -494,6 +518,32 @@ void ClipboardDemandSession::pump(std::uint64_t now, bool enabled, std::string p
         }
     }
     for (unsigned i = 0; i < 8; ++i) { auto event = port_->take_event(); if (!event) break; native(std::move(*event)); }
+    if (pending_ && pending_->defer_shortcut && pending_->bulk_done && !pending_->shortcut_submitted) {
+        if (now_ - pending_->bulk_done_at >= kPeerReplyTimeoutMs) finish("clipboard_native_ready_timeout", true);
+        else if (!available_ || available_({})) {
+            if (!actions_.sequence) finish("clipboard_source_changed", true);
+            else if (pending_->shortcut_native_sequence && actions_.sequence() == pending_->shortcut_native_sequence) {
+                std::string error;
+                const bool pasted = shortcut_paste_.paste(&error, [&] {
+                    if (actions_.sequence() != pending_->shortcut_native_sequence) return false;
+                    pending_->shortcut_read_after = std::chrono::steady_clock::now();
+                    return true;
+                });
+                log("event=paste_inject op=" + brief(pending_->operation) + " result=" + (pasted ? "ok" : error) + " data_ready=1");
+                if (!pasted) finish(error, true);
+                else {
+                    pending_->shortcut_submitted = true; pending_->shortcut_submitted_at = now_;
+                    settle();
+                }
+            } else if (!pending_->shortcut_validation_requested) {
+                pending_->shortcut_native_sequence = 0;
+                pending_->shortcut_validation_requested = true;
+                port_->validate_shortcut_ready(pending_->operation, pending_->offer);
+            }
+        }
+    }
+    if (pending_ && pending_->defer_shortcut && pending_->shortcut_submitted && !pending_->native_received
+        && now_ - pending_->shortcut_submitted_at >= kPeerReplyTimeoutMs) finish("clipboard_native_read_timeout", true);
     if (offer_unsent_ && !local_offer_.token.empty()) publish_offer();
     if (!shortcut_waiting_.empty() && now_ - shortcut_since_ >= kShortcutTimeoutMs) {
         const auto operation = std::move(shortcut_waiting_); shortcut_waiting_.clear();
@@ -506,6 +556,10 @@ void ClipboardDemandSession::pump(std::uint64_t now, bool enabled, std::string p
         && !(pending_->offer.formats & kClipboardFilesFormat) && now_ - pending_->since >= kPeerReplyTimeoutMs) {
         log("event=reply_timeout op=" + brief(pending_->operation) + " waited_ms=" + std::to_string(now_ - pending_->since));
         finish("clipboard_peer_timeout", true);
+    }
+    if (restore_pending_ && !native_failed_ && !pending_ && shortcut_waiting_.empty() && (!available_ || available_({}))) {
+        restore_pending_ = false;
+        port_->restore_cancelled_offer();
     }
     if (preview_ && preview_->progress().finished()) {
         const auto progress = preview_->progress();
@@ -539,7 +593,7 @@ void ClipboardDemandSession::disconnected() {
     if (preview_) { preview_->cancel(); if (preview_->progress().finished()) preview_.reset(); }
     local_offer_ = {}; remote_offer_ = {}; source_description_.reset(); sending_metadata_.clear(); receiving_metadata_.clear();
     preview_token_.clear(); preview_operation_.clear(); receiving_page_ = receiving_pages_ = 0;
-    enabled_ = offer_unsent_ = false; peer_epoch_.clear(); shortcut_waiting_.clear(); if (port_) port_->connected(false, {});
+    enabled_ = offer_unsent_ = restore_pending_ = false; peer_epoch_.clear(); shortcut_waiting_.clear(); if (port_) port_->connected(false, {});
 }
 void ClipboardDemandSession::reset_epoch(std::string epoch) { disconnected(); epoch_ = std::move(epoch); }
 }
