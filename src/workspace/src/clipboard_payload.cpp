@@ -28,6 +28,21 @@ std::uint32_t clipboard_sequence_number() {
     return 0;
 #endif
 }
+std::array<std::uint32_t, 2> clipboard_native_formats(ClipboardPayloadFormat kind) {
+#ifdef _WIN32
+    switch (kind) {
+    case ClipboardPayloadFormat::kUnicodeText: return {CF_UNICODETEXT, 0};
+    case ClipboardPayloadFormat::kHtml: return {RegisterClipboardFormatW(L"HTML Format"), 0};
+    case ClipboardPayloadFormat::kRtf: return {RegisterClipboardFormatW(L"Rich Text Format"), 0};
+    case ClipboardPayloadFormat::kPng: return {RegisterClipboardFormatW(L"PNG"), RegisterClipboardFormatW(L"image/png")};
+    case ClipboardPayloadFormat::kDibV5: return {CF_DIBV5, 0};
+    case ClipboardPayloadFormat::kDib: return {CF_DIB, 0};
+    }
+#else
+    (void)kind;
+#endif
+    return {};
+}
 namespace {
 constexpr std::size_t kChunk = 64U * 1024U;
 bool fail(std::string* error, const char* code) { if (error) *error = code; return false; }
@@ -75,20 +90,10 @@ private:
 public:
     const std::uint8_t* bytes;
 };
-UINT native_format(std::uint32_t kind) {
-    switch (static_cast<ClipboardPayloadFormat>(kind)) {
-    case ClipboardPayloadFormat::kUnicodeText: return CF_UNICODETEXT;
-    case ClipboardPayloadFormat::kHtml: return RegisterClipboardFormatW(L"HTML Format");
-    case ClipboardPayloadFormat::kRtf: return RegisterClipboardFormatW(L"Rich Text Format");
-    case ClipboardPayloadFormat::kPng: return RegisterClipboardFormatW(L"PNG");
-    case ClipboardPayloadFormat::kDibV5: return CF_DIBV5;
-    case ClipboardPayloadFormat::kDib: return CF_DIB;
-    }
-    return 0;
-}
 struct ClipboardObject {
     UINT format = 0; HGLOBAL memory = nullptr;
     ClipboardObject(UINT type, std::size_t size) : format(type), memory(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size)) {}
+    ClipboardObject(UINT type, HGLOBAL owned) : format(type), memory(owned) {}
     ClipboardObject(ClipboardObject&& other) noexcept : format(other.format), memory(std::exchange(other.memory, nullptr)) {}
     ~ClipboardObject() { if (memory) GlobalFree(memory); }
     ClipboardObject(const ClipboardObject&) = delete;
@@ -190,9 +195,12 @@ bool ClipboardSnapshot::create(const std::filesystem::path& spool, std::string_v
         cancelled, &hash, error) && writer.end_batch(error);
 }
 bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_t expected_sequence,
-    const std::atomic_bool& cancelled, std::string* error) {
+    const std::atomic_bool& cancelled, std::string* error, std::optional<std::uint32_t> selected_formats) {
 #ifdef _WIN32
     if (!impl_->root.empty() || cancelled.load() || !spool.is_absolute()) return fail(error, "clipboard_snapshot_invalid_start");
+    if (selected_formats && (!*selected_formats || (*selected_formats & ~(kClipboardContentFormats | kClipboardFilesFormat))
+        || ((*selected_formats & kClipboardFilesFormat) && (*selected_formats & kClipboardContentFormats))))
+        return fail(error, "clipboard_source_format_invalid");
     std::error_code ec; const auto parent = std::filesystem::canonical(spool, ec);
     if (ec) return fail(error, "clipboard_spool_unavailable");
     std::array<unsigned char, 16> random{};
@@ -215,10 +223,17 @@ bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_
         // existing owner can legitimately advance the sequence while reading.
         for (std::uint32_t kind = 1; kind <= 6; ++kind) {
             if (cancelled.load()) return fail(error, "clipboard_cancelled");
-            if (kind == static_cast<std::uint32_t>(ClipboardPayloadFormat::kDib) && IsClipboardFormatAvailable(CF_DIBV5)) continue;
-            const auto format = native_format(kind);
-            if (!format || !IsClipboardFormatAvailable(format)) continue;
-            const auto handle = static_cast<HGLOBAL>(GetClipboardData(format));
+            const auto payload_kind = static_cast<ClipboardPayloadFormat>(kind);
+            if (selected_formats && !(*selected_formats & clipboard_format_bit(payload_kind))) continue;
+            UINT format = 0;
+            HGLOBAL handle = nullptr;
+            for (const auto id : clipboard_native_formats(payload_kind)) {
+                if (!id || !IsClipboardFormatAvailable(id)) continue;
+                format = id;
+                handle = static_cast<HGLOBAL>(GetClipboardData(id));
+                if (handle) break;
+            }
+            if (!format && !selected_formats) continue;
             if (!handle) return fail(error, "clipboard_format_unavailable");
             const auto allocated = GlobalSize(handle); GlobalView view(handle);
             if (!allocated || !view.bytes) return fail(error, "clipboard_format_invalid");
@@ -238,10 +253,11 @@ bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_
             if (!write_snapshot_file(writer, format_file(kind), {view.bytes, size}, cancelled, &hash, error)) return false;
             auto* description = manifest.add_formats(); description->set_kind(kind); description->set_size(size); description->set_sha256(hash);
         }
-        if (IsClipboardFormatAvailable(CF_HDROP)) {
+        if ((!selected_formats || (*selected_formats & kClipboardFilesFormat)) && IsClipboardFormatAvailable(CF_HDROP)) {
             const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
             if (!drop) return fail(error, "clipboard_file_list_unavailable");
             const auto count = DragQueryFileW(drop, 0xffffffffU, nullptr, 0);
+            if (selected_formats && !count) return fail(error, "clipboard_file_list_unavailable");
             for (UINT index = 0; index < count; ++index) {
                 if (cancelled.load()) return fail(error, "clipboard_cancelled");
                 const auto size = DragQueryFileW(drop, index, nullptr, 0);
@@ -255,7 +271,7 @@ bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_
                 impl_->files.push_back({std::move(source), relative});
             }
             manifest.set_file_roots(count);
-        }
+        } else if (selected_formats && (*selected_formats & kClipboardFilesFormat)) return fail(error, "clipboard_file_list_unavailable");
     }
     if (!manifest.formats_size() && !manifest.file_roots()) return fail(error, "clipboard_format_unsupported");
     std::string metadata, hash;
@@ -264,7 +280,7 @@ bool ClipboardSnapshot::capture(const std::filesystem::path& spool, std::uint32_
         || !writer.end_batch(error)) return false;
     if (error) error->clear(); return true;
 #else
-    (void)spool; (void)expected_sequence; (void)cancelled; return fail(error, "clipboard_platform_unsupported");
+    (void)spool; (void)expected_sequence; (void)cancelled; (void)selected_formats; return fail(error, "clipboard_platform_unsupported");
 #endif
 }
 struct PreparedClipboardPayload::Impl {
@@ -278,7 +294,7 @@ PreparedClipboardPayload::~PreparedClipboardPayload() = default;
 std::uintptr_t PreparedClipboardPayload::clone_native_format(ClipboardPayloadFormat format) const {
 #ifdef _WIN32
     if (!impl_->ready) return 0;
-    const auto type = native_format(static_cast<std::uint32_t>(format));
+    const auto type = clipboard_native_formats(format)[0];
     for (const auto& object : impl_->objects) if (object.format == type && object.memory) {
         const auto size = GlobalSize(object.memory);
         auto copy = GlobalAlloc(GMEM_MOVEABLE, size);
@@ -316,7 +332,7 @@ bool PreparedClipboardPayload::load(const std::filesystem::path& directory, cons
     if (manifest.formats_size() > 6 || (!manifest.formats_size() && !manifest.file_roots())) return fail(error, "clipboard_manifest_invalid");
     std::set<std::uint32_t> kinds;
     for (const auto& format : manifest.formats()) {
-        const auto native = native_format(format.kind());
+        const auto native = clipboard_native_formats(static_cast<ClipboardPayloadFormat>(format.kind()))[0];
         if (!native || !kinds.insert(format.kind()).second || !valid_hash(format.sha256()) || !format.size()
             || format.size() > std::numeric_limits<std::size_t>::max()) return fail(error, "clipboard_manifest_invalid");
         if (!source.open(directory / "metadata" / format_file(format.kind()), error)) return false;
@@ -384,6 +400,13 @@ bool PreparedClipboardPayload::load(const std::filesystem::path& directory, cons
 bool PreparedClipboardPayload::publish(const std::function<bool()>& final_guard, std::string* error) {
 #ifdef _WIN32
     if (!impl_->ready || impl_->used || !final_guard) return fail(error, "clipboard_payload_not_ready");
+    const auto png_formats = clipboard_native_formats(ClipboardPayloadFormat::kPng);
+    if (png_formats[1] && png_formats[1] != png_formats[0] && std::any_of(impl_->objects.begin(), impl_->objects.end(),
+        [&](const auto& object) { return object.format == png_formats[0] && object.memory; })) {
+        ClipboardObject alias(png_formats[1], reinterpret_cast<HGLOBAL>(clone_native_format(ClipboardPayloadFormat::kPng)));
+        if (!alias.memory) return fail(error, "clipboard_allocation_failed");
+        impl_->objects.push_back(std::move(alias));
+    }
     impl_->used = true;
     const auto owner = CreateWindowExW(0, L"STATIC", L"RedClaw Clipboard", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!owner) return fail(error, "clipboard_owner_unavailable");

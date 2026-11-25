@@ -44,6 +44,8 @@ argument takes precedence. Without either, the existing supervisor default appli
    Repeated shortcuts for the same local copy retain its offer identity. Native and keyboard paste requests share one reservation; a rejected native request cannot overwrite an active shortcut installation or continuously re-advertise the clipboard while that reservation is held.
 
    A text/image shortcut authorizes the demand, and the Host submits paste only after verified content and local clipboard readiness, with the original focus/input authorization. Files retain explicit confirmation. An early background clipboard read cannot act as the shortcut's completion receipt.
+
+   Native copies with image and incidental file representations use image paste unless they explicitly request a file move; file-only copies and cuts retain the file confirmation path. The snapshot must provide every advertised image format, without including unconfirmed files. PNG native aliases share the existing wire format.
 8. Cross-version interoperability. DHT, session, media, control, Agent, and Debug Bridge protocols are versioned. Still-supported releases connect through the common capability set. The same Git commit, product version, or binary is not a connection requirement. See root [AGENTS.md](AGENTS.md) and the protocol contract in the solution architecture.
 
 ## Controller playback pause amendment (PR #10 local follow-up)

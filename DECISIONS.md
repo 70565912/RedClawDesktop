@@ -42,7 +42,7 @@ For this operator and this agent:
 
 - [SPEC.md](SPEC.md), [PROGRESS.md](PROGRESS.md), and [DECISIONS.md](DECISIONS.md) are the charter and the dated snapshot. Chat history is not project state.
 - [PROJECT_STATE.md](docs/runtime/PROJECT_STATE.md) and [MODULE_KANBAN.md](docs/runtime/MODULE_KANBAN.md) stay the long-form stage log and the module task ledger. Cite them. Do not copy them into the root files. On the items covered in [PROGRESS.md](PROGRESS.md), the root files win until Ryan edits them.
-- Implementation lands on a branch and a pull request. This agent does not merge unless Ryan asks.
+- Updated 2026-11-24 by Ryan: implementation may take place in the current working branch, including `main`. A separate branch and pull request are optional, and no separate per-push or merge approval from Ryan is required. Publication to `main` remains gated by D11 and authorized task scope; destructive Git operations and platform permissions remain unchanged.
 - Acceptance that can be scripted should be scripted. Existing gates are [test-matrix.md](docs/testing/test-matrix.md), the P0 runbook, and `scripts/security/check_debug_credentials.py`. An unrun manual case is not a pass.
 - Reviewers are invited when needed. They are not assumed to share a previous development session. A review should be possible from the diff, these three files, and the docs they link.
 
@@ -52,7 +52,7 @@ Source: Ryan's brief for this agent.
 
 On 2026-11-06 Ryan approved, via 小程, a short gate at the top of root [AGENTS.md](AGENTS.md). Before any code or process change, an agent must read [SPEC.md](SPEC.md), [PROGRESS.md](PROGRESS.md), and [DECISIONS.md](DECISIONS.md) and follow them. The seven discipline points (single resident owner, on-demand reviewers, those three files as the only status source, scriptable acceptance, branch plus pull request, WCT / `image_linux_rfevm` out of scope, free direct P2P before TURN) are stated there. The longer build, security, and protocol rules already in that file stay below the gate.
 
-This approval adds the gate to the open pull request. It is not a merge. Merge still needs Ryan's explicit yes.
+This approval added the gate to the open pull request; it was not a merge. The historical branch/PR and separate approval requirements were superseded on 2026-11-24 by the updated D5.
 
 ## D7 — Capability-5 clipboard requests always end visibly
 
@@ -67,6 +67,7 @@ Made 2026-11-06 for the Controller-to-Host paste fix. The behavior is on main as
 - A Controller-to-Host text/image shortcut itself expresses paste intent. The Host requests the content on that operation, waits for verified payload and the shared transfer slot to be released, then rechecks native clipboard ownership/sequence and the original input/focus authorization before submitting one paste. A native read started before submission cannot confirm that shortcut. Missing local readiness or post-submit read confirmation releases the reservation after a bounded wait and reports the result as unconfirmed. Files keep the native descriptor, confirmation, and stream path; copying alone still does not start an explicit transfer.
 - Clipboard diagnostics carry only events, short id prefixes, format bits, sequence numbers, and error codes. They never carry payload contents or paths.
 - No wire change. Old peers ignore the new behavior; the existing fields carry the cancels.
+- Updated 2026-11-24: capability-5 offers normalize a native copy containing both image and file representations to image content unless the source explicitly selects a file move. File-only copies and cuts retain confirmation, and a selected image snapshot never includes incidental file roots. Every advertised image representation is captured (including DIB alongside DIBV5). Windows `PNG` and `image/png` are aliases for the existing PNG wire format; both may be offered to native consumers without sending PNG twice. Native image query/read diagnostics contain format names and outcomes only; an unsupported direct GDI bitmap query is reported once per object. No wire change.
 
 ## D8 — Reader-specific agent rules and on-demand subtask reviews
 
@@ -125,6 +126,8 @@ What that means in the implementation:
 
 Source: Ryan's 2026-11-11 instruction relayed in this agent's task brief. The assessment it accepts is PR #3 (https://github.com/70565912/RedClawDesktop/pull/3).
 
+Updated 2026-11-25 by Ryan: PR #3 stays unmerged. The assessment described the 2026-11-06 baseline, and the HEVC path it led to is already on `main` through this decision and PR #10. The pull request is closed and `cursor/hevc-migration-assessment-6a79` is deleted. The assessment file is not added to the tree. The 70% bitrate measurement and HEVC licensing question remain open.
+
 ## D11 — Merges are gated on local build/tests; GitHub build-and-test is advisory
 
 Made 2026-11-12. Ryan decided that GitHub ruleset 27011669 requires only `docs-guard`. The `build-and-test` workflow may still run, but it is not a required check.
@@ -133,7 +136,7 @@ Updated 2026-11-16 with Ryan's approval. The validation scope follows the change
 
 Updated 2026-11-20 at Ryan's request. Ordinary Debug/Release builds, candidate updates and pull requests run directly relevant automated tests. Full CTest is reserved for explicit requests or separately agreed release acceptance. Record the selected suites and their results; broad shared changes widen the relevant scope as needed.
 
-A merge into `main` needs all of the following at the final head:
+Publication to `main` (a direct push or a merge) needs all of the following at the final head:
 
 - A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
 - A clean independent read-only review subtask on the final head, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
@@ -166,7 +169,6 @@ An accepted display switch may wait up to five seconds for the new capture and p
 ## Not decided in this file
 
 - Whether the Flutter companion plan is paused along with the native spike ([SPEC.md](SPEC.md) open question 1).
-- Whether to merge the PR #3 assessment document itself. The HEVC direction is decided in D10.
 - Whether the 70% HEVC budget stays, after the measurement in D10.
 - Licensing for shipping HEVC encode/decode in the Windows package (PR #3 risk R11). Hardware encoders and the OS decoder are used; software x265 is diagnostic only.
 - Whether machine code `RC7TST01` is still a debug Host to use if the spike resumes.

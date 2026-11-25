@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-11-24 — Normalize clipboard image representation (M10-T03)
+
+- A WeChat image can expose both CF_HDROP and several native image formats. The prior file-only offer and DIB-skipping snapshot caused format loss and inconsistent OLE data availability. Prefer image content for ordinary mixed copies, fence the snapshot to the selected offer, preserve both DIB kinds and use a common native PNG alias mapping. Files/cuts still require confirmation; the capability-5 wire contract is unchanged. See [diagnosis and validation](../../PROGRESS.md#2026-11-24--clipboard-image-format-normalization-m10-t03) and [D7](../../DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
+- Final Debug application build and 39/39 focused cases across four CTest suites passed with a short workspace-local TEMP/TMP; the independently run file receiver suite also passed. Review found no remaining blocker/major. The isolated native clipboard fixture was denied and the Qt workbench deployment failed querying qmake; real dual-machine image paste still needs acceptance. See the [validation limits](../../PROGRESS.md#2026-11-24--clipboard-image-format-normalization-m10-t03).
+- At Ryan's instruction, remove the separate branch/PR and per-push approval requirements; retain D11 acceptance, source permissions and the non-destructive Git boundary. See updated [D5](../../DECISIONS.md#d5--root-charter-branch-and-pull-request-scriptable-acceptance-fresh-reviewers).
+- On 2026-11-25 Ryan accepted the live session: a locally copied image pasted into the edit box, and text and file paste transfer both succeeded. See [progress](../../PROGRESS.md#2026-11-25--clipboard-candidate-rollout-blocked-before-handoff-m10-t03).
+
 ## 2026-11-20 — Keep clipboard shortcut and native extraction transactions consistent
 
 - Preserve the source identity and explicit installation across rejected native read requests, guard asynchronous OLE publication and late recovery, and prepare text/image content before injecting a shortcut. Record the verified-content, native-owner and read-receipt boundaries and impact-based build/test scope. See [progress](../../PROGRESS.md#2026-11-20--clipboard-paste-transaction-ownership-m10-t03) and [D7](../../DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).
