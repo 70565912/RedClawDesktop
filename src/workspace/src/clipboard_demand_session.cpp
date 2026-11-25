@@ -94,7 +94,14 @@ ClipboardCapture ClipboardDemandSession::checked_capture(std::string_view token,
             if (error) *error = "clipboard_source_changed"; return false;
         }
         if ((offer.formats & kClipboardFilesFormat) && (!description || !description->sources_unchanged(cancelled, error))) return false;
-        return fallback ? fallback(snapshot, spool, expected, cancelled, error) : snapshot.capture(spool, expected, cancelled, error);
+        const bool captured = fallback ? fallback(snapshot, spool, expected, cancelled, error)
+            : snapshot.capture(spool, expected, cancelled, error, offer.formats);
+        // A text/image demand must not smuggle the source's incidental file
+        // representation into the bulk transfer without file confirmation.
+        if (captured && !(offer.formats & kClipboardFilesFormat) && !snapshot.files().empty()) {
+            if (error) *error = "clipboard_source_format_invalid"; return false;
+        }
+        return captured;
     };
 }
 void ClipboardDemandSession::local_state(Action action, std::string status) {

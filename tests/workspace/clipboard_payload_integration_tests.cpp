@@ -1,4 +1,5 @@
 #include "redclaw/workspace/clipboard_payload.h"
+#include "redclaw/workspace/clipboard_demand_port.h"
 #include "redclaw/workspace/clipboard_paste_guard.h"
 #include "redclaw/workspace/transfer_file_source.h"
 #include "redclaw_wire.pb.h"
@@ -13,12 +14,39 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <ole2.h>
 #include <Shellapi.h>
 #include <ShlObj.h>
 #endif
 
 namespace {
 using namespace redclaw::workspace;
+#ifdef _WIN32
+struct ImageFixtureData { std::string png, dib, dib_v5; };
+ImageFixtureData image_fixture_data() {
+    BITMAPV5HEADER v5{}; v5.bV5Size = sizeof(v5); v5.bV5Width = v5.bV5Height = 1;
+    v5.bV5Planes = 1; v5.bV5BitCount = 32; v5.bV5SizeImage = 4;
+    BITMAPINFOHEADER dib{}; dib.biSize = sizeof(dib); dib.biWidth = dib.biHeight = 1;
+    dib.biPlanes = 1; dib.biBitCount = 32; dib.biSizeImage = 4;
+    const std::string pixel("\x71\x29\xde\xff", 4);
+    ImageFixtureData data;
+    data.dib_v5 = std::string(reinterpret_cast<const char*>(&v5), sizeof(v5)) + pixel;
+    data.dib = std::string(reinterpret_cast<const char*>(&dib), sizeof(dib)) + pixel;
+    const std::string png_hex = "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082";
+    for (std::size_t i = 0; i < png_hex.size(); i += 2) data.png += static_cast<char>(std::stoul(png_hex.substr(i, 2), nullptr, 16));
+    return data;
+}
+void verify_image_clone(const PreparedClipboardPayload& payload, ClipboardPayloadFormat kind, const std::string& expected) {
+    const auto copy = reinterpret_cast<HGLOBAL>(payload.clone_native_format(kind));
+    ASSERT_NE(copy, nullptr);
+    EXPECT_GE(GlobalSize(copy), expected.size());
+    const auto* data = static_cast<const char*>(GlobalLock(copy));
+    if (data && GlobalSize(copy) >= expected.size()) EXPECT_EQ(std::string(data, expected.size()), expected);
+    EXPECT_NE(data, nullptr);
+    if (data) GlobalUnlock(copy);
+    GlobalFree(copy);
+}
+#endif
 TEST(ClipboardNativeFocus, LeavingAndReturningToOriginalWindowInvalidatesPendingPaste) {
 #ifndef _WIN32
     GTEST_SKIP() << "Windows foreground focus tracking.";
@@ -184,6 +212,20 @@ protected:
         std::ofstream file(root / "metadata/manifest.pb", std::ios::binary);
         const auto bytes = manifest.SerializeAsString(); file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
+    void add_format(ClipboardPayloadFormat kind, const std::string& data) {
+        const auto n = static_cast<std::uint32_t>(kind);
+        const auto path = root / "metadata" / ("format-" + std::to_string(n) + ".bin");
+        { std::ofstream file(path, std::ios::binary); file.write(data.data(), static_cast<std::streamsize>(data.size()));
+          ASSERT_TRUE(file.good()); }
+        TransferFileSource source;
+        ASSERT_TRUE(source.open(path, &error)) << error;
+        auto* format = manifest.add_formats(); format->set_kind(n); format->set_size(source.size());
+        for (;;) {
+            const auto read = source.read(); ASSERT_NE(read.state, TransferReadState::kFailed) << read.error;
+            if (read.state == TransferReadState::kComplete) { format->set_sha256(read.sha256); break; }
+        }
+        write_manifest();
+    }
     void TearDown() override {
         if (root.empty()) return;
         std::error_code ec;
@@ -212,6 +254,39 @@ TEST_F(ClipboardPreparedFilesFixture, UnknownVersionDuplicateFormatsAndCancellat
     cancelled.store(true); PreparedClipboardPayload cancelled_payload;
     EXPECT_FALSE(cancelled_payload.load(root, cancelled, &error)); EXPECT_EQ(error, "clipboard_cancelled");
 }
+TEST_F(ClipboardPreparedFilesFixture, ImageFormatsAndPngAliasAdvertiseAndCloneVerifiedData) {
+#ifdef _WIN32
+    const auto data = image_fixture_data();
+    ASSERT_NO_FATAL_FAILURE(add_format(ClipboardPayloadFormat::kDibV5, data.dib_v5));
+    ASSERT_NO_FATAL_FAILURE(add_format(ClipboardPayloadFormat::kDib, data.dib));
+    ASSERT_NO_FATAL_FAILURE(add_format(ClipboardPayloadFormat::kPng, data.png));
+    auto payload = std::make_shared<PreparedClipboardPayload>();
+    ASSERT_TRUE(payload->load(root, cancelled, &error)) << error;
+    const auto png_ids = clipboard_native_formats(ClipboardPayloadFormat::kPng);
+    EXPECT_EQ(png_ids[0], RegisterClipboardFormatW(L"PNG"));
+    EXPECT_EQ(png_ids[1], RegisterClipboardFormatW(L"image/png"));
+    ASSERT_NE(png_ids[0], png_ids[1]); ASSERT_NE(png_ids[1], 0U);
+    std::vector<ClipboardDemandEvent> events;
+    std::function<void(std::shared_ptr<PreparedClipboardPayload>, std::shared_ptr<ClipboardDescription>, std::filesystem::path)> supply;
+    const auto release = [](IDataObject* object) { if (object) object->Release(); };
+    std::unique_ptr<IDataObject, decltype(release)> object(static_cast<IDataObject*>(make_clipboard_data_object_for_test(
+        {"image-fixture", kClipboardImageFormats, 1, false}, [&](auto event) { events.push_back(std::move(event)); }, &supply)), release);
+    ASSERT_NE(object.get(), nullptr); supply(payload, {}, {});
+    for (const auto id : {png_ids[0], png_ids[1], std::uint32_t(CF_DIB), std::uint32_t(CF_DIBV5)}) {
+        FORMATETC request{static_cast<CLIPFORMAT>(id), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        EXPECT_EQ(object->QueryGetData(&request), S_OK);
+    }
+    EXPECT_TRUE(events.empty());
+    FORMATETC bitmap_handle{CF_BITMAP, nullptr, DVASPECT_CONTENT, -1, TYMED_GDI};
+    EXPECT_EQ(object->QueryGetData(&bitmap_handle), DV_E_FORMATETC);
+    EXPECT_EQ(object->QueryGetData(&bitmap_handle), DV_E_FORMATETC);
+    ASSERT_EQ(events.size(), 1U); EXPECT_EQ(events[0].kind, ClipboardDemandEventKind::kDiagnostic);
+    EXPECT_TRUE(events[0].error.starts_with("image_query "));
+    verify_image_clone(*payload, ClipboardPayloadFormat::kPng, data.png);
+    verify_image_clone(*payload, ClipboardPayloadFormat::kDib, data.dib);
+    verify_image_clone(*payload, ClipboardPayloadFormat::kDibV5, data.dib_v5);
+#endif
+}
 TEST_F(ClipboardPayloadFixture, NativeTextRichTextAndImageRoundTripWithoutTouchingInteractiveClipboard) {
 #ifdef _WIN32
     const std::wstring expected = L"RedClaw \u4e2d\u6587 \U0001f34e\r\nclipboard fixture";
@@ -230,6 +305,42 @@ TEST_F(ClipboardPayloadFixture, NativeTextRichTextAndImageRoundTripWithoutTouchi
     EXPECT_TRUE(IsClipboardFormatAvailable(RegisterClipboardFormatW(L"HTML Format")));
     EXPECT_TRUE(IsClipboardFormatAvailable(CF_DIB));
     EXPECT_FALSE(payload.publish([&] { ++guard_calls; return true; }, &error)); EXPECT_EQ(guard_calls, 1);
+#endif
+}
+TEST_F(ClipboardPayloadFixture, MixedImageAndFileCaptureHonorsOfferAndRestoresBothBitmapRepresentations) {
+#ifdef _WIN32
+    const auto selected = root / "incidental-image.png";
+    { std::ofstream file(selected); file << "source file must not be transferred with the image"; }
+    const auto path = selected.wstring();
+    std::vector<unsigned char> drop(sizeof(DROPFILES) + (path.size() + 2) * sizeof(wchar_t), 0);
+    auto* header = reinterpret_cast<DROPFILES*>(drop.data()); header->pFiles = sizeof(DROPFILES); header->fWide = TRUE;
+    std::memcpy(drop.data() + sizeof(DROPFILES), path.c_str(), (path.size() + 1) * sizeof(wchar_t));
+    const auto data = image_fixture_data();
+    const auto png_ids = clipboard_native_formats(ClipboardPayloadFormat::kPng);
+    ASSERT_NE(png_ids[0], png_ids[1]); ASSERT_NE(png_ids[1], 0U);
+    ASSERT_TRUE(OpenClipboard(owner));
+    const bool seeded = EmptyClipboard() && put(CF_HDROP, drop.data(), drop.size())
+        && put(CF_DIBV5, data.dib_v5.data(), data.dib_v5.size()) && put(CF_DIB, data.dib.data(), data.dib.size())
+        && put(png_ids[1], data.png.data(), data.png.size());
+    CloseClipboard(); ASSERT_TRUE(seeded);
+    ClipboardSnapshot files;
+    ASSERT_TRUE(files.capture(root, GetClipboardSequenceNumber(), cancelled, &error, kClipboardFilesFormat)) << error;
+    ASSERT_EQ(files.files().size(), 1U);
+    EXPECT_FALSE(std::filesystem::exists(files.metadata_directory() / "format-4.bin"));
+    EXPECT_FALSE(std::filesystem::exists(files.metadata_directory() / "format-5.bin"));
+    EXPECT_FALSE(std::filesystem::exists(files.metadata_directory() / "format-6.bin"));
+    ClipboardSnapshot image;
+    ASSERT_TRUE(image.capture(root, GetClipboardSequenceNumber(), cancelled, &error, kClipboardImageFormats)) << error;
+    EXPECT_TRUE(image.files().empty()); stage(image);
+    PreparedClipboardPayload payload;
+    ASSERT_TRUE(payload.load(root / "received", cancelled, &error)) << error;
+    verify_image_clone(payload, ClipboardPayloadFormat::kDib, data.dib);
+    verify_image_clone(payload, ClipboardPayloadFormat::kDibV5, data.dib_v5);
+    verify_image_clone(payload, ClipboardPayloadFormat::kPng, data.png);
+    ASSERT_TRUE(payload.publish([] { return true; }, &error)) << error;
+    EXPECT_TRUE(IsClipboardFormatAvailable(CF_DIB)); EXPECT_TRUE(IsClipboardFormatAvailable(CF_DIBV5));
+    EXPECT_TRUE(IsClipboardFormatAvailable(png_ids[0])); EXPECT_TRUE(IsClipboardFormatAvailable(png_ids[1]));
+    EXPECT_FALSE(IsClipboardFormatAvailable(CF_HDROP)); EXPECT_TRUE(std::filesystem::exists(selected));
 #endif
 }
 TEST_F(ClipboardPayloadFixture, FocusRejectionChecksumFailureAndCancelledSnapshotLeaveClipboardUntouched) {

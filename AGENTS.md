@@ -14,7 +14,7 @@
 2. **评审按需。** 需要评审时交给独立的只读子任务。评审子任务只找问题、不修改代码，依据 diff、上述三份文件和验收标准评审。主导开发的会话核实评审意见。
 3. **三份根文件是事实来源。** 更新 `SPEC.md`、`PROGRESS.md`、`DECISIONS.md`。不要另起状态文档。
 4. **验收尽量可脚本化、可复现。** 能写成命令或测试的就写成。没跑过的检查不算通过。
-5. **分支加 PR。** 在分支上工作并开 Pull Request。优先能回滚的改动。没有 Ryan 明确同意合并，不要直接推到 `main`。
+5. **可回滚与验收。** 可在当前分支（含 `main`）开发，分支及 Pull Request 不是强制入口。向 `main` 发布仍须满足 `DECISIONS.md` 的 D11 验收门禁，不另设 Ryan 的逐次批准门禁。
 6. **范围外。** `WCT` 和 `image_linux_rfevm` 不在本仓库的工作范围内。
 7. **优先免费真 P2P。** 先走同一 Wi-Fi 或同一虚拟局域网的直连。TURN 只作回退，且由用户自行提供。
 
@@ -190,7 +190,7 @@ For stream work, record both normal smoke evidence and strict capture evidence w
 
 - Announce GitHub-connected operations such as `git fetch`, `git pull`, `git push`, `gh`, or repository sync, then proceed within the authorized task scope without asking for per-operation confirmation.
 - Do not create, rewrite, or force-push branches unless the user asked for that exact operation.
-- 没有 Ryan 明确同意合并，不要直接推到 `main`。先走分支和 Pull Request。见上文「动手前必读」。
+- 可按任务范围直接在当前分支工作及发布；向 `main` 发布（直接推送或合并）须满足 D11 验收门禁。禁止绕过权限或执行未经授权的破坏性 Git 操作。
 - CI workflow edits must preserve the Windows/unit-test baseline unless the task explicitly changes the release gate.
 
 ## Completion Response Contract

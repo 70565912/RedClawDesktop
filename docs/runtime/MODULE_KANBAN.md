@@ -123,7 +123,9 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-20
+Updated: 2026-11-25
+
+Clipboard image format normalization (2026-11-24, M10-T03) — done. Final Debug build and four focused CTest suites / 39 cases passed, including bidirectional native data-object reads, image/file selection and confirmation isolation. Independent file receiver tests and final production-code review passed; isolated Windows clipboard fixture skipped on access denial, Qt workbench deployment failed querying qmake. On 2026-11-25 Ryan accepted the live session: a locally copied image pasted into the edit box, and text and file paste transfer both succeeded. See [PROGRESS](../../PROGRESS.md#2026-11-25--clipboard-candidate-rollout-blocked-before-handoff-m10-t03).
 
 Clipboard paste transaction ownership (2026-11-20, M10-T03) — done; final Windows Debug build and 74 affected automated cases passed, four focused UI cases pass, one foreground case skipped. Both 331-file candidates verified. Actual bidirectional text, repeated Ctrl+V and Shift+Insert, native right-click paste, and confirmation-gated small-file transfer passed on the desktop Host and laptop Controller. Seven operation IDs are correlated with successful Host logs; the laptop reconnected. See [progress](../../PROGRESS.md#2026-11-20--clipboard-paste-transaction-ownership-m10-t03).
 

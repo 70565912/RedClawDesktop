@@ -23,16 +23,9 @@ namespace redclaw::workspace {
 namespace {
 using Microsoft::WRL::ComPtr;
 constexpr wchar_t kRemoteFormat[] = L"RedClaw.ClipboardOffer.v5";
-UINT format(ClipboardPayloadFormat type) {
-    switch (type) {
-    case ClipboardPayloadFormat::kUnicodeText: return CF_UNICODETEXT;
-    case ClipboardPayloadFormat::kHtml: return RegisterClipboardFormatW(L"HTML Format");
-    case ClipboardPayloadFormat::kRtf: return RegisterClipboardFormatW(L"Rich Text Format");
-    case ClipboardPayloadFormat::kPng: return RegisterClipboardFormatW(L"PNG");
-    case ClipboardPayloadFormat::kDibV5: return CF_DIBV5;
-    case ClipboardPayloadFormat::kDib: return CF_DIB;
-    }
-    return 0;
+bool matches_native_format(ClipboardPayloadFormat kind, UINT type) {
+    const auto formats = clipboard_native_formats(kind);
+    return type && std::find(formats.begin(), formats.end(), type) != formats.end();
 }
 bool ordinary_desktop() {
     const auto input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
@@ -271,13 +264,29 @@ public:
         if (!value) return E_POINTER;
         if (value->dwAspect != DVASPECT_CONTENT) return DV_E_DVASPECT;
         for (const auto& item : formats()) if (item.cfFormat == value->cfFormat && (item.tymed & value->tymed)) return S_OK;
+        // CF_BITMAP uses a GDI handle, not an HGLOBAL. A consumer which only
+        // queries that representation may never call GetData. Log once per
+        // installed object without initiating a demand or changing ownership.
+        if (value->cfFormat == CF_BITMAP && state_->can_read() && state_->event && !bitmap_query_reported_.exchange(true))
+            state_->event({ClipboardDemandEventKind::kDiagnostic, {}, {}, false, 0,
+                "image_query op=" + state_->operation.substr(0, 8) + " format=CF_BITMAP result=unsupported"});
         return DV_E_FORMATETC;
     }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* value, STGMEDIUM* result) override {
         const auto read_started = std::chrono::steady_clock::now();
         if (!result) return E_POINTER; *result = {};
-        const auto available = QueryGetData(value); if (FAILED(available)) return available;
+        if (!value) return E_POINTER;
         const auto type = value->cfFormat;
+        const auto image_read = [&](const char* status) {
+            const auto png = clipboard_native_formats(ClipboardPayloadFormat::kPng);
+            const char* name = type == CF_BITMAP ? "CF_BITMAP" : type == CF_DIB ? "CF_DIB" : type == CF_DIBV5 ? "CF_DIBV5"
+                : type && type == png[0] ? "PNG" : type && type == png[1] ? "image/png" : nullptr;
+            if (name && state_->can_read() && state_->event)
+                state_->event({ClipboardDemandEventKind::kDiagnostic, {}, {}, false, 0,
+                    "image_get_data op=" + state_->operation.substr(0, 8) + " format=" + name + " result=" + status});
+        };
+        const auto available = QueryGetData(value);
+        if (FAILED(available)) { image_read("unsupported"); return available; }
         if (type == RegisterClipboardFormatW(kRemoteFormat) || type == RegisterClipboardFormatW(L"Preferred DropEffect")
             || type == RegisterClipboardFormatW(L"CanIncludeInClipboardHistory") || type == RegisterClipboardFormatW(L"CanUploadToCloudClipboard")) {
             DWORD flag = type == RegisterClipboardFormatW(kRemoteFormat) ? 5
@@ -320,10 +329,10 @@ public:
         if (!state_->wait([&] { return bool(state_->payload); })) return E_ABORT;
         std::shared_ptr<PreparedClipboardPayload> payload;
         { std::lock_guard lock(state_->mutex); payload = state_->payload; }
-        for (std::uint32_t kind = 1; kind <= 6; ++kind) if (type == format(static_cast<ClipboardPayloadFormat>(kind))) {
+        for (std::uint32_t kind = 1; kind <= 6; ++kind) if (matches_native_format(static_cast<ClipboardPayloadFormat>(kind), type)) {
             result->hGlobal = reinterpret_cast<HGLOBAL>(payload->clone_native_format(static_cast<ClipboardPayloadFormat>(kind)));
-            if (!result->hGlobal) return DV_E_FORMATETC;
-            result->tymed = TYMED_HGLOBAL; state_->result(true, read_started); return S_OK;
+            if (!result->hGlobal) { image_read("unavailable"); return DV_E_FORMATETC; }
+            result->tymed = TYMED_HGLOBAL; image_read("ok"); state_->result(true, read_started); return S_OK;
         }
         return DV_E_FORMATETC;
     }
@@ -376,11 +385,18 @@ private:
         if (state_->offer.formats & kClipboardFilesFormat) {
             add(RegisterClipboardFormatW(L"FileGroupDescriptorW")); add(RegisterClipboardFormatW(L"FileContents"), TYMED_ISTREAM, 0);
             add(RegisterClipboardFormatW(L"Preferred DropEffect"));
-        } else for (std::uint32_t kind : {2U, 3U, 4U, 5U, 6U, 1U})
-            if (state_->offer.formats & (1U << (kind - 1))) add(format(static_cast<ClipboardPayloadFormat>(kind)));
+        } else for (std::uint32_t kind : {2U, 3U, 4U, 5U, 6U, 1U}) {
+            const auto payload_kind = static_cast<ClipboardPayloadFormat>(kind);
+            if (state_->offer.formats & clipboard_format_bit(payload_kind)) {
+                const auto formats = clipboard_native_formats(payload_kind);
+                if (formats[0]) add(formats[0]);
+                if (formats[1] && formats[1] != formats[0]) add(formats[1]);
+            }
+        }
         return result;
     }
     std::atomic_ulong references_{1}; std::shared_ptr<DemandState> state_; BOOL async_ = TRUE, in_operation_ = FALSE;
+    std::atomic_bool bitmap_query_reported_{false};
 };
 struct PortShared {
     std::mutex mutex;
@@ -652,32 +668,50 @@ private:
         ClipboardDemandOffer offer; offer.token = ClipboardCopyStore::new_id(); offer.sequence = GetClipboardSequenceNumber();
         std::vector<ClipboardFileSelection> files;
         const auto supports = [&](UINT type) { FORMATETC request{static_cast<CLIPFORMAT>(type), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL}; return data->QueryGetData(&request) == S_OK; };
-        for (std::uint32_t kind = 1; kind <= 6; ++kind)
-            if (supports(format(static_cast<ClipboardPayloadFormat>(kind)))) offer.formats |= 1U << (kind - 1);
-        if (supports(CF_HDROP)) {
-            FORMATETC request{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL}; STGMEDIUM medium{};
-            if (FAILED(data->GetData(&request, &medium))) return refuse("clipboard_file_list_unavailable");
-            const auto count = DragQueryFileW(static_cast<HDROP>(medium.hGlobal), 0xffffffff, nullptr, 0);
-            if (count > 1024) { ReleaseStgMedium(&medium); return refuse("clipboard_too_many_files"); }
-            for (UINT i = 0; i < count; ++i) {
-                const auto length = DragQueryFileW(static_cast<HDROP>(medium.hGlobal), i, nullptr, 0);
-                if (!length || length > 32760) { ReleaseStgMedium(&medium); return refuse("clipboard_file_path_invalid"); }
-                std::wstring path(length + 1, L'\0'); DragQueryFileW(static_cast<HDROP>(medium.hGlobal), i, path.data(), length + 1); path.resize(length);
-                const std::filesystem::path source(path); const auto name = source.filename().generic_u8string();
-                if (!source.is_absolute()) { ReleaseStgMedium(&medium); return refuse("clipboard_file_path_invalid"); }
-                files.push_back({source, "files/" + std::to_string(i) + "/" + std::string(reinterpret_cast<const char*>(name.data()), name.size())});
-            }
-            ReleaseStgMedium(&medium); if (!files.empty()) offer.formats = kClipboardFilesFormat;
+        for (std::uint32_t kind = 1; kind <= 6; ++kind) {
+            const auto payload_kind = static_cast<ClipboardPayloadFormat>(kind);
+            const auto formats = clipboard_native_formats(payload_kind);
+            if (std::any_of(formats.begin(), formats.end(), [&](UINT id) { return id && supports(id); }))
+                offer.formats |= clipboard_format_bit(payload_kind);
+        }
+        const auto content_formats = offer.formats;
+        const bool has_files = supports(CF_HDROP);
+        if (has_files) {
+            bool move = false;
             FORMATETC effect{static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Preferred DropEffect")), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+            STGMEDIUM medium{};
             if (SUCCEEDED(data->GetData(&effect, &medium))) {
                 if (medium.tymed == TYMED_HGLOBAL && GlobalSize(medium.hGlobal) >= sizeof(DWORD)) {
                     const auto* value = static_cast<const DWORD*>(GlobalLock(medium.hGlobal));
-                    if (value) { offer.move = *value == DROPEFFECT_MOVE; GlobalUnlock(medium.hGlobal); }
+                    if (value) { move = *value == DROPEFFECT_MOVE; GlobalUnlock(medium.hGlobal); }
                 }
                 ReleaseStgMedium(&medium);
             }
+            // Do not obtain the incidental file list for an ordinary image
+            // copy. It is neither part of its offer nor authorized by paste.
+            if (select_clipboard_offer_formats(offer.formats, true, move) == kClipboardFilesFormat) {
+                FORMATETC request{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+                medium = {};
+                if (FAILED(data->GetData(&request, &medium))) return refuse("clipboard_file_list_unavailable");
+                if (medium.tymed != TYMED_HGLOBAL || !medium.hGlobal) { ReleaseStgMedium(&medium); return refuse("clipboard_file_list_unavailable"); }
+                const auto count = DragQueryFileW(static_cast<HDROP>(medium.hGlobal), 0xffffffff, nullptr, 0);
+                if (count > 1024) { ReleaseStgMedium(&medium); return refuse("clipboard_too_many_files"); }
+                for (UINT i = 0; i < count; ++i) {
+                    const auto length = DragQueryFileW(static_cast<HDROP>(medium.hGlobal), i, nullptr, 0);
+                    if (!length || length > 32760) { ReleaseStgMedium(&medium); return refuse("clipboard_file_path_invalid"); }
+                    std::wstring path(length + 1, L'\0'); DragQueryFileW(static_cast<HDROP>(medium.hGlobal), i, path.data(), length + 1); path.resize(length);
+                    const std::filesystem::path source(path); const auto name = source.filename().generic_u8string();
+                    if (!source.is_absolute()) { ReleaseStgMedium(&medium); return refuse("clipboard_file_path_invalid"); }
+                    files.push_back({source, "files/" + std::to_string(i) + "/" + std::string(reinterpret_cast<const char*>(name.data()), name.size())});
+                }
+                ReleaseStgMedium(&medium);
+                if (!files.empty()) { offer.formats = kClipboardFilesFormat; offer.move = move; }
+            }
         }
         if (offer.sequence != GetClipboardSequenceNumber()) return refuse("clipboard_sequence_changed");
+        if (has_files && (content_formats & kClipboardImageFormats))
+            diagnostic("mixed_format_selection content_formats=" + std::to_string(content_formats)
+                + " selected_formats=" + std::to_string(offer.formats) + " move=" + (offer.move ? "1" : "0"));
         original_ = data;
         { std::lock_guard lock(shared_->mutex); shared_->source = offer; shared_->files = std::move(files); }
         shared_->emit({ClipboardDemandEventKind::kOffer, {}, offer}); return true;

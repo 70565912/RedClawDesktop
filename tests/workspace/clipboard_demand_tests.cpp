@@ -17,6 +17,16 @@ using namespace redclaw::workspace;
 using namespace redclaw::protocol;
 using Action = WorkspaceActionV1;
 using Control = StreamControlMessageV1;
+TEST(ClipboardOfferFormats, ImageCopyWinsOverIncidentalFilesButFileCutStillNeedsConfirmation) {
+    const auto images = kClipboardImageFormats;
+    EXPECT_EQ(select_clipboard_offer_formats(images, true, false), images);
+    EXPECT_EQ(select_clipboard_offer_formats(images | 1U, true, false), images | 1U);
+    EXPECT_EQ(select_clipboard_offer_formats(images, true, true), kClipboardFilesFormat);
+    EXPECT_EQ(select_clipboard_offer_formats(1U, true, false), kClipboardFilesFormat);
+    EXPECT_EQ(select_clipboard_offer_formats(0, true, false), kClipboardFilesFormat);
+    EXPECT_EQ(select_clipboard_offer_formats(images, false, false), images);
+    EXPECT_EQ(select_clipboard_offer_formats(1U, false, false), 1U);
+}
 class FakePort final : public ClipboardDemandPort {
 public:
     ClipboardDemandOffer local, remote;
@@ -197,6 +207,23 @@ TEST_F(DemandPair, MetadataAndRejectedConfirmationDoNotReadFileContents) {
     cancel.workspace->clipboard_complete = false; controller->from_gui(cancel);
     EXPECT_TRUE(wait([&] { return bool(event(Action::kFinished)); }));
     EXPECT_EQ(captures, 0); EXPECT_EQ(hp->commits, 0); EXPECT_TRUE(std::filesystem::exists(root / "source" / "data"));
+}
+TEST_F(DemandPair, ImageOfferCannotTransferIncidentalFilesWithoutConfirmation) {
+    redclaw::protocol::wire::ClipboardSourceV1 descriptor; descriptor.set_schema_version(1);
+    auto* format = descriptor.add_formats(); format->set_kind(static_cast<unsigned>(ClipboardPayloadFormat::kDib));
+    format->set_data("image fixture");
+    const auto path = (root / "source").generic_u8string();
+    descriptor.add_files(std::string(reinterpret_cast<const char*>(path.data()), path.size()));
+    formats_descriptor = descriptor.SerializeAsString();
+    hp->local = {"image-with-incidental-file", clipboard_format_bit(ClipboardPayloadFormat::kDib), 42, false};
+    hp->events.push_back({ClipboardDemandEventKind::kOffer, {}, hp->local});
+    for (int i = 0; i < 5; ++i) step();
+    cp->events.push_back({ClipboardDemandEventKind::kDemand, "image-only", cp->remote});
+    ASSERT_TRUE(wait([&] { return bool(event(Action::kFinished, "image-only")); }));
+    EXPECT_FALSE(event(Action::kClipboardConfirm, "image-only"));
+    EXPECT_EQ(event(Action::kFinished, "image-only")->workspace->error_code, "clipboard_source_format_invalid");
+    EXPECT_EQ(cp->delivered, 0);
+    EXPECT_TRUE(std::filesystem::exists(root / "source" / "data"));
 }
 TEST_F(DemandPair, VerifiedReturnWaitsForNativePasteAndDuplicateReceiptDoesNotRepeatIt) {
     offer(false, false); ASSERT_TRUE(describe(false)); ASSERT_TRUE(demand(false)); approve();
@@ -433,6 +460,25 @@ TEST_F(DemandPair, BothDirectionsPreserveEveryExistingTextRichTextAndImageFormat
             EXPECT_EQ(std::string(bytes, expected[i].size()), expected[i]);
             GlobalUnlock(medium.hGlobal); ReleaseStgMedium(&medium);
         }
+        // Qt/WeChat use the MIME name, whereas other native consumers use PNG.
+        FORMATETC mime{static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"image/png")), nullptr,
+            DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM alias{};
+        EXPECT_EQ(object->QueryGetData(&mime), S_OK);
+        ASSERT_EQ(object->GetData(&mime, &alias), S_OK);
+        ASSERT_GE(GlobalSize(alias.hGlobal), png.size());
+        const auto* bytes = static_cast<const char*>(GlobalLock(alias.hGlobal));
+        ASSERT_NE(bytes, nullptr); EXPECT_EQ(std::string(bytes, png.size()), png);
+        GlobalUnlock(alias.hGlobal); ReleaseStgMedium(&alias);
+        FORMATETC files{static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW")), nullptr,
+            DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        EXPECT_EQ(object->QueryGetData(&files), DV_E_FORMATETC);
+        FORMATETC bitmap_handle{CF_BITMAP, nullptr, DVASPECT_CONTENT, -1, TYMED_GDI};
+        EXPECT_EQ(object->QueryGetData(&bitmap_handle), DV_E_FORMATETC);
+        EXPECT_EQ(object->QueryGetData(&bitmap_handle), DV_E_FORMATETC);
+        EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) {
+            return event.kind == ClipboardDemandEventKind::kDiagnostic && event.error.starts_with("image_query ");
+        }), 1);
         EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.kind == ClipboardDemandEventKind::kNativeResult; }), 1);
         object->Release();
         destination->events.push_back({ClipboardDemandEventKind::kNativeResult, "plain", destination->remote, true, 1});

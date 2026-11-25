@@ -5,7 +5,13 @@
 #include <chrono>
 
 namespace redclaw::workspace {
-inline constexpr std::uint32_t kClipboardFilesFormat = 64;
+// A native copy can include an image and an incidental file representation
+// (for example a WeChat image). Prefer the actual image, except for a file cut.
+// File-only copies and cuts continue to use the confirmation-gated flow.
+constexpr std::uint32_t select_clipboard_offer_formats(std::uint32_t content_formats, bool files, bool move) {
+    return files && (move || !(content_formats & kClipboardImageFormats))
+        ? kClipboardFilesFormat : (content_formats & kClipboardContentFormats);
+}
 struct ClipboardDemandOffer {
     std::string token;
     std::uint32_t formats = 0, sequence = 0;
