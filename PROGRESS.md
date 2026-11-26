@@ -1,5 +1,17 @@
 # Progress
 
+## 2026-11-26 — Codex is not a required independent reviewer
+
+Ryan restated that independent reviews must not use the earlier Codex CLI convention. This confirms the 2026-11-17 change to an independent read-only subtask in D8 and D11. Commit, PR and merge are not blocked on Codex or on access to OpenAI/ChatGPT.
+
+## 2026-11-26 — Pointer geometry diagnostic logs
+
+Added low-frequency Host logs to capture the runtime-internal values needed to test the constant horizontal pointer offset hypothesis, without changing mapping or injecting input.
+
+- `Runtime pointer geometry` fires on capture GetDesc/start/rebuild, when the stored input geometry or capture region actually changes, at the first valid session geometry, and if the input session is rebuilt. Fields include stored origin/size/rotation/revision, active region, selected display id, process/thread DPI context, the GetDesc rectangle at that moment, and virtual-desktop metrics in the current thread context plus a temporary PerMonitorV2 comparison that always restores the previous context.
+- `Runtime pointer input sample` records a natural pointer event first after a mapping-input change, then at most about once every three seconds, or immediately if the mapping signature changes. The mapped line is completed later with SendInput dx/dy and the virtual desktop used for normalization when that event is injected.
+- Focused formatter and sampling-gate unit tests were added. This does not prove the 384 px origin/DPI hypothesis; it only makes the stored values greppable in ordinary session logs.
+
 ## 2026-11-26 — Failed-auth video counters (case B)
 
 On the rejected-auth exit-78 path, Host and Controller flush a single desktop stream stats line tagged `event=connection_auth_rejected` before ICE closes. It reports current counters even with closed media in default desktop mode. The waiting Host heartbeat is unchanged. The Ninja Debug build and both focused formatter tests passed without publication; live case B was not run.

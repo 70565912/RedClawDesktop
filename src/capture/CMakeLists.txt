@@ -18,6 +18,8 @@ find_package(Opus CONFIG REQUIRED)
 target_include_directories(redclaw_capture
   PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../diag/include
 )
 
 target_link_libraries(redclaw_capture PUBLIC Opus::opus)
