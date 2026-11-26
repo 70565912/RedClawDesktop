@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-11-26 — Pointer geometry diagnostic logs
+
+Host logs now record the stored remote-input geometry, active capture region, and the capture-thread DPI/GetDesc context when those values are established or rebuilt. Sparse natural-input samples add the normalized-to-global-to-SendInput path. Mapping behavior is unchanged. Grep `Runtime pointer geometry` and `Runtime pointer input sample`. [Progress](../../PROGRESS.md#2026-11-26--pointer-geometry-diagnostic-logs)
+
 ## 2026-11-26 — Failed-auth stream snapshot
 
 For single-machine case B, cite the Host's `Runtime desktop stream stats role=host` line tagged `event=connection_auth_rejected`. A zero is now an explicit counter reading, not an inference from a missing heartbeat. [Progress](../../PROGRESS.md#2026-11-26--failed-auth-video-counters-case-b)

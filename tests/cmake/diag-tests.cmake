@@ -65,3 +65,16 @@ add_test(
   NAME redclaw_diag_connectivity_diagnostics_snapshot_tests
   COMMAND redclaw_diag_connectivity_diagnostics_snapshot_tests
 )
+
+add_executable(redclaw_pointer_geometry_diagnostics_tests
+  diag/pointer_geometry_diagnostics_tests.cpp
+)
+target_link_libraries(redclaw_pointer_geometry_diagnostics_tests PRIVATE
+  redclaw_diag
+  GTest::gtest_main
+)
+redclaw_apply_warnings(redclaw_pointer_geometry_diagnostics_tests)
+add_test(
+  NAME redclaw_pointer_geometry_diagnostics_tests
+  COMMAND redclaw_pointer_geometry_diagnostics_tests
+)

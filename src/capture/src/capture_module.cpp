@@ -44,6 +44,7 @@
 #include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <winrt/base.h>
+#include "redclaw/diag/pointer_geometry_diagnostics.h"
 #endif
 
 #if __has_include(<libavcodec/avcodec.h>) && __has_include(<libavutil/buffer.h>) && __has_include(<libavutil/error.h>) && __has_include(<libavutil/frame.h>) && __has_include(<libavutil/hwcontext.h>) && __has_include(<libavutil/opt.h>)
@@ -3520,6 +3521,41 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
+void log_capture_pointer_geometry(
+    std::string_view event,
+    std::string_view backend,
+    std::string_view display_id,
+    int output_index,
+    std::int32_t origin_x,
+    std::int32_t origin_y,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t rotation,
+    std::uint64_t revision,
+    const DXGI_OUTPUT_DESC* output_desc) {
+    redclaw::diag::PointerGeometryRecord record;
+    record.event = event;
+    record.backend = backend;
+    record.display_id = display_id;
+    record.output_index = output_index;
+    record.origin_x = origin_x;
+    record.origin_y = origin_y;
+    record.width = width;
+    record.height = height;
+    record.rotation = rotation;
+    record.revision = revision;
+    if (output_desc != nullptr) {
+        record.getdesc_valid = true;
+        record.getdesc_left = output_desc->DesktopCoordinates.left;
+        record.getdesc_top = output_desc->DesktopCoordinates.top;
+        record.getdesc_right = output_desc->DesktopCoordinates.right;
+        record.getdesc_bottom = output_desc->DesktopCoordinates.bottom;
+    }
+    redclaw::diag::fill_thread_dpi_snapshot(&record);
+    redclaw::diag::emit_pointer_diagnostic_line(
+        redclaw::diag::format_pointer_geometry_line(record));
+}
+
 class DdaCaptureBackend final : public ICaptureBackend {
 public:
     bool start(const CaptureSessionConfig& config, std::string* error_detail) override {
@@ -3644,6 +3680,20 @@ public:
             }
             desktop_geometry_revision_ = 1;
         }
+        pointer_diag_display_id_ = config.display_id;
+        pointer_diag_output_index_ = config.output_index;
+        log_capture_pointer_geometry(
+            "capture_getdesc",
+            "dda",
+            pointer_diag_display_id_,
+            static_cast<int>(pointer_diag_output_index_),
+            desktop_origin_x_,
+            desktop_origin_y_,
+            desktop_width_,
+            desktop_height_,
+            desktop_rotation_,
+            desktop_geometry_revision_,
+            SUCCEEDED(output_desc_hr) ? &output_desc : nullptr);
         frame_acquire_timeout_ms_ = config.frame_acquire_timeout_ms;
         frame_delivery_ = config.frame_delivery;
         adapter_identity_ = capture_adapter_identity(device_.Get());
@@ -4018,6 +4068,8 @@ private:
     std::uint32_t desktop_height_ = 0;
     std::uint32_t desktop_rotation_ = 0;
     std::uint64_t desktop_geometry_revision_ = 0;
+    std::string pointer_diag_display_id_;
+    std::uint32_t pointer_diag_output_index_ = 0;
     CaptureFrameDelivery frame_delivery_ = CaptureFrameDelivery::kCpu;
     std::shared_ptr<const CaptureAdapterIdentity> adapter_identity_;
 };
@@ -4207,6 +4259,20 @@ public:
             default: desktop_rotation_ = 0; break;
             }
             desktop_geometry_revision_ = 1;
+            pointer_diag_display_id_ = config.display_id;
+            pointer_diag_output_index_ = config.output_index;
+            log_capture_pointer_geometry(
+                "capture_getdesc",
+                "wgc",
+                pointer_diag_display_id_,
+                static_cast<int>(pointer_diag_output_index_),
+                desktop_origin_x_,
+                desktop_origin_y_,
+                desktop_width_,
+                desktop_height_,
+                desktop_rotation_,
+                desktop_geometry_revision_,
+                &output_desc);
 
             frame_arrived_token_ = frame_pool_.FrameArrived(
                 [this](
@@ -4647,7 +4713,8 @@ private:
             native_texture_format_ = DXGI_FORMAT_UNKNOWN;
 
             DXGI_OUTPUT_DESC output_desc{};
-            if (output_ != nullptr && SUCCEEDED(output_->GetDesc(&output_desc))) {
+            const bool getdesc_ok = output_ != nullptr && SUCCEEDED(output_->GetDesc(&output_desc));
+            if (getdesc_ok) {
                 desktop_origin_x_ = output_desc.DesktopCoordinates.left;
                 desktop_origin_y_ = output_desc.DesktopCoordinates.top;
                 switch (output_desc.Rotation) {
@@ -4660,6 +4727,18 @@ private:
             desktop_width_ = width;
             desktop_height_ = height;
             desktop_geometry_revision_ = geometry_revision;
+            log_capture_pointer_geometry(
+                "capture_rebuild",
+                "wgc",
+                pointer_diag_display_id_,
+                static_cast<int>(pointer_diag_output_index_),
+                desktop_origin_x_,
+                desktop_origin_y_,
+                desktop_width_,
+                desktop_height_,
+                desktop_rotation_,
+                desktop_geometry_revision_,
+                getdesc_ok ? &output_desc : nullptr);
             frame_pool_width_ = width;
             frame_pool_height_ = height;
 
@@ -4845,6 +4924,8 @@ private:
     HRESULT callback_hresult_ = S_OK;
     bool stopping_ = true;
     bool recreating_frame_pool_ = false;
+    std::string pointer_diag_display_id_;
+    std::uint32_t pointer_diag_output_index_ = 0;
     CaptureFrameDelivery frame_delivery_ = CaptureFrameDelivery::kCpu;
     std::shared_ptr<const CaptureAdapterIdentity> adapter_identity_;
 };

@@ -1,4 +1,5 @@
 #include "redclaw/input/input_module.h"
+#include "redclaw/diag/pointer_geometry_diagnostics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -357,6 +358,21 @@ bool WindowsSendInputInjectorBackend::inject_batch(const std::vector<InputEvent>
                 input.mi.dx = normalize(event.x, virtual_x, virtual_width);
                 input.mi.dy = normalize(event.y, virtual_y, virtual_height);
                 input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+                if (auto sample = redclaw::diag::pointer_path_samples().take_matching(event.x, event.y)) {
+                    sample->stage = "sendinput";
+                    sample->sendinput_present = true;
+                    sample->sendinput_dx = static_cast<std::int32_t>(input.mi.dx);
+                    sample->sendinput_dy = static_cast<std::int32_t>(input.mi.dy);
+                    sample->virtual_x = virtual_x;
+                    sample->virtual_y = virtual_y;
+                    sample->virtual_width = virtual_width;
+                    sample->virtual_height = virtual_height;
+                    sample->virtual_valid = true;
+                    sample->absolute = true;
+                    sample->virtual_desk = true;
+                    redclaw::diag::emit_pointer_diagnostic_line(
+                        redclaw::diag::format_pointer_input_sample_line(*sample));
+                }
             } else {
                 input.mi.dx = static_cast<LONG>(event.x);
                 input.mi.dy = static_cast<LONG>(event.y);

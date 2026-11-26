@@ -7,6 +7,8 @@ add_library(redclaw_input STATIC
 target_include_directories(redclaw_input
   PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../diag/include
 )
 
 target_compile_features(redclaw_input PUBLIC cxx_std_20)

@@ -64,6 +64,7 @@
 #include "redclaw/capture/capture_stream_gate.h"
 #include "redclaw/render/render_module.h"
 #include "redclaw/input/input_module.h"
+#include "redclaw/diag/pointer_geometry_diagnostics.h"
 #include "redclaw/input/input_recovery.h"
 #include "redclaw/service/service_module.h"
 #include "redclaw/service/connection_negotiation.h"
@@ -3046,6 +3047,13 @@ int run_runtime_mode(
         options.role == RuntimeRole::kHost && options.allow_remote_input);
     redclaw::input::DesktopGeometry remote_input_geometry;
     redclaw::input::DesktopGeometry last_advertised_input_geometry;
+    std::string remote_input_display_id;
+    redclaw::diag::PointerInputSampleGate pointer_input_sample_gate;
+    std::uint64_t pointer_input_sample_id = 0;
+    bool pointer_geometry_session_logged = false;
+    redclaw::input::DesktopGeometry last_logged_pointer_geometry{};
+    redclaw::capture::CaptureRegion last_logged_pointer_region{};
+    std::string last_logged_pointer_display_id;
     redclaw::runtime::RemoteInputInbox remote_input_inbox;
     redclaw::runtime::RuntimeLoopWake runtime_loop_wake;
     redclaw::workspace::TerminalRuntimeBridge terminal_bridge(
@@ -4128,6 +4136,49 @@ int run_runtime_mode(
                 },
                 &point)) {
             return false;
+        }
+        if (needs_position) {
+            const auto signature = redclaw::diag::pointer_mapping_signature(
+                geometry.origin_x,
+                geometry.origin_y,
+                geometry.width,
+                geometry.height,
+                geometry.rotation,
+                geometry.revision,
+                active_region.x,
+                active_region.y,
+                active_region.width,
+                active_region.height,
+                active_region.revision,
+                0, 0, 0, 0);
+            const auto sample_reason = pointer_input_sample_gate.evaluate(
+                now_steady_ms(), signature);
+            if (sample_reason != redclaw::diag::PointerInputSampleGate::Reason::kNone) {
+                redclaw::diag::PointerInputSampleRecord sample;
+                sample.reason = redclaw::diag::PointerInputSampleGate::reason_name(sample_reason);
+                sample.stage = "mapped";
+                sample.sample_id = ++pointer_input_sample_id;
+                sample.normalized_x = remote.normalized_x;
+                sample.normalized_y = remote.normalized_y;
+                sample.global_x = point.x;
+                sample.global_y = point.y;
+                sample.origin_x = geometry.origin_x;
+                sample.origin_y = geometry.origin_y;
+                sample.width = geometry.width;
+                sample.height = geometry.height;
+                sample.rotation = geometry.rotation;
+                sample.revision = geometry.revision;
+                sample.region_x = active_region.x;
+                sample.region_y = active_region.y;
+                sample.region_width = active_region.width;
+                sample.region_height = active_region.height;
+                sample.region_revision = active_region.revision;
+                {
+                    std::lock_guard<std::mutex> lock(callback_mutex);
+                    sample.display_id = remote_input_display_id;
+                }
+                redclaw::diag::pointer_path_samples().request(std::move(sample));
+            }
         }
         auto append_position = [&]() {
             redclaw::input::InputEvent move;
@@ -6008,6 +6059,64 @@ int run_runtime_mode(
         return previous.availability != telemetry.availability || previous.generation != telemetry.generation;
     };
 
+    auto log_stored_pointer_geometry_locked = [&](std::string_view event) {
+        redclaw::input::DesktopGeometry geometry = remote_input_geometry;
+        redclaw::capture::CaptureRegion region{};
+        std::string display_id = remote_input_display_id;
+        if (geometry.width > 0 && geometry.height > 0) {
+            region = stream_active_capture_region.resolve(geometry.width, geometry.height);
+        }
+        const bool session_start = !pointer_geometry_session_logged
+            && redclaw::input::is_valid_desktop_geometry(geometry);
+        const bool changed =
+            geometry.origin_x != last_logged_pointer_geometry.origin_x
+            || geometry.origin_y != last_logged_pointer_geometry.origin_y
+            || geometry.width != last_logged_pointer_geometry.width
+            || geometry.height != last_logged_pointer_geometry.height
+            || geometry.rotation != last_logged_pointer_geometry.rotation
+            || geometry.revision != last_logged_pointer_geometry.revision
+            || region.x != last_logged_pointer_region.x
+            || region.y != last_logged_pointer_region.y
+            || region.width != last_logged_pointer_region.width
+            || region.height != last_logged_pointer_region.height
+            || region.revision != last_logged_pointer_region.revision
+            || display_id != last_logged_pointer_display_id;
+        if (!session_start && !changed) {
+            return;
+        }
+        redclaw::diag::PointerGeometryRecord record;
+        record.event = session_start ? "session_start" : std::string(event);
+        record.backend = "stored";
+        record.display_id = display_id;
+        record.origin_x = geometry.origin_x;
+        record.origin_y = geometry.origin_y;
+        record.width = geometry.width;
+        record.height = geometry.height;
+        record.rotation = geometry.rotation;
+        record.revision = geometry.revision;
+        record.region_x = region.x;
+        record.region_y = region.y;
+        record.region_width = region.width;
+        record.region_height = region.height;
+        record.region_revision = region.revision;
+#if defined(_WIN32)
+        redclaw::diag::fill_thread_dpi_snapshot(&record);
+#endif
+        redclaw::diag::emit_pointer_diagnostic_line(
+            redclaw::diag::format_pointer_geometry_line(record));
+        last_logged_pointer_geometry = geometry;
+        last_logged_pointer_region = region;
+        last_logged_pointer_display_id = display_id;
+        if (session_start) {
+            pointer_geometry_session_logged = true;
+        }
+        pointer_input_sample_gate.note_mapping_inputs_changed();
+    };
+    auto log_stored_pointer_geometry = [&](std::string_view event) {
+        std::lock_guard<std::mutex> lock(callback_mutex);
+        log_stored_pointer_geometry_locked(event);
+    };
+
     auto run_host_stream_capture_tick = [&]() -> HostStreamCaptureTickResult {
         if (!desktop_video || options.role != RuntimeRole::kHost) {
             return HostStreamCaptureTickResult::kNoWork;
@@ -6142,9 +6251,11 @@ int run_runtime_mode(
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_selected_display = *requested_display;
                     stream_active_capture_region = region;
+                    remote_input_display_id = requested_display->id;
                     stream_capture_region_apply_pending = *region_request;
                     remote_input_inbox.discard_obsolete();
                 }
+                log_stored_pointer_geometry("region_changed");
                 {
                     std::lock_guard<std::mutex> frame_lock(stream_capture_frame_mutex);
                     stream_latest_captured_frame.reset();
@@ -6423,8 +6534,11 @@ int run_runtime_mode(
             stream_source_width_snapshot = captured_width;
             stream_source_height_snapshot = captured_height;
             remote_input_geometry = captured_geometry;
+            remote_input_display_id = stream_selected_display.has_value()
+                ? stream_selected_display->id : std::string{};
             ++stream_counters.captured_frames;
         }
+        log_stored_pointer_geometry("geometry_changed");
         return HostStreamCaptureTickResult::kCaptureAttempted;
     };
 
@@ -8556,6 +8670,8 @@ int run_runtime_mode(
                 remote_input_inbox.clear();
                 remote_input_disconnect_pending = true;
                 last_advertised_input_geometry = {};
+                pointer_geometry_session_logged = false;
+                log_stored_pointer_geometry_locked("input_session_rebuild");
                 stream_remote_control_guard.reset();
                 peer_capture_status_version.store(0);
                 video_codec_negotiator.reset_peer();

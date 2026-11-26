@@ -95,6 +95,7 @@ Every reader:
 
 - Only one lead at a time.
 - Updated 2026-11-17 at Ryan's request: milestone, pull-request and post-acceptance reviews go to an independent read-only subtask. The reviewer only finds issues and must not change code. The lead supplies the diff, the three root fact files and acceptance criteria, verifies the findings, and retains ownership of development and scriptable acceptance.
+- Updated 2026-11-26 by Ryan: those reviews are not required to use Codex CLI or to reach OpenAI/ChatGPT. This confirms the 2026-11-17 change. The earlier working convention that independent reviews must go to Codex CLI remains withdrawn.
 
 ## D9 — Show connection status and write runtime logs to files
 
@@ -139,7 +140,7 @@ Updated 2026-11-20 at Ryan's request. Ordinary Debug/Release builds, candidate u
 Publication to `main` (a direct push or a merge) needs all of the following at the final head:
 
 - A reproducible local Windows build and passing relevant automated tests on one representative machine for ordinary changes, including Controller-only UI fixes.
-- A clean independent read-only review subtask on the final head, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block.
+- A clean independent read-only review subtask on the final head, after the lead sanity-checks any findings. Real blockers or majors block the merge; dismissed false positives are recorded with a reason. Minors do not block. Updated 2026-11-26 by Ryan: this subtask is not required to be Codex CLI.
 - Passing dual-machine acceptance when behavior depends on both endpoints. For codec, hardware, driver, installation, or rolling-upgrade changes, verify the relevant devices and configurations. Include mixed-version tests when peer or upgrade compatibility is affected.
 - `docs-guard` green on GitHub.
 
