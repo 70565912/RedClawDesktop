@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-11-26 — Failed-auth stream snapshot
+
+For single-machine case B, cite the Host's `Runtime desktop stream stats role=host` line tagged `event=connection_auth_rejected`. A zero is now an explicit counter reading, not an inference from a missing heartbeat. [Progress](../../PROGRESS.md#2026-11-26--failed-auth-video-counters-case-b)
+
+## 2026-11-26 — Private Controller first-show placement
+
+The private presenter takes its position behind the foreground application while hidden. Windows child fixtures verified the native no-activation style and the visible sibling order at first show. Playback hints are suppressed in the private profile, and launcher dry-runs use an empty ICE fixture. The focused results and outstanding live gate are in [Progress](../../PROGRESS.md#2026-11-26--isolated-debug-gui-for-one-machine-controller-testing).
+
+## 2026-11-26 — Private Controller painting under a covering window
+
+The Debug private Tool preserves Z order on position changes. Its D3D11 canvas skips the covering-window scan so it can attempt a present while the user's foreground window stays in place. The hidden native placement fixture and offscreen coverage and draw tests passed. Live paint evidence for this build is pending. [Progress](../../PROGRESS.md#2026-11-26--isolated-debug-gui-for-one-machine-controller-testing)
+
+## 2026-11-26 — Private GUI review repairs
+
+The private Controller worker opts out of the interactive clipboard. The transfer bridge owns the local clipboard version used for both advertisement and negotiation, and must not construct a demand session when disabled. A separate private CLI Host uses the same opt-out. This changes no wire fields or ordinary session defaults.
+
+The Qt 6.2.4 hidden-create fixture accepted both permitted Windows show commands without relying on an extended style. A fresh-process Qt logging sentinel and worker time-limit checks passed. This is build and focused-test evidence only; see [progress](../../PROGRESS.md) for the pending review and live gates.
+
+## 2026-11-26 — Isolated Debug Controller GUI
+
+The local startup interface adds an explicit test directory and retains the existing authenticated GUI worker and playback path. The private control status exposes the playback generation and last painted frame ID. See [progress](../../PROGRESS.md) for verification.
+
+## 2026-11-25 — Desktop video defaults for explicit sessions
+
+The GUI and runtime share a local video-mode contract. Starting a session enables desktop video; timed smoke assertions and the strict Host capture gate remain diagnostic choices. No signaling or media wire format changes. See [progress](../../PROGRESS.md).
+
+Review repair: the supervisor resolves profile video before starting a worker and saves a versioned choice for maintenance. Timed GUI checks use presentation evidence; headless checks count only finished PPM writes. File-backed GUI playback uses a private worker directory and checks the authenticated generation. An unopened Host media channel uses the existing event wake instead of a 50 ms poll; no idle performance measurement was made.
+
+Second review repair: separate deferred canvas submission from completed drawing. File-preview activation and retirement use a worker-local, versioned message on the bounded supervisor control pipe, not diagnostic text; the peer protocol is unchanged.
+
 ## 2026-11-24 — Normalize clipboard image representation (M10-T03)
 
 - A WeChat image can expose both CF_HDROP and several native image formats. The prior file-only offer and DIB-skipping snapshot caused format loss and inconsistent OLE data availability. Prefer image content for ordinary mixed copies, fence the snapshot to the selected offer, preserve both DIB kinds and use a common native PNG alias mapping. Files/cuts still require confirmation; the capability-5 wire contract is unchanged. See [diagnosis and validation](../../PROGRESS.md#2026-11-24--clipboard-image-format-normalization-m10-t03) and [D7](../../DECISIONS.md#d7--capability-5-clipboard-requests-always-end-visibly).

@@ -23,7 +23,8 @@ public:
     using BulkSend = std::function<bool(std::string_view)>;
     TransferRuntimeBridge(bool host, std::string local_epoch, std::filesystem::path spool_directory,
         TransferOperationGate& gate, ControlSend peer, ControlSend gui, BulkSend bulk, std::function<bool()> ensure,
-        ClipboardHostActions clipboard_actions = {});
+        ClipboardHostActions clipboard_actions = {}, bool enable_clipboard = true);
+    std::uint32_t local_clipboard_version() const { return local_clipboard_version_; }
     void peer_capability(std::uint32_t version, std::string epoch, std::uint32_t clipboard_version = 0);
     void channel_open(bool open);
     bool receive_control(const protocol::StreamControlMessageV1& message); // after the shared replay guard
@@ -56,6 +57,7 @@ private:
     bool copy_action() const { return purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboardCleanup
         || purpose_ == protocol::WorkspaceTransferPurposeV1::kClipboardOpenCopy; }
     bool host_role_;
+    const std::uint32_t local_clipboard_version_;
     std::string local_epoch_, peer_epoch_, operation_epoch_, operation_, error_;
     std::filesystem::path spool_directory_, destination_;
     TransferOperationGate& gate_;

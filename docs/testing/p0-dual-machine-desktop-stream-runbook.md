@@ -6,9 +6,9 @@ This runbook defines what a claimed cross-LAN media result proves, not a mandato
 
 ## Required User Workflow
 
-1. Start RedClawDesktop on both machines.
-2. One side generates and shares its machine code.
-3. The other side enters only that peer machine code.
+1. Open RedClawDesktop on both machines. Opening it does not start a session or capture.
+2. The Host sets its connection password, shares its machine code and chooses Wait.
+3. The Controller supplies the Host machine code and password and chooses Connect. Normal video needs no smoke flag.
 4. The app uses DHT-backed online rendezvous signaling and ICE/STUN/IPv6/port mapping/UDP hole punching to connect across LAN/NAT boundaries when a serverless path exists.
 5. Host captures the desktop.
 6. Host encodes captured frames with the real video encoder path.
@@ -17,6 +17,12 @@ This runbook defines what a claimed cross-LAN media result proves, not a mandato
 9. Controller UI plays the decoded desktop image.
 
 The user workflow must not require entering a LAN IP address.
+
+For DHT/ICE-only checks, both CLI DHT validators load `scripts/session/signaling-only.conf` (`stream_smoke=false`), which both old and new parsers understand. With current binaries you can instead pass `--no-desktop-video` to **both** peers. An open channel is not a video pass. For a timed media diagnostic, use `--stream-smoke` on the Controller and `--stream-require-capture` on the Host instead.
+
+The Debug role PowerShell launchers accept `-NoDesktopVideo`; they still start the role you explicitly requested. The supervisor without `-AutoStart` stays idle. When selecting a Controller with `-RuntimeExe`, the supervisor requests smoke so older binaries also enable video. Its unlimited session is not a timed smoke pass.
+
+For a manual Host Wait, do not combine `-RuntimeExe` with `-NoDesktopVideo`: the supervisor refuses before launch because legacy Wait discards the profile. GUI opt-out uses the explicit disable flag, never profile-only emulation. Use the CLI DHT validators for signaling-only tests with old binaries.
 
 The Host may start and wait before the Controller starts; simultaneous startup is not a connection requirement.
 

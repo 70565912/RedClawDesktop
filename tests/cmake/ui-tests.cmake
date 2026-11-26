@@ -119,6 +119,8 @@ if(TARGET redclaw_ui_connection_flow)
 
   target_link_libraries(redclaw_ui_connection_flow_tests PRIVATE
     redclaw_ui_connection_flow
+    redclaw_ui_playback
+    redclaw_render
     redclaw_workspace
     redclaw_input
     GTest::gtest

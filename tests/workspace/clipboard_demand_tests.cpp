@@ -38,7 +38,8 @@ public:
     int approved = 0, delivered = 0, cancelled = 0, commits = 0, source_queries = 0, installed = 0;
     bool native_result_on_payload = false, drop_shortcut_validation = false;
     std::uint32_t native_sequence = 42;
-    void connected(bool, std::string) override {}
+    int connections = 0;
+    void connected(bool enabled, std::string) override { if (enabled) ++connections; }
     std::optional<ClipboardDemandEvent> take_event() override {
         if (events.empty()) return {}; auto result = events.front(); events.pop_front(); return result;
     }
@@ -90,6 +91,41 @@ public:
             ok ? "" : error.empty() ? "clipboard_source_retained" : error});
     }
 };
+TEST(ClipboardIsolation, OptOutCannotBeEnabledByPeerOrLocalCopyOnEitherRole) {
+    for (bool host : {false, true}) {
+        auto port = std::make_shared<FakePort>();
+        ClipboardHostActions actions;
+        actions.native_demand = true;
+        actions.demand_port = port;
+        port->events.push_back({ClipboardDemandEventKind::kOffer, {}, {"local-copy", 1, 42}});
+        TransferOperationGate gate;
+        std::vector<Control> gui, peer;
+        TransferRuntimeBridge bridge(host, "local", {}, gate,
+            [&](const Control& msg) { peer.push_back(msg); return true; },
+            [&](const Control& msg) { gui.push_back(msg); return true; },
+            [](auto) { return true; }, [] { return true; }, actions, false);
+        EXPECT_EQ(bridge.local_clipboard_version(), 0U);
+        bridge.peer_capability(1, "peer", 5);
+        bridge.channel_open(true);
+        bridge.pump(1, true);
+        ASSERT_FALSE(gui.empty());
+        EXPECT_EQ(gui.back().file_transfer_version, kFileTransferCapabilityVersion);
+        EXPECT_EQ(gui.back().clipboard_version, 0U);
+        Control offer;
+        offer.type = StreamControlMessageTypeV1::kWorkspace;
+        offer.session_epoch = "peer";
+        offer.workspace.emplace();
+        offer.workspace->action = Action::kClipboardOffer;
+        offer.workspace->clipboard_token = "peer-copy";
+        EXPECT_FALSE(bridge.receive_control(offer));
+        bridge.pump(2, true);
+        EXPECT_TRUE(peer.empty());
+        EXPECT_EQ(port->events.size(), 1U);
+        EXPECT_EQ(port->connections, 0);
+        EXPECT_EQ(port->installed, 0);
+    }
+}
+
 class DemandPair : public testing::Test {
 protected:
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("redclaw-demand-" + ClipboardCopyStore::new_id());

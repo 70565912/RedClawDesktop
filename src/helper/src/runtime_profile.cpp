@@ -139,6 +139,7 @@ bool load_runtime_profile_file(
       "ice_servers",
       "enable_ice_tcp",
       "stream_smoke",
+      "desktop_video",
       "stream_require_capture",
       "stream_preview_width",
       "stream_video_max_width",
@@ -403,15 +404,15 @@ bool load_runtime_profile_file(
       profile->enable_ice_tcp = parsed;
       continue;
     }
-    if (key == "stream_smoke") {
+    if (key == "desktop_video" || key == "stream_smoke") {
       bool parsed = false;
       if (!parse_bool_token(value, &parsed)) {
         if (error_detail != nullptr) {
-          *error_detail = "invalid runtime profile stream_smoke at line " + std::to_string(line_number) + ": " + value;
+          *error_detail = "invalid runtime profile " + key + " at line " + std::to_string(line_number) + ": " + value;
         }
         return false;
       }
-      profile->stream_smoke = parsed;
+      (key == "desktop_video" ? profile->desktop_video : profile->stream_smoke) = parsed;
       continue;
     }
     if (key == "stream_require_capture") {

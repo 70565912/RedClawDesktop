@@ -230,6 +230,7 @@ $bootstrapReadinessPath = Join-Path $reportDirectory "bootstrap-readiness.json"
 $arguments = @(
     "--cli",
     "--role", "controller",
+    "--runtime-config", "scripts/session/signaling-only.conf",
     "--connection-credential-file", (Resolve-Path -LiteralPath $ConnectionCredentialFile).Path,
     "--signal-transport", "dht",
     "--session-code", $SessionCode,
@@ -339,6 +340,7 @@ $stoppedAfterSuccess = $false
 try {
     $controllerProc = Start-Process `
         -FilePath $resolvedRuntimeExe `
+        -WorkingDirectory $repoRoot `
         -ArgumentList $arguments `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `

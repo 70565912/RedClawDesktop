@@ -2,6 +2,10 @@
 
 namespace redclaw::runtime {
 bool apply_runtime_profile(const redclaw::helper::RuntimeProfileData& profile, RuntimeOptions* options, std::string* error) {
+    if (profile.run_seconds.value_or(0) > kMaxRuntimeSeconds || profile.signal_timeout_seconds.value_or(0) > kMaxRuntimeSeconds) {
+        *error = "runtime profile time limit exceeds supported seconds";
+        return false;
+    }
     if (profile.role.has_value()) {
         if (!assign_runtime_role(profile.role.value(), options, error)) {
             return false;
@@ -79,15 +83,12 @@ bool apply_runtime_profile(const redclaw::helper::RuntimeProfileData& profile, R
     if (profile.enable_ice_tcp.has_value()) {
         options->enable_ice_tcp = profile.enable_ice_tcp.value();
     }
-    if (profile.stream_smoke.has_value()) {
-        options->stream_smoke = profile.stream_smoke.value();
+    const auto video = profile_video_mode(profile.desktop_video, profile.stream_smoke, profile.stream_require_capture);
+    if (!video) {
+        *error = "desktop_video=false conflicts with stream_smoke=true or stream_require_capture=true";
+        return false;
     }
-    if (profile.stream_require_capture.has_value()) {
-        options->stream_require_capture = profile.stream_require_capture.value();
-        if (options->stream_require_capture) {
-            options->stream_smoke = true;
-        }
-    }
+    if (profile.desktop_video || profile.stream_smoke || profile.stream_require_capture == true) options->video_mode = *video;
     if (profile.stream_preview_width.has_value()) {
         options->stream_preview_width = profile.stream_preview_width.value();
     }

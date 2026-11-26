@@ -2,6 +2,7 @@
 #include "playback_visibility.h"
 #include "ui/desktop_workspace_theme.h"
 #include <QPainter>
+#include <QPaintEvent>
 namespace redclaw::ui {
 namespace {
 class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
@@ -21,6 +22,7 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
   [[nodiscard]] QString backend_name() const override { return "qt"; }
 
   void clear_frame() override {
+    cancel_pending_draw();
     current_image_ = QImage();
     update();
   }
@@ -47,8 +49,10 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
         static_cast<int>(frame.content_rect_y),
         content_width,
         content_height);
+    cancel_pending_draw();
+    if (current_image_.isNull()) return PresentOutcome::kFailed;
     update();
-    return PresentOutcome::kPresented;
+    return PresentOutcome::kDeferred;
   }
 
   PresentOutcome present_image(const QImage& image, QString* error_detail) override {
@@ -58,13 +62,14 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
       }
       return PresentOutcome::kFailed;
     }
-    current_image_ = image.copy();
+    cancel_pending_draw();
+    current_image_ = image;
     update();
-    return PresentOutcome::kPresented;
+    return PresentOutcome::kDeferred;
   }
 
  protected:
-  void paintEvent(QPaintEvent*) override {
+  void paintEvent(QPaintEvent* event) override {
     QPainter p(this);
     p.fillRect(rect(), QColor(desktop_theme::kCanvas));
     if (!current_image_.isNull()) {
@@ -74,7 +79,10 @@ class QtPlaybackWidget final : public QWidget, public PlaybackCanvas {
           (width()  - img_size.width())  / 2,
           (height() - img_size.height()) / 2,
           img_size.width(), img_size.height());
-      p.drawImage(dst, current_image_);
+      if (p.isActive() && event->region().intersects(dst)) {
+        p.drawImage(dst, current_image_);
+        if (p.end()) finish_draw();
+      }
     } else desktop_theme::paint_waiting_desktop(p, rect());
   }
 

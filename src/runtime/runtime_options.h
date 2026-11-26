@@ -1,11 +1,14 @@
 #pragma once
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "redclaw/protocol/video_codec_negotiation.h"
+#include "desktop_video_mode.h"
 
 namespace redclaw::runtime {
+inline constexpr auto kMaxRuntimeSeconds = static_cast<std::uint32_t>((std::numeric_limits<int>::max)());
 #ifdef NDEBUG
 inline constexpr bool kWorkspaceControlEnabledByDefault = false;
 #else
@@ -28,6 +31,7 @@ struct RuntimeOptions {
     std::string rendezvous_url;
     std::string session_code;
     std::uint32_t run_seconds = 0;
+    bool disable_system_clipboard = false;
     std::uint32_t signal_timeout_seconds = 120;
     std::string signal_dir = "runtime-signaling";
     std::string signal_transport = "file";
@@ -49,10 +53,10 @@ struct RuntimeOptions {
     std::vector<std::string> ice_servers;
     std::string ice_server_file;
     bool enable_ice_tcp = false;
-    bool stream_smoke = false;
-    bool stream_require_capture = false;
+    DesktopVideoMode video_mode = DesktopVideoMode::kDesktop;
     bool stream_qa_native_size = false;
     bool gui_runtime_stdio = false;
+    std::string gui_test_profile;
     std::string connection_credential_file;
     bool stream_qa_drop_one_media_fragment = false;
     std::string stream_qa_incomplete_feedback_class = "fresh";

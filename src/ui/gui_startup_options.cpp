@@ -1,12 +1,57 @@
 #include "ui/gui_startup_options.h"
+#include "redclaw/helper/runtime_profile.h"
 #include <QDir>
 #include <QRegularExpression>
 
 namespace redclaw::ui {
+QStringList desktop_video_worker_arguments(runtime::DesktopVideoMode mode) {
+  switch (mode) {
+    case runtime::DesktopVideoMode::kDisabled: return {"--no-desktop-video"};
+    case runtime::DesktopVideoMode::kSmoke: return {"--stream-smoke"};
+    case runtime::DesktopVideoMode::kRequireCapture: return {"--stream-require-capture"};
+    default: return {"--desktop-video"};
+  }
+}
+
+bool merge_gui_video_profile(const QString& path, std::optional<runtime::DesktopVideoMode>& selection, QString* error) {
+  redclaw::helper::RuntimeProfileData profile;
+  std::string detail;
+  if (!redclaw::helper::load_runtime_profile_file(path.toStdString(), &profile, &detail)) {
+    if (error) *error = QString::fromStdString(detail);
+    return false;
+  }
+  if (profile.desktop_video || profile.stream_smoke || profile.stream_require_capture == true) {
+    auto mode = runtime::profile_video_mode(profile.desktop_video, profile.stream_smoke, profile.stream_require_capture);
+    if (!mode || !runtime::apply_video_override(*mode, selection)) {
+      if (error) *error = runtime::kVideoConflict;
+      return false;
+    }
+    selection = mode;
+  }
+  return true;
+}
+
+bool normalize_saved_video_arguments(QStringList& arguments, QString* error) {
+  runtime::RuntimeOptions legacy;
+  legacy.video_mode = runtime::DesktopVideoMode::kDisabled;
+  std::vector<std::string> values{"redclaw_desktop"};
+  for (const auto& arg : arguments) values.push_back(arg.toStdString());
+  values.emplace_back("--gui-runtime-stdio");
+  std::vector<char*> argv;
+  for (auto& value : values) argv.push_back(value.data());
+  std::string detail;
+  if (!runtime::parse_runtime_options(static_cast<int>(argv.size()), argv.data(), &legacy, &detail) || legacy.help_requested) {
+    if (error) *error = "maintenance_context_invalid_worker_arguments";
+    return false;
+  }
+  arguments += desktop_video_worker_arguments(legacy.video_mode);
+  return true;
+}
+
 bool parse_gui_auto_start_options(
     const QStringList& args,
     GuiAutoStartOptions* options,
-    QString* error_detail, GuiStartupOrigin origin) {
+    QString* error_detail, GuiStartupOrigin origin, qsizetype saved_worker_begin) {
   if (options == nullptr) {
     return false;
   }
@@ -23,9 +68,20 @@ bool parse_gui_auto_start_options(
     return true;
   };
 
+  QString video_profile;
   for (int i = 1; i < args.size(); ++i) {
+    if (i == saved_worker_begin) { options->video_override.reset(); video_profile.clear(); }
     const QString arg = args[i];
+    // Only main's pre-logger admission may supply a private profile.
+    if (arg == "--gui-test-profile") {
+      if (error_detail) *error_detail = "private GUI profile cannot be replayed";
+      return false;
+    }
     QString value;
+    if (arg == "--runtime-config") {
+      if (!require_value(&i, &video_profile)) return false;
+      continue;
+    }
     if (arg == "--gui-auto-start") {
       options->auto_start = true;
       continue;
@@ -107,8 +163,8 @@ bool parse_gui_auto_start_options(
         return false;
       }
       bool ok = false;
-      options->run_seconds = value.toUInt(&ok);
-      if (!ok) {
+      options->run_seconds = value.toInt(&ok);
+      if (!ok || options->run_seconds < 0) {
         if (error_detail != nullptr) {
           *error_detail = QString("invalid --run-seconds value: %1").arg(value);
         }
@@ -121,8 +177,8 @@ bool parse_gui_auto_start_options(
         return false;
       }
       bool ok = false;
-      options->signal_timeout_seconds = value.toUInt(&ok);
-      if (!ok) {
+      options->signal_timeout_seconds = value.toInt(&ok);
+      if (!ok || options->signal_timeout_seconds < 0) {
         if (error_detail != nullptr) {
           *error_detail = QString("invalid --signal-timeout-seconds value: %1").arg(value);
         }
@@ -172,13 +228,11 @@ bool parse_gui_auto_start_options(
       options->stream_video_codec = preference.value();
       continue;
     }
-    if (arg == "--stream-smoke") {
-      options->stream_smoke = true;
-      continue;
-    }
-    if (arg == "--stream-require-capture") {
-      options->stream_smoke = true;
-      options->stream_require_capture = true;
+    if (const auto flag = runtime::desktop_video_flag(arg.toStdString())) {
+      if (!runtime::add_video_flag(options->video_override, *flag)) {
+        if (error_detail) *error_detail = runtime::kVideoConflict;
+        return false;
+      }
       continue;
     }
     if (arg == "--stream-qa-drop-one-media-fragment") {
@@ -389,6 +443,12 @@ bool parse_gui_auto_start_options(
     }
     return false;
   }
+  if (!video_profile.isEmpty() && !merge_gui_video_profile(video_profile, options->video_override, error_detail)) return false;
+  const bool smoke = runtime::checks_video_frames(options->video_override.value_or(runtime::DesktopVideoMode::kDesktop));
+  if ((options->stream_qa_drop_one_media_fragment || !options->stream_qa_force_required_channel_close.isEmpty()) && !smoke) {
+    if (error_detail) *error_detail = "Video fault injection requires explicit stream smoke";
+    return false;
+  }
   if (options->stream_qa_drop_one_media_fragment
       && (!options->enable_debug_control || options->role != "controller")) {
     if (error_detail != nullptr) {
@@ -443,7 +503,7 @@ bool parse_gui_auto_start_options(
     if (error_detail) *error_detail = "--input-diagnostics is Debug-only";
     return false;
 #else
-    if (!options->enable_debug_control || !options->stream_smoke || options->agent_qa_fixture_provider) {
+    if (!options->enable_debug_control || !smoke || options->agent_qa_fixture_provider) {
       if (error_detail) *error_detail = "Input diagnostics require Debug control, stream smoke and a real Agent provider";
       return false;
     }
@@ -454,7 +514,7 @@ bool parse_gui_auto_start_options(
     if (error_detail) *error_detail = "--agent-qa-fixture-provider is Debug-only";
     return false;
 #else
-    if (!options->enable_debug_control || !options->stream_smoke) {
+    if (!options->enable_debug_control || !smoke) {
       if (error_detail) *error_detail = "Agent fixture requires Debug control and stream smoke";
       return false;
     }
@@ -468,7 +528,7 @@ bool parse_gui_auto_start_options(
     return false;
 #else
     if (!options->enable_debug_control
-        || options->transport != "dht" || !options->stream_smoke) {
+        || options->transport != "dht" || !smoke) {
       if (error_detail != nullptr) {
         *error_detail =
             "--agent-qa-force-channel-close-after-event requires Debug DHT stream smoke";

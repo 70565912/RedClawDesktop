@@ -112,6 +112,8 @@ See the [solution architecture](docs/architecture/solution-architecture.md), [or
 
 ## Build from source
 
+**Desktop video in this source tree:** opening the GUI alone does not wait, connect or capture. Choose **Wait** on the Host and **Connect** on the Controller. After authentication, the Host captures and encodes the real desktop by default; neither side needs `--stream-smoke`. For signaling diagnostics without desktop video, pass `--no-desktop-video` on **both** sides (profile: `desktop_video=false`). This is a local setting, not a request to stop the peer. Use `--stream-smoke` for a timed frame check and `--stream-require-capture` for a strict Host check. Neither grants remote input.
+
 Requirements: Windows 10/11 x64, Visual Studio 2022, CMake 3.20+, vcpkg, and Qt 6 Widgets. Copy `CMakeUserPresets.example.json` to the local-only `CMakeUserPresets.json`, set your dependency paths, then run:
 
 ```powershell

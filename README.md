@@ -120,6 +120,8 @@ GitHub 托管虚拟机不作为真实桌面验收环境。自动测试与版本�
 
 ## 从源码构建
 
+**本源码树的桌面视频默认行为：** 仅打开 GUI 不会等待连接、连接对端或采集画面。Host 点击等待、Controller 点击连接并通过密码验证后，默认采集、编码并传输真实桌面；两端都不需要 `--stream-smoke`。只诊断信令时，请在**两端**都传 `--no-desktop-video`（配置文件：`desktop_video=false`），它只关闭本端视频。限时测试仍可用 `--stream-smoke` 检查收发或渲染，用 `--stream-require-capture` 严格检查 Host 的真实采集。启用视频不会授予远程输入权限。
+
 要求：Windows 10/11 x64、Visual Studio 2022、CMake 3.20+、vcpkg，以及 Qt 6 Widgets。复制 `CMakeUserPresets.example.json` 为本机的 `CMakeUserPresets.json`，填写本机依赖路径后执行：
 
 ```powershell

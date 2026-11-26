@@ -9,13 +9,14 @@
 
 namespace redclaw::ui {
 
-PlaybackControlHintOverlay::PlaybackControlHintOverlay(QWidget* canvas)
+PlaybackControlHintOverlay::PlaybackControlHintOverlay(QWidget* canvas, bool hints_enabled)
     : QWidget(
           canvas != nullptr ? canvas->window() : nullptr,
           Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint
               | Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput),
       canvas_(canvas),
-      playback_window_(canvas != nullptr ? canvas->window() : nullptr) {
+      playback_window_(canvas != nullptr ? canvas->window() : nullptr),
+      hints_enabled_(hints_enabled) {
     setObjectName("playbackControlHintOverlay");
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -42,6 +43,7 @@ void PlaybackControlHintOverlay::show_clipboard_failure(const QString& message) 
 }
 
 void PlaybackControlHintOverlay::show_hint(const QString& message, int duration_ms, HintKind kind) {
+    if (!hints_enabled_) return;
     if (kind != HintKind::kPersistent && isVisible() && kind_ == HintKind::kPersistent) {
         return; // A disconnected-frame warning owns the surface until recovery.
     }

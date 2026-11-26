@@ -6,22 +6,30 @@
 #include <QWidget>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 #if defined(_WIN32)
 struct ID3D11Device;
 #endif
 namespace redclaw::ui {
 using DirectFrameData = redclaw::render::DecodedVideoFrame;
-enum class PresentOutcome { kPresented, kBusyDrop, kFailed };
+enum class PresentOutcome { kPresented, kDeferred, kBusyDrop, kFailed };
 
 // Widgets are owned by their Qt parent; the canvas pointer aliases the widget.
-// This interface never queues frames or owns a decoder.
 class PlaybackCanvas {
  public:
   virtual ~PlaybackCanvas() = default;
   virtual PresentOutcome present_frame(const DirectFrameData& frame, QString* error_detail) = 0;
   virtual PresentOutcome present_image(const QImage& image, QString* error_detail) = 0;
   virtual void clear_frame() {}
+  template<class Callback>
+  bool after_draw(PresentOutcome outcome, Callback&& callback) {
+    if (outcome == PresentOutcome::kPresented) callback();
+    else if (outcome == PresentOutcome::kDeferred) pending_draw_ = std::forward<Callback>(callback);
+    else return false;
+    return true;
+  }
+  void cancel_pending_draw() { pending_draw_ = {}; }
   [[nodiscard]] virtual QString backend_name() const = 0;
   [[nodiscard]] virtual QJsonObject diagnostic_snapshot() const { return {{"backend", backend_name()}}; }
   virtual void set_geometry_transaction_active(bool) {}
@@ -45,11 +53,18 @@ class PlaybackCanvas {
     return false;
   }
 #endif
+ protected:
+  void finish_draw() {
+    if (auto callback = std::exchange(pending_draw_, {})) callback();
+  }
+ private:
+  std::function<void()> pending_draw_;
 };
 
 struct PlaybackWidgetResult {
     QWidget* widget = nullptr;
     PlaybackCanvas* canvas = nullptr;
 };
-PlaybackWidgetResult create_best_playback_renderer(QWidget* parent);
+enum class PlaybackPresenter { kOrdinary, kPrivateTest };
+PlaybackWidgetResult create_best_playback_renderer(QWidget* parent, PlaybackPresenter presenter = PlaybackPresenter::kOrdinary);
 }  // namespace redclaw::ui

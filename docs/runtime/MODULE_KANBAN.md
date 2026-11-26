@@ -123,7 +123,11 @@ Retained playback layout repair (2026-10-18, M09-T01 / M10-T01): the operator's 
 
 ## M10 UI
 
-Updated: 2026-11-25
+Updated: 2026-11-26
+
+Private Debug Controller profile for one-machine playback — the operator observed nonactivating idle and a subsequent occlusion stall. The foreground placement and private hint repairs built locally. Isolated first-show fixtures and focused tests passed. Live painting with the rebuilt presenter is pending. [Progress](../../PROGRESS.md#2026-11-26--isolated-debug-gui-for-one-machine-controller-testing)
+
+Desktop-video defaults for explicit sessions (updated 2026-11-25) — second review's launcher opt-out, draw-confirmation and preview-retirement findings repaired locally; fresh full-diff review and two-machine playback evidence still pending. See [progress](../../PROGRESS.md#2026-11-25--desktop-video-without-a-smoke-flag).
 
 Clipboard image format normalization (2026-11-24, M10-T03) — done. Final Debug build and four focused CTest suites / 39 cases passed, including bidirectional native data-object reads, image/file selection and confirmation isolation. Independent file receiver tests and final production-code review passed; isolated Windows clipboard fixture skipped on access denial, Qt workbench deployment failed querying qmake. On 2026-11-25 Ryan accepted the live session: a locally copied image pasted into the edit box, and text and file paste transfer both succeeded. See [PROGRESS](../../PROGRESS.md#2026-11-25--clipboard-candidate-rollout-blocked-before-handoff-m10-t03).
 

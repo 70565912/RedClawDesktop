@@ -75,11 +75,16 @@
 #include "redclaw/helper/direct_frame_shared_memory.h"
 #include "redclaw/helper/runtime_profile.h"
 #include "ui/gui_shell.h"
+#if defined(REDCLAW_ENABLE_QT_GUI)
+#include "ui/private_gui_profile.h"
+#endif
 #include "runtime/input_control_boundary.h"
 #include "runtime/remote_input_inbox.h"
 #include "runtime/audio_stream_runtime.h"
 #include "runtime/navigation_thumbnail_worker.h"
 #include "runtime/runtime_options.h"
+#include "runtime/desktop_preview_output.h"
+#include "runtime/desktop_stream_counters.h"
 #include "runtime/local_control_output.h"
 #include "runtime/input_qa_receipts.h"
 #include "runtime/runtime_loop_wake.h"
@@ -135,6 +140,8 @@ constexpr std::uint64_t kDesktopStreamInitialViewportGraceMs = 3000;
 constexpr std::uint32_t kDesktopStreamViewportReconnectExtraSends = 2;
 constexpr std::size_t kDesktopStreamSentMetadataCapacity = 256;
 
+using redclaw::runtime::DesktopStreamCounters;
+using redclaw::runtime::DesktopVideoMode;
 using redclaw::runtime::RuntimeOptions;
 using redclaw::runtime::RuntimeRole;
 using redclaw::runtime::parse_runtime_options;
@@ -1717,25 +1724,6 @@ std::string format_ice_server_type_counts(const std::vector<std::string>& ice_se
     return out.str();
 }
 
-struct DesktopStreamSmokeCounters {
-    std::uint32_t captured_frames = 0;
-    std::uint32_t synthetic_frames = 0;
-    std::uint32_t capture_failures = 0;
-    std::uint32_t encoded_frames = 0;
-    std::uint32_t encode_failures = 0;
-    std::uint32_t transmitted_frames = 0;
-    std::uint32_t transmit_failures = 0;
-    std::uint32_t transmit_backpressure_drops = 0;
-    std::uint32_t transmit_local_pacing_drops = 0;
-    std::uint32_t received_frames = 0;
-    std::uint32_t decode_failures = 0;
-    std::uint32_t decoded_frames = 0;
-    std::uint32_t render_failures = 0;
-    std::uint32_t rendered_frames = 0;
-    std::string last_error;
-    std::string last_preview_path;
-};
-
 struct HostStreamStageTelemetry {
     std::uint64_t total_capture_us = 0;
     std::uint64_t total_packetize_us = 0;
@@ -2076,46 +2064,6 @@ redclaw::render::EncodedVideoCodec encoded_video_codec_from_binary(std::uint8_t 
     return redclaw::render::EncodedVideoCodec::kUnknown;
 }
 
-bool write_decoded_frame_ppm(
-    const redclaw::render::DecodedVideoFrame& frame,
-    const std::filesystem::path& output_path,
-    std::string* error) {
-    if (!frame.bgra || frame.width == 0 || frame.height == 0 || frame.row_pitch < frame.width * 4) {
-        *error = "decoded frame must be non-empty BGRA";
-        return false;
-    }
-    if (frame.pixels.size() < static_cast<std::size_t>(frame.row_pitch) * frame.height) {
-        *error = "decoded frame buffer is smaller than row_pitch * height";
-        return false;
-    }
-
-    std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
-    if (!out.is_open()) {
-        *error = "failed to open decoded frame output: " + output_path.string();
-        return false;
-    }
-
-    out << "P6\n" << frame.width << " " << frame.height << "\n255\n";
-    for (std::uint32_t y = 0; y < frame.height; ++y) {
-        const auto* row = frame.pixels.data() + static_cast<std::size_t>(y) * frame.row_pitch;
-        for (std::uint32_t x = 0; x < frame.width; ++x) {
-            const std::size_t src = static_cast<std::size_t>(x) * 4;
-            const char rgb[3] = {
-                static_cast<char>(row[src + 2]),
-                static_cast<char>(row[src + 1]),
-                static_cast<char>(row[src + 0]),
-            };
-            out.write(rgb, sizeof(rgb));
-        }
-    }
-
-    if (!out.good()) {
-        *error = "failed while writing decoded frame output: " + output_path.string();
-        return false;
-    }
-    return true;
-}
-
 std::uint32_t floor_even_dimension(std::uint32_t value) {
     if (value <= 2U) {
         return 2U;
@@ -2175,8 +2123,6 @@ constexpr std::uint32_t kControllerFrameRingSlots = 0;
 #endif
 
 #ifdef _WIN32
-constexpr std::uint64_t kDiagnosticPreviewWriteIntervalMs = 1000;
-
 enum class DirectFramePipeWriteStatus {
     kWritten,
     kBusyDrop,
@@ -2527,13 +2473,16 @@ int run_runtime_mode(
     redclaw::diag::ProcessFileLogger* process_logger,
     redclaw::runtime::LocalControlOutput& local_control_output) {
     const std::string role_name = options.role == RuntimeRole::kHost ? "host" : "controller";
+    const bool desktop_video = options.video_mode != DesktopVideoMode::kDisabled;
     const bool use_event_log_transport = options.signal_transport == "event-log";
     const bool use_tcp_transport = options.signal_transport == "tcp";
     const bool use_sealed_file_transport = options.signal_transport == "sealed-file";
     const bool use_rendezvous_transport = options.signal_transport == "rendezvous";
     const bool use_dht_transport = options.signal_transport == "dht";
     const FileSignalingPaths signaling = make_file_signaling_paths(options);
-    const std::filesystem::path stream_preview_output = signaling.directory / "controller-preview.ppm";
+    const char* gui_preview_dir = options.gui_runtime_stdio ? std::getenv("REDCLAW_GUI_PREVIEW_DIR") : nullptr;
+    const auto stream_preview_output = (gui_preview_dir ? std::filesystem::path(gui_preview_dir) : signaling.directory)
+        / "controller-preview.ppm";
     const std::filesystem::path dht_mailbox_directory = signaling.directory / "dht-mailbox";
     const std::uint16_t tcp_signaling_port = options.target_port > 0
         ? options.target_port
@@ -2579,10 +2528,11 @@ int run_runtime_mode(
               << " network_bind_ipv6="
               << (options.network_bind_ipv6_address.empty() ? "none" : "selected-interface")
               << " signal_timeout_seconds=" << options.signal_timeout_seconds << '\n';
-    if (options.stream_smoke) {
-        std::cout << "Runtime desktop stream smoke enabled preview_width=" << options.stream_preview_width
-                  << " require_capture=" << (options.stream_require_capture ? "true" : "false")
-                  << " controller_preview_output=" << stream_preview_output.string() << '\n';
+    if (desktop_video) {
+        std::cout << "Runtime desktop video enabled smoke_checks=" << (checks_video_frames(options.video_mode) ? "true" : "false")
+                  << " require_capture=" << (options.video_mode == DesktopVideoMode::kRequireCapture ? "true" : "false") << '\n';
+    } else {
+        std::cout << "Runtime desktop video disabled locally\n";
     }
     if (use_sealed_file_transport) {
         std::cout << "Runtime sealed signaling enabled role=" << role_name
@@ -2918,7 +2868,7 @@ int run_runtime_mode(
     std::size_t applied_remote_sealed_candidates = 0;
     std::uint64_t last_remote_sealed_blob_update_ms = 0;
     bool remote_sealed_blob_seen = false;
-    DesktopStreamSmokeCounters stream_counters;
+    DesktopStreamCounters stream_counters;
     bool stream_media_channel_open = false;
     bool stream_control_channel_open = false;
     bool stream_agent_channel_open = false;
@@ -3215,6 +3165,7 @@ int run_runtime_mode(
     std::uint64_t stream_gui_last_raw_decoded_frames = 0;
     std::uint64_t stream_gui_last_raw_rendered_frames = 0;
     bool stream_gui_stats_baseline_pending = false;
+    bool gui_presented_during_run = false;
     std::uint64_t stream_observed_source_activity_revision = 0;
     stream_source_activity_tracker.reset(
         stream_geometry_revision,
@@ -3249,10 +3200,11 @@ int run_runtime_mode(
     std::uint32_t stream_decoder_width = 0;
     std::uint32_t stream_decoder_height = 0;
     redclaw::net::EncodedVideoFrameReassembler stream_video_reassembly;
+    redclaw::runtime::DesktopPreviewOutput preview_output;
+    std::atomic<std::uint64_t> gui_preview_generation{0};
 #ifdef _WIN32
     DirectFramePipeClient direct_frame_pipe(options.stream_frame_pipe);
     DirectFramePipeClient navigation_frame_pipe(options.stream_navigation_pipe);
-    std::uint64_t next_diagnostic_video_write_ms = 0;
     if (direct_frame_pipe.enabled()) {
         std::cout << "Runtime direct frame channel enabled role=" << role_name
                   << " channel=" << options.stream_frame_pipe << '\n';
@@ -3565,9 +3517,9 @@ int run_runtime_mode(
             }, {}, redclaw::workspace::clipboard_sequence_number, true, {},
             [&](std::uint64_t revision, std::string* error) { return remote_input_session.paste_shortcut_clipboard(revision, error); },
             [](std::string_view line) { std::cout << "Runtime " << line << '\n'; }
-        });
+        }, !options.disable_system_clipboard);
 
-    redclaw::runtime::NavigationThumbnailWorker navigation_thumbnails(options.role == RuntimeRole::kHost);
+    redclaw::runtime::NavigationThumbnailWorker navigation_thumbnails(desktop_video && options.role == RuntimeRole::kHost);
     redclaw::runtime::AudioStreamRuntime audio_runtime(
         options.role == RuntimeRole::kHost,
         [&ice_wrapper](std::span<const std::uint8_t> packet) {
@@ -3592,7 +3544,7 @@ int run_runtime_mode(
         message.capture_status_version = 1;
         message.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
         message.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
-        message.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
+        message.clipboard_version = transfer_bridge.local_clipboard_version();
         advertise_audio(&message);
         return message;
     };
@@ -3702,7 +3654,7 @@ int run_runtime_mode(
         }
     };
 
-    if (options.role == RuntimeRole::kHost) {
+    if (desktop_video && options.role == RuntimeRole::kHost) {
         std::string display_error;
         stream_capture_displays = redclaw::capture::enumerate_capture_displays(&display_error);
         if (!stream_capture_displays.empty()) {
@@ -3754,7 +3706,7 @@ int run_runtime_mode(
         }
     };
 
-    const bool media_pacer_started = stream_media_pacer.start(
+    const bool media_pacer_started = desktop_video && stream_media_pacer.start(
         [&](std::span<const std::uint8_t> packet) {
             redclaw::net::DataChannelSendOutcome outcome;
             std::string send_error;
@@ -3871,7 +3823,7 @@ int run_runtime_mode(
         [&stream_transport_estimator](std::uint64_t now_us, std::uint32_t rtt_ms) {
             return stream_transport_estimator.snapshot(now_us, rtt_ms);
         });
-    if (!media_pacer_started) {
+    if (desktop_video && !media_pacer_started) {
         std::cerr << "Runtime desktop media pacer failed to start" << '\n';
         return 1;
     }
@@ -4369,6 +4321,7 @@ int run_runtime_mode(
             std::lock_guard<std::mutex> lock(callback_mutex);
             if (kind == redclaw::net::DataChannelKind::kMedia) {
                 stream_media_channel_open = true;
+                stream_work_coordinator.post(redclaw::session::HostStreamWorkReason::kStateChanged);
                 stream_data_channel_transport_stats_snapshot = transport_stats;
             } else if (kind == redclaw::net::DataChannelKind::kControl) {
                 stream_control_channel_open = true;
@@ -4426,7 +4379,7 @@ int run_runtime_mode(
             hello.capture_status_version = 1;
             hello.terminal_version = redclaw::workspace::kTerminalCapabilityVersion;
             hello.file_transfer_version = redclaw::workspace::kFileTransferCapabilityVersion;
-            hello.clipboard_version = redclaw::workspace::kClipboardCapabilityVersion;
+            hello.clipboard_version = transfer_bridge.local_clipboard_version();
             advertise_audio(&hello);
             hello.payload = "viewport,source-activity,displayable-ack,network-stats,media-transport-feedback,playback-starvation,keyframe-recovery,remote-logs,reconnect,remote-input,capture-region,navigation,system-audio";
             std::string send_error;
@@ -4612,7 +4565,11 @@ int run_runtime_mode(
         bool direct_pipe_write_failed = false;
         bool direct_pipe_enabled = false;
         std::string direct_pipe_error;
-        bool should_write_diagnostic_ppm = true;
+        const auto preview_now = now_steady_ms();
+        const bool file_preview_requested = options.gui_runtime_stdio ? gui_preview_dir != nullptr : checks_video_frames(options.video_mode);
+        const auto preview_generation = gui_preview_generation.load();
+        bool should_write_diagnostic_ppm = file_preview_requested && (!gui_preview_dir || preview_generation)
+            && preview_output.due(preview_now);
         bool direct_pipe_write_attempted = false;
         std::uint64_t direct_pipe_write_us = 0;
         bool decode_attempted = false;
@@ -4639,12 +4596,6 @@ int run_runtime_mode(
             // When the GUI direct-frame path is active, avoid redundant decode
             // and diagnostic PPM writes on the runtime thread.
             should_write_diagnostic_ppm = false;
-        } else {
-            const std::uint64_t now_ms = now_steady_ms();
-            should_write_diagnostic_ppm = now_ms >= next_diagnostic_video_write_ms;
-            if (should_write_diagnostic_ppm) {
-                next_diagnostic_video_write_ms = now_ms + kDiagnosticPreviewWriteIntervalMs;
-            }
         }
 #endif
 
@@ -4832,22 +4783,17 @@ int run_runtime_mode(
         }
 
         std::string write_error;
-        const bool diagnostic_written = (should_write_diagnostic_ppm && decoded_ok && decoded_frame_ready)
-            ? write_decoded_frame_ppm(decoded_frame, stream_preview_output, &write_error)
-            : false;
-        const bool diagnostic_deferred = !direct_pipe_enabled && decoded_ok && !diagnostic_written;
-        const bool rendered = diagnostic_written || diagnostic_deferred;
+        const auto output = preview_output.publish(stream_preview_output, decoded_frame,
+            should_write_diagnostic_ppm && decoded_frame_ready, preview_now, preview_generation, write_error);
         {
             std::lock_guard<std::mutex> lock(callback_mutex);
             update_controller_stage_telemetry();
             ++stream_counters.received_frames;
-            ++stream_counters.decoded_frames;
-            if (rendered) {
+            if (decoded_frame_ready) ++stream_counters.decoded_frames;
+            if (output == redclaw::runtime::PreviewOutput::kWritten) {
                 ++stream_counters.rendered_frames;
-                if (diagnostic_written) {
-                    stream_counters.last_preview_path = stream_preview_output.string();
-                }
-            } else {
+                stream_counters.last_preview_path = stream_preview_output.string();
+            } else if (output == redclaw::runtime::PreviewOutput::kFailed) {
                 ++stream_counters.render_failures;
                 stream_counters.last_error = direct_pipe_enabled ? direct_pipe_error : write_error;
                 append_timeline(
@@ -4857,10 +4803,10 @@ int run_runtime_mode(
             }
         }
 
-        if (!rendered) {
+        if (output == redclaw::runtime::PreviewOutput::kFailed) {
             std::cerr << "Runtime desktop stream video render failed: "
                       << (direct_pipe_enabled ? direct_pipe_error : write_error) << '\n';
-        } else if (encoded_frame.keyframe) {
+        } else if (decoded_frame_ready && encoded_frame.keyframe) {
             std::uint32_t srtt_ms = 0;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
@@ -5033,7 +4979,7 @@ int run_runtime_mode(
                 return;
             }
             if (control.type == redclaw::protocol::StreamControlMessageTypeV1::kPong
-                && options.stream_smoke && options.role == RuntimeRole::kHost) {
+                && desktop_video && options.role == RuntimeRole::kHost) {
                 const std::uint64_t now_ms = now_steady_ms();
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 if (stream_required_channels_ready
@@ -5377,7 +5323,7 @@ int run_runtime_mode(
             return;
         }
         if (kind == redclaw::net::DataChannelKind::kNavigation
-            && options.role == RuntimeRole::kController) {
+            && desktop_video && options.role == RuntimeRole::kController) {
             redclaw::net::NavigationThumbnail thumbnail;
             std::string parse_error;
             if (!redclaw::net::parse_navigation_thumbnail(
@@ -5405,7 +5351,7 @@ int run_runtime_mode(
             return;
         }
         if (kind != redclaw::net::DataChannelKind::kMedia
-            || !options.stream_smoke || options.role != RuntimeRole::kController) {
+            || !desktop_video || options.role != RuntimeRole::kController) {
             return;
         }
         {
@@ -6038,6 +5984,7 @@ int run_runtime_mode(
     };
 
     enum class HostStreamCaptureTickResult {
+        kWaitingForChannel,
         kNoWork,
         kCaptureAttempted,
         kFailure,
@@ -6062,7 +6009,7 @@ int run_runtime_mode(
     };
 
     auto run_host_stream_capture_tick = [&]() -> HostStreamCaptureTickResult {
-        if (!options.stream_smoke || options.role != RuntimeRole::kHost) {
+        if (!desktop_video || options.role != RuntimeRole::kHost) {
             return HostStreamCaptureTickResult::kNoWork;
         }
 
@@ -6076,7 +6023,7 @@ int run_runtime_mode(
                 &stream_capture_worker_stage,
                 &stream_capture_worker_stage_since_ms,
                 HostStreamWorkerStage::kWaitingForChannel);
-            return HostStreamCaptureTickResult::kNoWork;
+            return HostStreamCaptureTickResult::kWaitingForChannel;
         }
 
         const std::uint64_t catalog_now_ms = now_steady_ms();
@@ -6491,8 +6438,8 @@ int run_runtime_mode(
             stream_encoder_started_at_ms, kDesktopStreamCodecUpgradeMinEncoderAgeMs);
     };
 
-    auto run_host_stream_smoke_tick = [&](std::uint64_t now_ms) {
-        if (!options.stream_smoke || options.role != RuntimeRole::kHost) {
+    auto run_host_stream_encode_tick = [&](std::uint64_t now_ms) {
+        if (!desktop_video || options.role != RuntimeRole::kHost) {
             return;
         }
         if (stream_media_submission_paused.load()) {
@@ -7309,13 +7256,16 @@ int run_runtime_mode(
         }
     } stream_worker_scope{stop_stream_workers};
 
-    if (options.stream_smoke && options.role == RuntimeRole::kHost) {
+    if (desktop_video && options.role == RuntimeRole::kHost) {
         stream_capture_worker_running.store(true);
         stream_capture_worker = std::thread([&]() {
             while (stream_capture_worker_running.load()) {
                 const auto observed = stream_work_coordinator.snapshot().generation;
                 const auto tick_result = run_host_stream_capture_tick();
-                if (stream_capture_gate.snapshot().availability == redclaw::capture::CaptureAvailability::kPaused) {
+                if (tick_result == HostStreamCaptureTickResult::kWaitingForChannel) {
+                    if (stream_capture_worker_running.load())
+                        (void)stream_work_coordinator.wait_for_change(observed, std::chrono::milliseconds::max());
+                } else if (stream_capture_gate.snapshot().availability == redclaw::capture::CaptureAvailability::kPaused) {
                     // Reuse the coordinator for explicit retry/stop. The bounded
                     // deadline only probes desktop/display state, never a backend.
                     (void)stream_work_coordinator.wait_for_change(observed, std::chrono::milliseconds(500));
@@ -7423,10 +7373,10 @@ int run_runtime_mode(
                     wait = std::min(wait, std::chrono::milliseconds(*codec_due - now_ms));
                 }
                 if (wait != std::chrono::milliseconds::zero()) {
-                    (void)stream_work_coordinator.wait_for_change(observed, wait);
+                    if (stream_worker_running.load()) (void)stream_work_coordinator.wait_for_change(observed, wait);
                     continue;
                 }
-                run_host_stream_smoke_tick(now_steady_ms());
+                run_host_stream_encode_tick(now_steady_ms());
                 set_stream_worker_stage(
                     &stream_encoder_worker_stage,
                     &stream_encoder_worker_stage_since_ms,
@@ -7451,8 +7401,8 @@ int run_runtime_mode(
 
     const std::uint64_t runtime_loop_started_ms = now_steady_ms();
     std::uint32_t elapsed_seconds = 0;
-    DesktopStreamSmokeCounters last_stream_rate_snapshot;
-    DesktopStreamSmokeCounters last_stream_adaptation_snapshot;
+    DesktopStreamCounters last_stream_rate_snapshot;
+    DesktopStreamCounters last_stream_adaptation_snapshot;
     redclaw::capture::CaptureBackendTelemetry last_stream_capture_telemetry_snapshot;
     redclaw::capture::EncoderExecutionDiagnostics last_stream_encoder_diagnostics_snapshot;
     redclaw::capture::EncoderExecutionDiagnostics last_stream_adaptation_encoder_diagnostics_snapshot;
@@ -7465,12 +7415,20 @@ int run_runtime_mode(
     bool ice_failure_reported = false;
     std::uint64_t last_transport_diagnostic_sequence = 0;
     auto last_auth_state = redclaw::security::ConnectionAuthState::kPending;
+    std::uint64_t preview_generation_sequence = 0;
+    const auto set_preview_authenticated = [&](bool accepted) {
+        if (!gui_preview_dir || accepted == (gui_preview_generation.load() != 0)) return;
+        if (accepted) ++preview_generation_sequence;
+        gui_preview_generation.store(accepted ? preview_generation_sequence : 0);
+        local_control_output.send_preview({preview_generation_sequence, accepted});
+    };
     bool auth_repair_pending = false;
     while (true) {
         std::string auth_error;
         const auto auth_state = ice_wrapper.authenticationState(&auth_error);
         if (auth_state != last_auth_state) {
             last_auth_state = auth_state;
+            set_preview_authenticated(auth_state == redclaw::security::ConnectionAuthState::kAccepted);
             if (auth_state == redclaw::security::ConnectionAuthState::kAccepted) {
                 std::cout << "Runtime connection_auth accepted\n";
             } else if (auth_state == redclaw::security::ConnectionAuthState::kVerifying) {
@@ -7478,6 +7436,14 @@ int run_runtime_mode(
             } else if (auth_state == redclaw::security::ConnectionAuthState::kRejected) {
                 std::cout << "Runtime connection_auth rejected reason=" << auth_error << '\n';
                 if (options.role == RuntimeRole::kController || !use_dht_transport) {
+                    std::string stats_line;
+                    {
+                        std::lock_guard lock(callback_mutex);
+                        stats_line = redclaw::runtime::format_auth_rejected_stream_stats(
+                            role_name, stream_counters, stream_media_channel_open, stream_control_channel_open,
+                            stream_media_fragments_sent, stream_media_fragments_received);
+                    }
+                    std::cout << stats_line << '\n' << std::flush;
                     ice_wrapper.close(); return 78;
                 }
                 auth_repair_pending = true;
@@ -7580,7 +7546,7 @@ int run_runtime_mode(
                     "decoder_recovery_retry", playback);
             }
         }
-        if (options.stream_smoke && options.role == RuntimeRole::kController) {
+        if (desktop_video && options.role == RuntimeRole::kController) {
             (void)flush_media_transport_feedback(runtime_loop_now_ms * 1000ULL);
         }
 
@@ -7660,6 +7626,8 @@ int run_runtime_mode(
                 if (playback.session != 0 || command.playback_feedback_version == 1) {
                     if (!PlaybackRuntime::matches_feedback(command, playback)) continue;
                 }
+                if (PlaybackRuntime::confirms_presentation(command, playback)) gui_presented_during_run = true;
+                if (!command.observed_source_activity_revision) continue;
                 controller_playback.stamp_feedback(command, playback);
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
@@ -8559,6 +8527,10 @@ int run_runtime_mode(
                     std::cerr << "Runtime ICE retirement requires owner thread" << '\n';
                     return 1;
                 }
+                if (gui_preview_dir) {
+                    set_preview_authenticated(false);
+                    last_auth_state = redclaw::security::ConnectionAuthState::kPending;
+                }
                 lock.lock();
                 saw_failed_state = false;
                 saw_connected_state = false;
@@ -8960,7 +8932,7 @@ int run_runtime_mode(
 
         input_loop_timing.next(redclaw::runtime::InputQaStage::kAdaptation);
 
-        if (options.stream_smoke && options.role == RuntimeRole::kHost && heartbeat_due) {
+        if (desktop_video && options.role == RuntimeRole::kHost && heartbeat_due) {
             const std::uint64_t now_ms = now_steady_ms();
             redclaw::session::DesktopSourceActivityUpdate activity_update;
             {
@@ -9067,7 +9039,7 @@ int run_runtime_mode(
         }
 
         bool stream_adaptation_session_active = false;
-        if (options.stream_smoke && options.role == RuntimeRole::kHost) {
+        if (desktop_video && options.role == RuntimeRole::kHost) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_adaptation_session_active = stream_media_channel_open
                 && stream_control_channel_open
@@ -9084,10 +9056,10 @@ int run_runtime_mode(
                 stream_adaptation_session_active = false;
             }
         }
-        if (options.stream_smoke && options.role == RuntimeRole::kHost
+        if (desktop_video && options.role == RuntimeRole::kHost
             && elapsed_seconds > 0 && heartbeat_due
             && stream_adaptation_session_active) {
-            DesktopStreamSmokeCounters stream_snapshot;
+            DesktopStreamCounters stream_snapshot;
             redclaw::capture::CaptureBackendTelemetry capture_telemetry;
             redclaw::capture::EncoderExecutionDiagnostics encoder_diagnostics;
             StreamRttTelemetry rtt_telemetry;
@@ -9565,7 +9537,7 @@ int run_runtime_mode(
                 last_stream_receiver_stats_snapshot = receiver_stats;
                 last_stream_adaptation_sample_ms = adaptation_sample_ms;
             }
-        } else if (options.stream_smoke && options.role == RuntimeRole::kHost
+        } else if (desktop_video && options.role == RuntimeRole::kHost
                    && elapsed_seconds > 0 && heartbeat_due) {
             std::lock_guard<std::mutex> lock(callback_mutex);
             stream_adaptive_control_snapshot.encoder_reconfigure_pending = false;
@@ -11194,12 +11166,15 @@ int run_runtime_mode(
             redclaw::service::ConnectionNegotiationPhase negotiation_phase_snapshot =
                 redclaw::service::ConnectionNegotiationPhase::kIdle;
             bool answer_acknowledged_snapshot = false;
+            bool report_video = false;
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 state_snapshot = connection_state;
                 negotiation_generation_snapshot = dht_negotiation.generation();
                 negotiation_phase_snapshot = dht_negotiation.phase();
                 answer_acknowledged_snapshot = dht_negotiation.answer_acknowledged();
+                report_video = desktop_video && (options.role != RuntimeRole::kHost || (options.run_seconds && checks_video_frames(options.video_mode))
+                    || stream_media_channel_open || stream_required_channels_open_total != 0);
             }
             std::cout << "Runtime heartbeat role=" << role_name << " elapsed_seconds=" << elapsed_seconds << '\n';
             std::cout << "Runtime state role=" << role_name
@@ -11404,8 +11379,8 @@ int run_runtime_mode(
             }
 #endif
 
-            if (options.stream_smoke) {
-                DesktopStreamSmokeCounters stream_snapshot;
+            if (report_video) {
+                DesktopStreamCounters stream_snapshot;
                 bool channel_open = false;
                 bool media_channel_open = false;
                 bool control_channel_open = false;
@@ -12426,15 +12401,22 @@ int run_runtime_mode(
 
         if (options.run_seconds > 0 && elapsed_seconds >= options.run_seconds) {
             std::cout << "Runtime mode exiting after run-seconds=" << options.run_seconds << '\n';
-            if (options.stream_smoke) {
-                DesktopStreamSmokeCounters stream_snapshot;
+            if (checks_video_frames(options.video_mode)) {
+                DesktopStreamCounters stream_snapshot;
                 {
                     std::lock_guard<std::mutex> lock(callback_mutex);
                     stream_snapshot = stream_counters;
                 }
 
-                if (options.role == RuntimeRole::kHost && stream_snapshot.transmitted_frames == 0) {
-                    std::cerr << "Runtime desktop stream smoke failed: host transmitted zero video frames";
+                std::error_code receipt_error;
+                const bool presented = gui_presented_during_run || (gui_preview_dir && stream_snapshot.rendered_frames
+                    && std::filesystem::is_regular_file(stream_preview_output.parent_path() / "presented", receipt_error));
+                const auto failure = timed_video_failure(options.video_mode, options.role == RuntimeRole::kHost,
+                    stream_snapshot.transmitted_frames != 0, stream_snapshot.captured_frames != 0,
+                    redclaw::runtime::controller_smoke_output(options.gui_runtime_stdio || !options.stream_frame_pipe.empty(),
+                        stream_snapshot.rendered_frames != 0, presented));
+                if (!failure.empty()) {
+                    std::cerr << "Runtime desktop stream smoke failed: " << failure;
                     if (!stream_snapshot.last_error.empty()) {
                         std::cerr << " last_error=" << stream_snapshot.last_error;
                     }
@@ -12444,28 +12426,6 @@ int run_runtime_mode(
                     return 1;
                 }
 
-                if (options.role == RuntimeRole::kHost
-                    && options.stream_require_capture
-                    && stream_snapshot.captured_frames == 0) {
-                    std::cerr << "Runtime desktop stream smoke failed: host captured zero real desktop frames";
-                    if (!stream_snapshot.last_error.empty()) {
-                        std::cerr << " last_error=" << stream_snapshot.last_error;
-                    }
-                    std::cerr << '\n';
-                    ice_wrapper.close();
-                    stop_stream_workers();
-                    return 1;
-                }
-
-                if (options.role == RuntimeRole::kController && stream_snapshot.rendered_frames == 0) {
-                    std::cerr << "Runtime desktop stream smoke failed: controller rendered zero preview frames";
-                    if (!stream_snapshot.last_error.empty()) {
-                        std::cerr << " last_error=" << stream_snapshot.last_error;
-                    }
-                    std::cerr << '\n';
-                    ice_wrapper.close();
-                    return 1;
-                }
             }
             ice_wrapper.close();
             stop_stream_workers();
@@ -12505,6 +12465,30 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    const redclaw::ui::GuiAutoStartOptions* private_startup = nullptr;
+#if defined(REDCLAW_ENABLE_QT_GUI)
+    if (!runtime_options.gui_test_profile.empty() && !redclaw::ui::isolate_private_qt_logging()) {
+        std::cerr << "Private Qt logging configuration could not be isolated.\n";
+        return 2;
+    }
+    redclaw::ui::GuiAutoStartOptions private_options;
+#endif
+    if (!runtime_options.gui_test_profile.empty()) {
+#if defined(REDCLAW_ENABLE_QT_GUI)
+        if (!redclaw::ui::prepare_private_gui_profile(runtime_options, private_options)) {
+            std::cerr << "Private GUI requires a new user-owned test directory and an unelevated Windows Debug process.\n";
+            return 2;
+        }
+        private_startup = &private_options;
+        runtime_options.log_dir = (std::filesystem::path(runtime_options.gui_test_profile) / "logs").string();
+        std::error_code ec;
+        std::filesystem::current_path(std::filesystem::path(runtime_options.gui_test_profile), ec);
+        if (ec) return 2;
+#else
+        std::cerr << "Private GUI requires Qt Widgets.\n";
+        return 2;
+#endif
+    }
     redclaw::diag::ProcessFileLogger process_logger;
     redclaw::diag::ProcessFileLoggerConfig log_config;
     log_config.directory = runtime_options.log_dir.empty()
@@ -12543,14 +12527,14 @@ int main(int argc, char** argv) {
 
     if (runtime_options.role == RuntimeRole::kNone && !runtime_options.force_cli) {
         std::string gui_error;
-        if (redclaw::ui::launch_gui_shell(argc, argv, &process_logger, &gui_error)) {
+        if (redclaw::ui::launch_gui_shell(argc, argv, &process_logger, &gui_error, private_startup)) {
             return 0;
         }
 
         if (!gui_error.empty()) {
             std::cerr << "GUI shell launch skipped: " << gui_error << '\n';
         }
-        if (runtime_options.enable_debug_control) {
+        if (private_startup || runtime_options.enable_debug_control) {
             return 2;
         }
     }

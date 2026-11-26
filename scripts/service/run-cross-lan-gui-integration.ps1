@@ -59,6 +59,7 @@ $supervisorArguments = @{
     DhtListenPort = $DhtListenPort
     IceUdpPort = $IceUdpPort
     AutoStart = $true
+    StreamSmoke = $true
     AgentControlName = $AgentControlName
     CoordinationJournalPath = $CoordinationJournalPath
     AllowRemoteAgent = [bool]$AllowRemoteAgent

@@ -1,8 +1,8 @@
 #include "playback_backends.h"
 namespace redclaw::ui {
-PlaybackWidgetResult create_best_playback_renderer(QWidget* parent) {
+PlaybackWidgetResult create_best_playback_renderer(QWidget* parent, [[maybe_unused]] PlaybackPresenter presenter) {
 #if defined(_WIN32)
-    if (auto result = try_create_d3d11_playback_renderer(parent); result.widget != nullptr) {
+    if (auto result = try_create_d3d11_playback_renderer(parent, presenter); result.widget != nullptr) {
         return result;
     }
 #endif

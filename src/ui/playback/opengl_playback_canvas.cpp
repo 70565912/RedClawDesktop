@@ -46,6 +46,7 @@ class OpenGLPlaybackWidget final : public QOpenGLWidget,
   [[nodiscard]] QString backend_name() const override { return "opengl"; }
 
   void clear_frame() override {
+    cancel_pending_draw();
     pending_frame_ = DirectFrameData{};
     has_pending_frame_ = false;
     if (isValid()) {
@@ -68,10 +69,15 @@ class OpenGLPlaybackWidget final : public QOpenGLWidget,
       }
       return PresentOutcome::kFailed;
     }
+    if (isValid() && !gl_init_ok_) {
+      if (error_detail) *error_detail = "OpenGL renderer not initialized";
+      return PresentOutcome::kFailed;
+    }
+    cancel_pending_draw();
     pending_frame_ = frame;
     has_pending_frame_ = true;
     update();
-    return PresentOutcome::kPresented;
+    return PresentOutcome::kDeferred;
   }
 
   PresentOutcome present_image(const QImage& image, QString* error_detail) override {
@@ -94,6 +100,7 @@ class OpenGLPlaybackWidget final : public QOpenGLWidget,
 
  protected:
   void initializeGL() override {
+    gl_init_ok_ = false;
     initializeOpenGLFunctions();
 
     // GLSL 3.30 core – position at location 0, texcoord at location 1.
@@ -122,8 +129,7 @@ void main() { fragColor = texture(uTex, vUV); }
       return;
     }
 
-    vao_.create();
-    vbo_.create();
+    if (!vao_.create() || !vbo_.create()) return;
     vbo_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
     vbo_.bind();
     vbo_.allocate(sizeof(float) * 24);  // 6 vertices × 4 floats each
@@ -147,22 +153,22 @@ void main() { fragColor = texture(uTex, vUV); }
   }
 
   void paintGL() override {
+    if (!gl_init_ok_) return;
     glClearColor(desktop_theme::kCanvasClear[0], desktop_theme::kCanvasClear[1], desktop_theme::kCanvasClear[2], 1.0F);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (!gl_init_ok_) return;
-
     // Upload any pending frame.
-    if (has_pending_frame_) {
+    const bool new_frame = has_pending_frame_;
+    if (new_frame) {
       upload_texture(pending_frame_);
       has_pending_frame_ = false;
     }
-    if (texture_id_ == 0) return;
+    if (texture_id_ == 0 || width() <= 0 || height() <= 0) return;
 
     // Update aspect-ratio vertices.
     update_quad_vertices();
 
-    shader_.bind();
+    if (!shader_.bind()) return;
     shader_.setUniformValue("uTex", 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_id_);
@@ -171,6 +177,7 @@ void main() { fragColor = texture(uTex, vUV); }
     vao_.release();
     glBindTexture(GL_TEXTURE_2D, 0);
     shader_.release();
+    if (new_frame && glGetError() == GL_NO_ERROR) finish_draw();
   }
 
  private:

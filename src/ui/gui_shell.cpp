@@ -16,6 +16,8 @@
 #endif
 #include "ui/runtime_maintenance_context.h"
 #include "ui/gui_startup_options.h"
+#include "ui/private_gui_profile.h"
+#include "ui/file_preview_session.h"
 #include "ui/gui_latency_probe.h"
 #include "ui/gui_diagnostic_writer.h"
 #include "ui/gui_quit_barrier.h"
@@ -953,7 +955,7 @@ public:
   WorkspacePipeServer& workspace_pipe() { return workspace_pipe_; }
 #endif
 
-  bool start(const QString& program, const QStringList& args, const QString& role, const std::string& credential_frame, QString* error_detail) {
+  bool start(const QString& program, const QStringList& args, const QString& role, const QString& preview_dir, const std::string& credential_frame, QString* error_detail) {
     if (is_running()) {
       if (error_detail != nullptr) {
         *error_detail = "Runtime process is already running.";
@@ -967,6 +969,8 @@ public:
     std::string pipe_error;
     const bool pipe_started = agent_pipe_.start(pipe_name.toStdString(), true, 0, &pipe_error);
     auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("REDCLAW_GUI_PREVIEW_DIR");
+    if (!preview_dir.isEmpty()) environment.insert("REDCLAW_GUI_PREVIEW_DIR", preview_dir);
     environment.remove("REDCLAW_AGENT_PIPE_NAME");
     environment.remove("REDCLAW_AGENT_PIPE_OWNER_PID");
     environment.remove("REDCLAW_WORKSPACE_PIPE_NAME");
@@ -1230,17 +1234,17 @@ bool launch_gui_shell(
     int argc,
     char** argv,
     redclaw::diag::ProcessFileLogger* process_logger,
-    std::string* error_detail) {
+    std::string* error_detail, const GuiAutoStartOptions* private_startup) {
   MeasuredGuiApplication app(argc, argv);
   GuiLatencyScope initialization_timing(GuiStage::kGuiInitialize);
-  GuiAutoStartOptions gui_auto_start;
+  GuiAutoStartOptions gui_auto_start = private_startup ? *private_startup : GuiAutoStartOptions{};
   QString gui_auto_start_error;
   QStringList maintenance_gui_arguments = QCoreApplication::arguments();
   QStringList maintenance_runtime_arguments;
   QString maintenance_previous_context;
   bool restored_agent_projects = false;
   const auto resume_index = maintenance_gui_arguments.indexOf("--gui-maintenance-resume");
-  if (resume_index >= 0) {
+  if (!private_startup && resume_index >= 0) {
     const auto snapshot = resume_index + 1 < maintenance_gui_arguments.size()
         ? RuntimeMaintenanceContext::read(maintenance_gui_arguments[resume_index + 1], &gui_auto_start_error) : std::nullopt;
     if (!snapshot) {
@@ -1257,10 +1261,11 @@ bool launch_gui_shell(
     gui_parse_arguments.append(maintenance_runtime_arguments);
     gui_parse_arguments << "--gui-auto-start" << "--gui-role" << "host";
   }
-  if (!parse_gui_auto_start_options(
+  if (!private_startup && !parse_gui_auto_start_options(
           gui_parse_arguments, &gui_auto_start, &gui_auto_start_error,
           restored_agent_projects ? GuiStartupOrigin::kValidatedMaintenance
-                            : GuiStartupOrigin::kCommandLine)) {
+                            : GuiStartupOrigin::kCommandLine,
+          maintenance_runtime_arguments.isEmpty() ? -1 : maintenance_gui_arguments.size())) {
     if (error_detail != nullptr) {
       *error_detail = gui_auto_start_error.toStdString();
     }
@@ -1705,7 +1710,13 @@ bool launch_gui_shell(
 
   ConnectionFlowModel connection_flow_model;
   QPointer<UnifiedSessionWorkspace> session_workspace;
-  QMainWindow window;
+  auto main_window = create_gui_window(private_startup != nullptr);
+  if (!main_window) {
+    if (error_detail) *error_detail = "private nonactivating Windows presenter unavailable";
+    g_diagnostic_writer = nullptr;
+    return false;
+  }
+  QMainWindow& window = *main_window;
   window.setWindowTitle("RedClaw Desktop");
   window.resize(kDefaultWindowWidth, kDefaultWindowHeight);
   window.setMinimumSize(kMinimumWindowWidth, kMinimumWindowHeight);
@@ -1799,12 +1810,8 @@ bool launch_gui_shell(
   session_layout->setContentsMargins(6, 6, 6, 6);
   session_layout->setSpacing(0);
 
+  auto* ui_settings = open_gui_settings(gui_auto_start, effective_log_dir, &window);
   auto* connection_entry_page = new ConnectionEntryPage(session_page);
-  // The existing Debug-only fixture must not overwrite live connection,
-  // permission or layout preferences while isolated GUIs share this user.
-  auto* ui_settings = gui_auto_start.agent_qa_fixture_provider
-      ? new QSettings(QDir(effective_log_dir).filePath("qa-ui-settings.ini"), QSettings::IniFormat, &window)
-      : new QSettings("RedClaw", "RedClawDesktop", &window);
   connection_entry_page->password_panel()->set_settings(ui_settings);
   QString connection_credential_error;
   QString connection_auth_failure;
@@ -1824,7 +1831,7 @@ bool launch_gui_shell(
           ? saved_ice_udp_port
           : 55000);
   debug_status.ice_udp_port = static_cast<std::uint16_t>(initial_ice_udp_port);
-  auto* agent_settings_dialog = new AgentSettingsDialog(ui_settings, &window);
+  auto* agent_settings_dialog = new AgentSettingsDialog(ui_settings, &window, !private_startup);
   connection_entry_page->allow_remote_control_checkbox()->setChecked(
       ui_settings->value("host/allow_remote_control", false).toBool());
   connection_entry_page->allow_remote_agent_checkbox()->setChecked(
@@ -1907,12 +1914,12 @@ bool launch_gui_shell(
   helper_role_combo->setCurrentText("client");
 
   auto* signal_timeout = new QSpinBox(session_form_box);
-  signal_timeout->setRange(0, 3600);
+  signal_timeout->setRange(0, std::max(3600, gui_auto_start.signal_timeout_seconds));
   signal_timeout->setValue(0);
   signal_timeout->setSpecialValueText("No limit");
 
   auto* run_seconds = new QSpinBox(session_form_box);
-  run_seconds->setRange(0, 24 * 3600);
+  run_seconds->setRange(0, std::max(24 * 3600, gui_auto_start.run_seconds));
   run_seconds->setValue(0);
   run_seconds->setToolTip("0 means long-running mode");
 
@@ -1953,11 +1960,13 @@ bool launch_gui_shell(
   auto* enable_ice_tcp = new QCheckBox("Enable ICE TCP candidates", session_form_box);
   enable_ice_tcp->setChecked(false);
 
-  auto* stream_smoke = new QCheckBox("Enable desktop stream workflow", session_form_box);
-  stream_smoke->setChecked(true);
-
-  auto* stream_require_capture = new QCheckBox("Require real host capture", session_form_box);
-  stream_require_capture->setChecked(true);
+  using runtime::DesktopVideoMode;
+  auto* video_mode = new QComboBox(session_form_box);
+  video_mode->addItem("Use profile (real desktop by default)");
+  video_mode->addItem("Real desktop", static_cast<int>(DesktopVideoMode::kDesktop));
+  video_mode->addItem("Diagnostic: no desktop video", static_cast<int>(DesktopVideoMode::kDisabled));
+  video_mode->addItem("Diagnostic: check transmitted/rendered frames", static_cast<int>(DesktopVideoMode::kSmoke));
+  video_mode->addItem("Diagnostic: also require real Host capture", static_cast<int>(DesktopVideoMode::kRequireCapture));
 
   auto* allow_remote_diagnostics = new QCheckBox(
       "Allow the connected peer to request redacted logs", session_form_box);
@@ -2002,8 +2011,7 @@ bool launch_gui_shell(
   session_form->addRow("Profile behavior", runtime_form_override);
   session_form->addRow("Additional ICE/TURN", additional_ice_servers);
   session_form->addRow("ICE TCP", enable_ice_tcp);
-  session_form->addRow("Desktop stream", stream_smoke);
-  session_form->addRow("Capture gate", stream_require_capture);
+  session_form->addRow("Desktop video", video_mode);
   session_form->addRow("Remote diagnostics", allow_remote_diagnostics);
   session_form->addRow("Preview width", stream_preview_width);
   session_form->addRow("Video max width", stream_video_max_width);
@@ -2118,7 +2126,8 @@ bool launch_gui_shell(
       });
 
   auto* link_network_exit = new PageScrollComboBox(connection_entry_page);
-  populate_network_exit_combo(link_network_exit, gui_auto_start.network_bind_address);
+  if (private_startup) link_network_exit->addItem("Loopback", gui_auto_start.network_bind_address);
+  else populate_network_exit_combo(link_network_exit, gui_auto_start.network_bind_address);
   link_network_exit->setToolTip(
       "Auto follows the Windows route table. Manual selection binds DHT, ICE/STUN/TURN, and UPnP to one local IPv4 address.");
 
@@ -2129,7 +2138,7 @@ bool launch_gui_shell(
       "Fixed local UDP port used by ICE. Configure the same UDP port in a manual router mapping.");
 
   auto* link_enable_port_mapping = new QCheckBox("Try UPnP port mapping", connection_entry_page);
-  link_enable_port_mapping->setChecked(true);
+  link_enable_port_mapping->setChecked(!private_startup);
   link_enable_port_mapping->setToolTip(
       "Asks the local router to map the configured ICE UDP port. DHT ports are not mapped.");
 
@@ -2213,7 +2222,11 @@ bool launch_gui_shell(
   tabs->addWidget(waiting_page);
   shell_layout->addWidget(tabs, 1);
 
-  session_workspace = new UnifiedSessionWorkspace(&window, shell, ui_settings);
+  session_workspace = new UnifiedSessionWorkspace(&window, shell, ui_settings, !private_startup);
+  if (private_startup) {
+    shell->setEnabled(false);
+    session_workspace->set_confirm_disconnect([] { return false; });
+  }
   auto refresh_connection_flow_page = [&]() {
     const ConnectionFlowSnapshot& snapshot = connection_flow_model.snapshot();
     connecting_page->set_snapshot(snapshot);
@@ -2246,7 +2259,8 @@ bool launch_gui_shell(
 
   auto* playback_window = session_workspace->desktop_page();
   auto* playback_window_layout = static_cast<QVBoxLayout*>(playback_window->layout());
-  const auto renderer_result = create_best_playback_renderer(playback_window);
+  const auto renderer_result = create_best_playback_renderer(playback_window,
+      private_startup ? PlaybackPresenter::kPrivateTest : PlaybackPresenter::kOrdinary);
   auto* playback_canvas_widget = renderer_result.widget;
   auto* playback_window_canvas = renderer_result.canvas;
   playback_canvas_widget->setObjectName("playbackWindowCanvas");
@@ -2276,11 +2290,12 @@ bool launch_gui_shell(
   auto* remote_control_status = task_workspace->control_status();
   remote_control_status->setText("View only — waiting for Host authorization.");
   auto* retry_capture_button = task_workspace->retry_button();
-  auto* playback_control_hint = new PlaybackControlHintOverlay(playback_canvas_widget);
+  auto* playback_control_hint = new PlaybackControlHintOverlay(playback_canvas_widget, !private_startup);
   auto* agent_panel = new AgentConversationPanel(ui_settings);
   task_workspace->add_task(DesktopTask::kAgent, "Agent", agent_panel, QSize(420, 600));
 #ifdef _WIN32
-  auto* terminal_panel = new TerminalPanel(controller.workspace_pipe());
+  auto* terminal_panel = new TerminalPanel(controller.workspace_pipe(), nullptr, {},
+      private_startup ? QDir(gui_auto_start.private_profile_dir).filePath("terminal") : QString());
   task_workspace->add_task(DesktopTask::kTerminal, QString::fromUtf8("终端"), terminal_panel, QSize(760, 320));
   controller.set_workspace_shutdown([weak = QPointer<TerminalPanel>(terminal_panel)](std::function<void()> finished) {
     if (weak) weak->end_desktop(std::move(finished)); else finished();
@@ -2336,6 +2351,7 @@ bool launch_gui_shell(
   auto& latest_presented_frame_id = playback_progress.presented;
   std::uint64_t receiver_decoded_frames = 0;
   std::uint64_t receiver_rendered_frames = 0;
+  bool first_presentation_reported = false;
   auto& last_reported_displayable_frame_id = playback_progress.reported;
   bool remote_input_supported = false;
   bool remote_input_authorized = false;
@@ -2353,10 +2369,12 @@ bool launch_gui_shell(
   } playback_callback_scope{playback_canvas_widget, playback_window_canvas};
 #endif
   auto send_displayable_stats = [&](bool force) {
-    if (source_activity_revision == 0 || latest_displayable_frame_id == 0) {
+    const bool presentation_due = receiver_rendered_frames && latest_presented_frame_id && !first_presentation_reported;
+    if ((!source_activity_revision && !presentation_due) || latest_displayable_frame_id == 0) {
       return false;
     }
-    if (!force && latest_displayable_frame_id == last_reported_displayable_frame_id) {
+    if (!force && latest_displayable_frame_id == last_reported_displayable_frame_id
+        && !presentation_due) {
       return true;
     }
     redclaw::protocol::StreamControlMessageV1 stats;
@@ -2364,10 +2382,7 @@ bool launch_gui_shell(
     stats.session_epoch = "local";
     stats.message_id = ++gui_control_message_id;
     stats.sent_at_ms = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
-    stats.observed_source_activity_revision = source_activity_revision;
-    stats.latest_displayable_frame_id = latest_displayable_frame_id;
-    stats.latest_displayable_keyframe_id = latest_displayable_keyframe_id;
-    stats.latest_presented_frame_id = latest_presented_frame_id;
+    playback_progress.stamp_feedback(stats, source_activity_revision, receiver_decoded_frames, receiver_rendered_frames);
 #if defined(_WIN32)
     const auto playback = direct_frame_pipe_server.playback_state();
     if (!playback.valid || playback.paused || playback.resynchronizing) return false;
@@ -2376,15 +2391,12 @@ bool launch_gui_shell(
     stats.playback_revision = playback.revision;
     stats.playback_paused = playback.paused;
 #endif
-    stats.received_frames = receiver_decoded_frames;
-    stats.reassembled_frames = receiver_decoded_frames;
-    stats.decoded_frames = receiver_decoded_frames;
-    stats.rendered_frames = (std::min)(receiver_rendered_frames, receiver_decoded_frames);
     QString send_error;
     if (!controller.send_control_message(stats, &send_error)) {
       return false;
     }
-    last_reported_displayable_frame_id = latest_displayable_frame_id;
+    if (source_activity_revision) last_reported_displayable_frame_id = latest_displayable_frame_id;
+    if (stats.rendered_frames && latest_presented_frame_id) first_presentation_reported = true;
     return true;
   };
   auto* remote_input_capture = new ControllerRemoteInputCapture(
@@ -2684,9 +2696,10 @@ bool launch_gui_shell(
     session_workspace->connection_overlay()->set_handshake_ready(ready);
   };
 
-  HostUpdateRestartGuard update_restart_guard(window, append_log);
+  std::optional<HostUpdateRestartGuard> update_restart_guard;
+  if (!private_startup) update_restart_guard.emplace(window, append_log);
   auto set_live_link_state = [&](bool connected) {
-    if (!connected) update_restart_guard.stop();
+    if (!connected && update_restart_guard) update_restart_guard->stop();
     session_workspace->connection_overlay()->set_link_live(connected);
   };
 
@@ -2819,11 +2832,11 @@ bool launch_gui_shell(
         return send_agent_command(std::move(message), send_error);
       });
   agent_panel_presentation->set_desktop_host(role_combo->currentText() == "host");
-  task_workspace->set_enabled(role_combo->currentText() != "host");
+  task_workspace->set_enabled(!private_startup && role_combo->currentText() != "host");
   QObject::connect(role_combo, &QComboBox::currentTextChanged, &window,
-      [agent_panel_presentation, task_workspace](const QString& role) {
+      [agent_panel_presentation, task_workspace, private_startup](const QString& role) {
         agent_panel_presentation->set_desktop_host(role == "host");
-        task_workspace->set_enabled(role != "host");
+        task_workspace->set_enabled(!private_startup && role != "host");
       });
 
   auto send_remote_log_snapshot = [&](
@@ -3085,7 +3098,7 @@ bool launch_gui_shell(
 
   QObject::connect(service_name, &QLineEdit::textChanged, [&]() { refresh_service_readiness(); });
   QObject::connect(service_binary, &QLineEdit::textChanged, [&]() { refresh_service_readiness(); });
-  refresh_service_readiness();
+  if (!private_startup) refresh_service_readiness();
 
   QObject::connect(service_install_button, &QPushButton::clicked, [&]() {
     redclaw::service::ServiceInstallConfig config;
@@ -3204,6 +3217,23 @@ bool launch_gui_shell(
     return false;
   };
 
+  const auto selected_video = [&]() -> std::optional<DesktopVideoMode> {
+    if (!video_mode->currentData().isValid()) return gui_auto_start.video_override;
+    return static_cast<DesktopVideoMode>(video_mode->currentData().toInt());
+  };
+  const auto use_machine_code_form = [&] {
+    auto mode = runtime_form_override->isChecked() ? selected_video() : gui_auto_start.video_override;
+    const auto path = runtime_config_path->text().trimmed();
+    QString error;
+    if (!path.isEmpty() && !merge_gui_video_profile(path, mode, &error)) {
+      set_link_status("Invalid desktop video profile: " + error, "bad");
+      return false;
+    }
+    if (mode) video_mode->setCurrentIndex(video_mode->findData(static_cast<int>(*mode)));
+    runtime_config_path->clear();
+    runtime_form_override->setChecked(true);
+    return true;
+  };
   QObject::connect(generate_local_code_button, &QPushButton::clicked, [&]() {
     if (!ensure_runtime_idle_for_link_action("waiting with this code")) {
       return;
@@ -3246,11 +3276,8 @@ bool launch_gui_shell(
     target_port->setValue(45909);
     session_code->setText(local.session_code);
     signal_dir->setText("runtime-signaling-ui-dht-host");
-    runtime_config_path->clear();
-    runtime_form_override->setChecked(true);
+    if (!use_machine_code_form()) return;
     signal_timeout->setValue(0);
-    stream_smoke->setChecked(true);
-    stream_require_capture->setChecked(true);
     sync_link_network_settings_to_session_form();
     set_link_status("Starting host waiting mode with the code shown above.", "warn");
     append_log(QString("Machine link workflow: host waiting through DHT with code %1").arg(local.session_code));
@@ -3282,11 +3309,8 @@ bool launch_gui_shell(
     host_wait_remote_agent_authorized = false;
     transport_combo->setCurrentText("dht");
     signal_dir->setText("runtime-signaling-ui-dht-controller");
-    runtime_config_path->clear();
-    runtime_form_override->setChecked(true);
+    if (!use_machine_code_form()) return;
     signal_timeout->setValue(0);
-    stream_smoke->setChecked(true);
-    stream_require_capture->setChecked(false);
     sync_link_network_settings_to_session_form();
     set_link_status("Starting the connection. Make sure the other device is waiting with the code you entered.", "warn");
     append_log(QString("Machine link workflow: connecting through DHT with peer code %1").arg(session_code->text().trimmed()));
@@ -3406,11 +3430,11 @@ bool launch_gui_shell(
   sealed_refresh_timer->start();
 
   QDateTime last_preview_modified;
+  FilePreviewSession file_preview;
   qint64 last_preview_size = -1;
   QImage last_playback_image;
   QDateTime last_playback_presented_at;
   QSize last_inline_target_size;
-  QSize last_popup_target_size;
   bool playback_window_presented = false;
 #if defined(_WIN32)
 
@@ -3495,6 +3519,7 @@ bool launch_gui_shell(
     latest_presented_frame_id = 0;
     receiver_decoded_frames = 0;
     receiver_rendered_frames = 0;
+    first_presentation_reported = false;
     last_reported_displayable_frame_id = 0;
   };
   auto send_local_keyframe_request = [&](const QString& reason,
@@ -3585,6 +3610,7 @@ bool launch_gui_shell(
 
   auto reset_playback_surface = [&](const QString& placeholder_text, const QString& status_text,
                                     bool hide_window, bool preserve_frozen_frame = false) {
+    playback_window_canvas->cancel_pending_draw();
     const bool keep_agent_workspace_visible = playback_window->isVisible()
         && role_combo->currentText() == "controller";
     remote_input_capture->pause(true, "Playback surface reset.", "playback_reset");
@@ -3604,7 +3630,6 @@ bool launch_gui_shell(
       last_playback_image = QImage();
       last_playback_presented_at = QDateTime();
       last_inline_target_size = QSize();
-      last_popup_target_size = QSize();
       set_playback_placeholder(placeholder_text);
       playback_window_canvas->clear_frame();
     } else {
@@ -3631,15 +3656,7 @@ bool launch_gui_shell(
     return inline_target_size;
   };
 
-  auto playback_popup_target_size = [&]() {
-    QSize popup_target_size = playback_canvas_widget->contentsRect().size();
-    if (popup_target_size.width() < 64 || popup_target_size.height() < 64) {
-      popup_target_size = QSize(1280, 720);
-    }
-    return popup_target_size;
-  };
-
-  auto update_playback_pixmaps = [&](const QImage& image) {
+  auto update_inline_pixmap = [&](const QImage& image) {
     last_playback_image = image;
     const QSize inline_target_size = playback_inline_target_size();
     last_inline_target_size = inline_target_size;
@@ -3648,39 +3665,14 @@ bool launch_gui_shell(
         Qt::KeepAspectRatio,
         Qt::SmoothTransformation));
 
-    const QSize popup_target_size = playback_popup_target_size();
-    last_popup_target_size = popup_target_size;
-    QString render_error;
-    if (playback_window_canvas->present_image(image, &render_error) == PresentOutcome::kFailed) {
-      playback_window_status->setText(QString("DirectX playback failed: %1").arg(render_error));
-      return false;
-    }
-    return true;
-  };
-
-  auto rescale_cached_playback_image_if_needed = [&]() {
-    if (last_playback_image.isNull()) {
-      return;
-    }
-    if (playback_inline_target_size() == last_inline_target_size
-        && playback_popup_target_size() == last_popup_target_size) {
-      return;
-    }
-    update_playback_pixmaps(last_playback_image);
   };
 
   set_playback_placeholder("Your remote desktop will appear here");
   set_playback_status_text("The live desktop will appear here as soon as pairing completes.");
 
-  auto preview_output_path = [&]() {
-    const QString dir = signal_dir->text().trimmed().isEmpty()
-        ? QString("runtime-signaling")
-        : signal_dir->text().trimmed();
-    return QDir(dir).filePath("controller-preview.ppm");
-  };
-
   auto refresh_playback_preview = [&]() {
-    const QString path = preview_output_path();
+    const QString path = file_preview.path();
+    if (path.isEmpty()) return;
     const QFileInfo info(path);
     if (!info.exists() || !info.isFile()) {
       set_playback_status_text("Waiting for the first desktop frame.");
@@ -3688,29 +3680,34 @@ bool launch_gui_shell(
     }
 
     if (info.lastModified() == last_preview_modified && info.size() == last_preview_size) {
-      rescale_cached_playback_image_if_needed();
+      if (!last_playback_image.isNull() && playback_inline_target_size() != last_inline_target_size)
+        update_inline_pixmap(last_playback_image);
       return;
     }
 
-    QImage image(path);
+    const auto image = file_preview.read();
     if (image.isNull()) {
       set_playback_status_text("The remote desktop preview is still loading.");
       return;
     }
 
-    last_preview_modified = info.lastModified();
-    last_preview_size = info.size();
-    if (!update_playback_pixmaps(image)) {
+    QString error;
+    const auto result = file_preview.present(*playback_window_canvas, image, &error, [&, size = image.size()] {
+      set_playback_status_text(QString("Remote desktop live (%1x%2).").arg(size.width()).arg(size.height()));
+      remote_input_capture->set_remote_frame_size(size);
+      remote_input_frame_ready = true;
+      last_playback_presented_at = QDateTime::currentDateTime();
+      playback_control_hint->hide_persistent_hint();
+      refresh_remote_control_ui();
+      apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
+    });
+    if (result != PresentOutcome::kPresented && result != PresentOutcome::kDeferred) {
+      if (result == PresentOutcome::kFailed) playback_window_status->setText(QString("Playback failed: %1").arg(error));
       return;
     }
-    set_playback_status_text(QString("Remote desktop live (%1x%2).")
-                                 .arg(QString::number(image.width()), QString::number(image.height())));
-    remote_input_capture->set_remote_frame_size(image.size());
-    remote_input_frame_ready = true;
-    last_playback_presented_at = QDateTime::currentDateTime();
-    playback_control_hint->hide_persistent_hint();
-    refresh_remote_control_ui();
-    apply_connection_flow_event(ConnectionFlowEvent::kFirstFrameReady);
+    update_inline_pixmap(image);
+    last_preview_modified = info.lastModified();
+    last_preview_size = info.size();
     present_playback_window();
   };
 
@@ -3718,6 +3715,7 @@ bool launch_gui_shell(
   // Frame-push render handler — called on the main thread via QueuedConnection
   // whenever the shared-memory worker deposits a new frame.
   // ---------------------------------------------------------------------------
+#if defined(_WIN32)
   auto handle_direct_frame = [&]() {
     GuiLatencyScope frame_timing(GuiStage::kFrameHandler);
     const auto handler_start = std::chrono::steady_clock::now();
@@ -3738,7 +3736,6 @@ bool launch_gui_shell(
     const auto present_call_start = std::chrono::steady_clock::now();
     const auto present_outcome =
         playback_window_canvas->present_frame(direct_frame, &render_error);
-    const bool present_succeeded = present_outcome == PresentOutcome::kPresented;
     const quint64 present_call_us = static_cast<quint64>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - present_call_start)
@@ -3746,41 +3743,42 @@ bool launch_gui_shell(
     direct_frame_present_call_total_us += present_call_us;
     direct_frame_present_call_max_us =
         (std::max)(direct_frame_present_call_max_us, present_call_us);
-    const bool present_busy_drop = present_outcome == PresentOutcome::kBusyDrop;
-    if (present_busy_drop) {
-      ++direct_frame_present_busy_drops;
-    } else if (present_succeeded) {
-      if (playback_progress.mark_presented(direct_frame.frame_id)) {
+    const auto on_draw = [&, generation = direct_frame.playback_generation,
+        frame_id = direct_frame.frame_id, timestamp = direct_frame.timestamp_ms, revision = direct_frame.capture_region_revision,
+        width = direct_frame.width, height = direct_frame.height,
+        remote_frame_size = QSize(direct_frame.content_rect_width ? direct_frame.content_rect_width : direct_frame.width,
+                                  direct_frame.content_rect_height ? direct_frame.content_rect_height : direct_frame.height)] {
+      const auto draw = playback_progress.record_draw(generation, frame_id);
+      if (draw == PlaybackFrameProgress::Draw::kRetired) return;
+      if (draw == PlaybackFrameProgress::Draw::kNewFrame) {
         ++direct_frame_presented_frames;
         app.latency.record(GuiStage::kDisplayedFrame, 0);
       } else app.latency.record(GuiStage::kRedraw, 0);
       receiver_rendered_frames = direct_frame_presented_frames;
+      if (!first_presentation_reported) {
+        receiver_decoded_frames = (std::max)(receiver_decoded_frames, receiver_rendered_frames);
+        (void)send_displayable_stats(false);
+      }
       const bool was_waiting_for_control_frame = control_waiting_for_capture();
-      capture_playback_state.presented(direct_frame.frame_id);
+      capture_playback_state.presented(frame_id);
       retry_capture_button->setVisible(capture_playback_state.retry_available());
       direct_frame_last_present_error.clear();
       const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-      if (direct_frame.timestamp_ms > 0 && now_ms >= static_cast<qint64>(direct_frame.timestamp_ms)) {
-        direct_frame_last_latency_ms = static_cast<quint64>(now_ms - static_cast<qint64>(direct_frame.timestamp_ms));
+      if (timestamp > 0 && now_ms >= static_cast<qint64>(timestamp)) {
+        direct_frame_last_latency_ms = static_cast<quint64>(now_ms - static_cast<qint64>(timestamp));
       } else {
         direct_frame_last_latency_ms = 0;
       }
       last_inline_target_size = QSize();
-      last_popup_target_size = playback_popup_target_size();
-      const QSize remote_frame_size(
-          static_cast<int>(direct_frame.content_rect_width == 0
-              ? direct_frame.width : direct_frame.content_rect_width),
-          static_cast<int>(direct_frame.content_rect_height == 0
-              ? direct_frame.height : direct_frame.content_rect_height));
       // The playback surface clears its input geometry during reconnect.  Keep
       // the capture owner synchronized on every successfully presented frame;
       // a same-resolution reconnect must restore the geometry as well.
       GuiLatencyScope geometry_timing(GuiStage::kGeometry);
       remote_input_capture->set_remote_frame_size(remote_frame_size);
       remote_input_capture->present_capture_region(
-          direct_frame.capture_region_revision);
+          revision);
       desktop_navigation_panel->observe_capture_region_revision(
-          direct_frame.capture_region_revision);
+          revision);
       // Only update the status label and banner when something meaningful
       // changes (resolution, backend).  Updating every frame causes Qt to
       // re-layout playback_window_status, which can deliver a resizeEvent to
@@ -3790,8 +3788,8 @@ bool launch_gui_shell(
               ? QString::fromUtf8("画面已暂停，等待 Host 恢复采集。")
               : QString::fromUtf8("正在切换桌面，等待新画面。")) :
           QString("Remote desktop live (%1x%2, backend: %3).")
-              .arg(QString::number(direct_frame.width),
-                   QString::number(direct_frame.height),
+              .arg(QString::number(width),
+                   QString::number(height),
                    playback_window_canvas->backend_name());
       if (new_status != last_direct_frame_status_
           || playback_window_status->text() != new_status) {
@@ -3818,6 +3816,11 @@ bool launch_gui_shell(
       if (debug_status.connected) {
         playback_control_hint->hide_persistent_hint();
       }
+    };
+    if (present_outcome == PresentOutcome::kBusyDrop) {
+      ++direct_frame_present_busy_drops;
+    } else if (playback_window_canvas->after_draw(present_outcome, on_draw)) {
+      if (present_outcome == PresentOutcome::kDeferred) present_playback_window();
     } else {
       ++direct_frame_present_failures;
       app.latency.present_failure(render_error);
@@ -3875,7 +3878,6 @@ bool launch_gui_shell(
     direct_frame_dispatch_target->post();
   };
 
-#if defined(_WIN32)
   std::function<void()> schedule_navigation_frame_update;
   auto* navigation_frame_dispatch_target = new LatestFrameDispatchTarget(
       [&]() {
@@ -3912,11 +3914,7 @@ bool launch_gui_shell(
   // Timer is only used for the non-stream preview refresh path.
   // Live desktop frames are pushed immediately via set_on_frame_notify.
   playback_timer->setInterval(100);
-  QObject::connect(playback_timer, &QTimer::timeout, [&]() {
-    if (direct_frame_stream_enabled) return;
-    refresh_playback_preview();
-  });
-  playback_timer->start();
+  QObject::connect(playback_timer, &QTimer::timeout, refresh_playback_preview);
 
 #if defined(_WIN32)
   auto* displayable_feedback_timer = new QTimer(session_page);
@@ -4530,7 +4528,7 @@ bool launch_gui_shell(
     if (QToolButton* network_toggle = connection_entry_page->network_settings_toggle()) {
       network_toggle->setChecked(true);
     }
-    link_ice_udp_port->setFocus(Qt::OtherFocusReason);
+    if (!private_startup) link_ice_udp_port->setFocus(Qt::OtherFocusReason);
     link_ice_udp_port->selectAll();
     status_label->setText("ICE UDP port bind failed");
     set_runtime_banner(prompt, "bad");
@@ -4551,7 +4549,7 @@ bool launch_gui_shell(
             trimmed.toStdString(),
             &debug_status);
         if (debug_status_changed) {
-          update_restart_guard.observe_session(debug_status.role == "host", controller.is_running(),
+          if (update_restart_guard) update_restart_guard->observe_session(debug_status.role == "host", controller.is_running(),
                                                 debug_status.connected, debug_status.channel_open);
           agent_panel->set_transport_state(
               debug_status.agent_authorized,
@@ -4797,7 +4795,7 @@ bool launch_gui_shell(
         }
 
 
-        if (trimmed.startsWith("Runtime rebuilding signaling session")) {
+        if (trimmed.startsWith("Runtime rebuilding signaling session") && file_preview.directory().isEmpty()) {
           remote_input_capture->pause(true, "Connection is reconnecting.", "reconnect");
           remote_input_request_pending = false;
           refresh_remote_control_ui();
@@ -4822,17 +4820,29 @@ bool launch_gui_shell(
   auto* runtime_stdio_reader = new RuntimeStdioReader(controller.process(), handle_runtime_control,
       handle_runtime_diagnostic, [&](const QString& error, bool control_failed) {
         if (control_failed) {
+          if (!file_preview.directory().isEmpty()) playback_window_canvas->clear_frame();
+          file_preview.stop();
+          playback_timer->stop();
           remote_input_capture->pause(true, error, "runtime_error");
           remote_input_authorized = false;
           refresh_remote_control_ui();
         } else diagnostic_writer.record_external_loss(error);
         status_label->setText(error);
-      }, session_page);
+      }, session_page, [&](runtime::PreviewLifecycle state) {
+        if (manual_runtime_stop_requested || !file_preview.apply(state)) return;
+        if (!state.active || last_preview_modified.isValid()) {
+          reset_playback_surface("Waiting for the authenticated desktop stream", "Waiting for the next desktop frame.", false);
+        }
+        if (state.active) playback_timer->start();
+        else playback_timer->stop();
+      });
 
   QObject::connect(
       &controller.process(),
       QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
       [&](int exit_code, QProcess::ExitStatus exit_status) {
+        playback_timer->stop();
+        file_preview.stop();
         file_transfer_panel->runtime_stopped();
         const bool debug_reconnect = debug_reconnect_requested;
         debug_reconnect_requested = false;
@@ -4975,13 +4985,20 @@ bool launch_gui_shell(
     }
   };
 
-  QObject::connect(start_button, &QPushButton::clicked, [&]() {
+  const auto start_runtime = [&]() {
     sync_link_network_settings_to_session_form();
 
     QString role = role_combo->currentText();
     if (!connection_credential_error.isEmpty()) { set_link_status(connection_credential_error, "bad"); return; }
     redclaw::security::ConnectionCredential connection_credential;
     QString password_error;
+    if (private_startup) {
+      if (role != "controller" || !load_private_controller_credential(gui_auto_start.private_profile_dir, connection_credential)) {
+        set_link_status("Private Controller credential unavailable.", "bad");
+        return;
+      }
+      connection_entry_page->password_panel()->set_credential_override(std::move(connection_credential));
+    }
     if (!connection_entry_page->password_panel()->prepare(role == "host", &connection_credential, &password_error)) {
       set_link_status(password_error, "bad"); return;
     }
@@ -5008,6 +5025,9 @@ bool launch_gui_shell(
     const QString passphrase = signal_passphrase->text().trimmed();
     const QString profile_path = runtime_config_path->text().trimmed();
     const bool use_form_override = runtime_form_override->isChecked() || profile_path.isEmpty();
+    const auto requested_video = use_form_override ? selected_video() : gui_auto_start.video_override;
+    auto effective_video = DesktopVideoMode::kDesktop;
+    auto worker_role = role;
     const QString network_bind_address = link_network_exit->currentData(Qt::UserRole).toString();
     const QString network_bind_ipv6_address =
         link_network_exit->currentData(Qt::UserRole + 3).toString();
@@ -5037,6 +5057,18 @@ bool launch_gui_shell(
                              "Enable Agent permission for this desktop role or disable Agent access in the profile.");
         return;
       }
+      const auto profile_video = runtime::profile_video_mode(profile.desktop_video, profile.stream_smoke, profile.stream_require_capture);
+      if (!profile_video) {
+        reject_session_start("Invalid video profile", "Conflicting video settings.", "Check the video settings in the selected profile.");
+        return;
+      }
+      effective_video = *profile_video;
+      if (!use_form_override) worker_role = QString::fromStdString(profile.role.value_or(""));
+    }
+    if (gui_auto_start.video_override == DesktopVideoMode::kRequireCapture) effective_video = DesktopVideoMode::kRequireCapture;
+    if (!runtime::apply_video_override(effective_video, requested_video)) {
+      reject_session_start("Conflicting video settings", runtime::kVideoConflict, "The selected profile requires real capture.");
+      return;
     }
 
     if (use_form_override && role == "controller" && transport == "tcp" && host.isEmpty()) {
@@ -5087,7 +5119,7 @@ bool launch_gui_shell(
       return;
     }
 
-    if (use_form_override
+    if (use_form_override && !(private_startup && network_bind_address == "127.0.0.1")
         && !network_bind_address.isEmpty()
         && !is_network_bind_address_available(network_bind_address)) {
       reject_session_start(
@@ -5126,8 +5158,10 @@ bool launch_gui_shell(
     if (use_form_override) {
       args << "--role" << role;
       args << "--signal-transport" << transport;
-      args << "--signal-timeout-seconds" << QString::number(signal_timeout->value());
-      args << "--run-seconds" << QString::number(run_seconds->value());
+      if (!private_startup) {
+        args << "--signal-timeout-seconds" << QString::number(signal_timeout->value());
+        args << "--run-seconds" << QString::number(run_seconds->value());
+      }
       if (!network_bind_address.isEmpty()) {
         args << "--network-bind-address" << network_bind_address;
         if (!network_bind_ipv6_address.isEmpty()) {
@@ -5198,12 +5232,6 @@ bool launch_gui_shell(
         args << "--enable-ice-tcp";
       }
 
-      if (stream_smoke->isChecked()) {
-        args << "--stream-smoke";
-      }
-      if (stream_require_capture->isChecked()) {
-        args << "--stream-require-capture";
-      }
       if (role == "controller" && gui_auto_start.stream_qa_drop_one_media_fragment) {
         args << "--stream-qa-drop-one-media-fragment";
         args << "--stream-qa-incomplete-feedback-class"
@@ -5248,8 +5276,9 @@ bool launch_gui_shell(
       args << "--stream-video-codec" << stream_video_codec->currentData().toString();
     }
 
+    args << private_gui_worker_arguments(gui_auto_start);
     if (!gui_auto_start.log_dir.isEmpty()) {
-      args << "--log-dir" << gui_auto_start.log_dir;
+      args << "--log-dir" << (private_startup ? QDir(gui_auto_start.log_dir).filePath("worker") : gui_auto_start.log_dir);
     }
     if (!gui_auto_start.run_id.isEmpty()) {
       args << "--run-id" << gui_auto_start.run_id;
@@ -5261,7 +5290,7 @@ bool launch_gui_shell(
     direct_frame_stream_enabled = false;
     navigation_frame_stream_enabled = false;
     desktop_navigation_panel->set_transport_available(false);
-    if (use_form_override && role == "controller" && stream_smoke->isChecked()) {
+    if (worker_role == "controller" && effective_video != DesktopVideoMode::kDisabled) {
       const QString pipe_name = make_direct_frame_channel_name();
       QString pipe_error;
       QString decode_device_error;
@@ -5376,10 +5405,21 @@ bool launch_gui_shell(
 
     QString start_error;
     const QString program = QCoreApplication::applicationFilePath();
+    args << desktop_video_worker_arguments(effective_video);
     if (role == "host" && !maintenance_runtime_arguments.isEmpty()) args = std::exchange(maintenance_runtime_arguments, {});
     auto credential_frame = redclaw::security::serialize_local_connection_credential(connection_credential);
     redclaw::security::erase_secret(connection_credential.secret);
-    const bool runtime_started = controller.start(program, args, role, credential_frame, &start_error);
+    QString preview_dir;
+#ifndef _WIN32
+    if (worker_role == "controller" && effective_video != DesktopVideoMode::kDisabled) {
+      if (!file_preview.start(checks_video_frames(effective_video))) {
+        reject_session_start("Preview unavailable", "Cannot create a private preview directory.", "Check temporary storage.");
+        return;
+      }
+      preview_dir = file_preview.directory();
+    }
+#endif
+    const bool runtime_started = controller.start(program, args, role, preview_dir, credential_frame, &start_error);
     redclaw::security::erase_secret(credential_frame);
     if (!runtime_started) {
       set_link_workflow_running(false);
@@ -5462,14 +5502,17 @@ bool launch_gui_shell(
     append_runtime_event(redclaw::render::RuntimeStatusSeverity::kInfo,
                          "process",
                QString("Runtime process started: %1 %2").arg(program, redacted_args).toStdString());
-  });
+  };
+  if (!private_startup) QObject::connect(start_button, &QPushButton::clicked, start_runtime);
 
   HostExitConfirmation host_exit_confirmation(window, [&controller, &debug_status]() {
     return controller.is_running() && debug_status.role == "host" &&
            (debug_status.connected || debug_status.channel_open);
   });
   const auto stop_runtime = [&]() {
-    update_restart_guard.stop();
+    file_preview.stop();
+    playback_timer->stop();
+    if (update_restart_guard) update_restart_guard->stop();
     manual_runtime_stop_requested = controller.is_running();
     connection_flow_model.begin_stopping();
     refresh_connection_flow_page();
@@ -5669,7 +5712,11 @@ bool launch_gui_shell(
             control_error = detail;
           };
 
-          if (parsed.ok) {
+          if (private_startup && parsed.ok && parsed.request.action != DebugControlAction::kStatus
+              && parsed.request.action != DebugControlAction::kStart && parsed.request.action != DebugControlAction::kStop
+              && parsed.request.action != DebugControlAction::kExit) {
+            fail("private_gui_action_unavailable", "Private Controller supports status, start, stop and exit.");
+          } else if (parsed.ok) {
             switch (parsed.request.action) {
             case DebugControlAction::kExit:
               result.insert("exit_pending", true);
@@ -5744,6 +5791,13 @@ bool launch_gui_shell(
               break;
             }
             case DebugControlAction::kStatus: {
+              if (private_startup) {
+                result.insert("playback_generation", QString::number(playback_progress.generation));
+                result.insert("painted_frame_id", QString::number(playback_progress.presented));
+#ifdef _WIN32
+                result.insert("gui_presented", QString::number(direct_frame_presented_frames));
+#endif
+              }
               result.insert("runtime_log", QJsonObject{
                   {"visible", false}, {"mirror_visible", false},
                   {"cached_lines", qint64(0)}, {"cached_bytes", qint64(0)},
@@ -5775,7 +5829,7 @@ bool launch_gui_shell(
                     ? connection_entry_page->allow_remote_agent_checkbox()
                     : connection_entry_page->allow_controller_agent_checkbox())->isChecked();
                 debug_status.role = parsed.request.role.toStdString();
-                start_button->click();
+                if (private_startup) start_runtime(); else start_button->click();
                 if (!controller.is_running()) {
                   fail("start_failed", "runtime process did not start; inspect local log");
                 } else {
@@ -6289,10 +6343,10 @@ bool launch_gui_shell(
     if (!gui_auto_start.signal_passphrase.isEmpty()) {
       signal_passphrase->setText(gui_auto_start.signal_passphrase);
     }
-    run_seconds->setValue(static_cast<int>(gui_auto_start.run_seconds));
-    signal_timeout->setValue(static_cast<int>(gui_auto_start.signal_timeout_seconds));
-    stream_smoke->setChecked(gui_auto_start.stream_smoke);
-    stream_require_capture->setChecked(gui_auto_start.stream_require_capture);
+    run_seconds->setValue(gui_auto_start.run_seconds);
+    signal_timeout->setValue(gui_auto_start.signal_timeout_seconds);
+    video_mode->setCurrentIndex(gui_auto_start.video_override
+        ? video_mode->findData(static_cast<int>(*gui_auto_start.video_override)) : 0);
     stream_preview_width->setValue(static_cast<int>(gui_auto_start.stream_preview_width));
     stream_video_max_width->setValue(static_cast<int>(gui_auto_start.stream_video_max_width));
     stream_video_codec->setCurrentIndex(std::max(0, stream_video_codec->findData(
@@ -6300,7 +6354,7 @@ bool launch_gui_shell(
     enable_ice_tcp->setChecked(gui_auto_start.enable_ice_tcp);
     enable_port_mapping->setChecked(gui_auto_start.enable_port_mapping);
     QString configured_stun_preset = match_stun_server_preset(gui_auto_start.ice_servers);
-    if (gui_auto_start.ice_servers.isEmpty() && !gui_auto_start.ice_server_file.isEmpty()) {
+    if (private_startup || (gui_auto_start.ice_servers.isEmpty() && !gui_auto_start.ice_server_file.isEmpty())) {
       configured_stun_preset = custom_stun_server_preset_id();
     }
     const int configured_stun_index = stun_preset_combo->findData(configured_stun_preset);
@@ -6368,11 +6422,15 @@ bool launch_gui_shell(
         available_geometry.y() + (available_geometry.height() - window_size.height()) / 2);
   }
 
-  window.show();
+  if (!show_gui_window(window, private_startup != nullptr)) {
+    if (error_detail) *error_detail = "private presenter could not show behind the foreground window without activation";
+    g_diagnostic_writer = nullptr;
+    return false;
+  }
   animate_panel_entrance(session_hero, 40);
   animate_panel_entrance(link_workflow_box, 140);
   apply_gui_auto_start();
-  if (!gui_auto_start.auto_start && gui_auto_start.session_code.isEmpty()) {
+  if (!private_startup && !gui_auto_start.auto_start && gui_auto_start.session_code.isEmpty()) {
     QTimer::singleShot(520, &window, [&]() {
       (void)generate_local_link_code();
     });
@@ -6380,7 +6438,7 @@ bool launch_gui_shell(
 
 #if defined(_DEBUG)
   const QString ui_snapshot_dir = qEnvironmentVariable("REDCLAW_UI_SNAPSHOT_DIR").trimmed();
-  if (!ui_snapshot_dir.isEmpty() && !gui_auto_start.auto_start) {
+  if (!private_startup && !ui_snapshot_dir.isEmpty() && !gui_auto_start.auto_start) {
     QTimer::singleShot(900, &window, [&]() {
       QDir snapshot_dir(ui_snapshot_dir);
       if (!snapshot_dir.mkpath(".")) {
@@ -6501,6 +6559,7 @@ bool launch_gui_shell(
   initialization_timing.finish();
   app.latency.begin_event_loop();
   const int app_result = app.exec();
+  playback_window_canvas->cancel_pending_draw();
 #if defined(_WIN32) && !defined(NDEBUG)
   qa_input_probe.reset();
 #endif
@@ -6521,7 +6580,7 @@ bool launch_gui_shell(
 
 namespace redclaw::ui {
 
-bool launch_gui_shell(int, char**, redclaw::diag::ProcessFileLogger*, std::string* error_detail) {
+bool launch_gui_shell(int, char**, redclaw::diag::ProcessFileLogger*, std::string* error_detail, const GuiAutoStartOptions*) {
   if (error_detail != nullptr) {
     *error_detail = "Qt GUI support is unavailable in this build.";
   }

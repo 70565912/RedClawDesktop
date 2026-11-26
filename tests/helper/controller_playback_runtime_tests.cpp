@@ -1,6 +1,27 @@
 #include "runtime/controller_playback_runtime.h"
 #include <gtest/gtest.h>
 
+TEST(ControllerPlaybackRuntimeTest, TimedSmokeNeedsCurrentLocalPresentationNotDecodeOrDisplayability) {
+    using Runtime = redclaw::runtime::ControllerPlaybackRuntime;
+    const redclaw::helper::PlaybackStateSnapshot current{.session = 12, .revision = 3};
+    redclaw::protocol::StreamControlMessageV1 report;
+    report.type = redclaw::protocol::StreamControlMessageTypeV1::kReceiverNetworkStats;
+    Runtime::stamp_playback_identity(report, current);
+    report.decoded_frames = 1;
+    report.observed_source_activity_revision = 1;
+    report.latest_displayable_frame_id = 8;
+    EXPECT_FALSE(Runtime::confirms_presentation(report, current));
+    report.latest_presented_frame_id = 8;
+    EXPECT_FALSE(Runtime::confirms_presentation(report, current));
+    report.rendered_frames = 1;
+    EXPECT_TRUE(Runtime::confirms_presentation(report, current));
+    report.observed_source_activity_revision = 0;
+    report.latest_presented_frame_id = report.latest_displayable_frame_id = 0;
+    EXPECT_TRUE(Runtime::confirms_presentation(report, current));
+    ++report.playback_session;
+    EXPECT_FALSE(Runtime::confirms_presentation(report, current));
+}
+
 TEST(ControllerPlaybackRuntimeTest, KeyframeRequestMustMatchActivePlaybackAtSend) {
     using Runtime = redclaw::runtime::ControllerPlaybackRuntime;
     using Type = redclaw::protocol::StreamControlMessageTypeV1;

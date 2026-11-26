@@ -33,6 +33,7 @@ struct RuntimeProfileData {
   std::optional<std::string> helper_role;
   std::vector<std::string> ice_servers;
   std::optional<bool> enable_ice_tcp;
+  std::optional<bool> desktop_video;
   std::optional<bool> stream_smoke;
   std::optional<bool> stream_require_capture;
   std::optional<std::uint32_t> stream_preview_width;

@@ -16,6 +16,7 @@ struct UnifiedSessionWorkspace::Impl {
     QStackedWidget* pages;
     QWidget *home, *desktop;
     QPointer<ConnectionOverlay> overlay;
+    bool show_overlay;
     ConnectionFlowSnapshot flow;
     SessionDisconnectState disconnect = SessionDisconnectState::kIdle;
     bool active = false, confirming = false;
@@ -52,8 +53,9 @@ struct UnifiedSessionWorkspace::Impl {
         pages->setCurrentWidget(home);
     }
 };
-UnifiedSessionWorkspace::UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QSettings* settings)
+UnifiedSessionWorkspace::UnifiedSessionWorkspace(QMainWindow* window, QWidget* home, QSettings* settings, bool show_overlay)
     : QObject(window), impl_(std::make_unique<Impl>(window, home, settings)) {
+    impl_->show_overlay = show_overlay;
     window->installEventFilter(this);
     impl_->overlay->set_disconnect_callback([this] { request_disconnect(); });
     connect(impl_->stop_deadline, &QTimer::timeout, this, [this] {
@@ -68,7 +70,7 @@ SessionDisconnectState UnifiedSessionWorkspace::disconnect_state() const { retur
 void UnifiedSessionWorkspace::present_desktop() {
     if (!impl_->active) return;
     impl_->pages->setCurrentWidget(impl_->desktop);
-    impl_->overlay->set_active(true);
+    impl_->overlay->set_active(impl_->show_overlay);
 }
 void UnifiedSessionWorkspace::update_connection(const ConnectionFlowSnapshot& snapshot) {
     impl_->flow = snapshot;

@@ -1,5 +1,6 @@
 #include "runtime_options_detail.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace redclaw::runtime {
@@ -10,6 +11,38 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
         args.emplace_back(argv[i]);
     }
 
+    // Check the entire private invocation before the profile/ICE file prepasses.
+    // A misplaced switch must never turn this into an ordinary GUI or CLI launch.
+    if (args.size() > 1 && std::find(args.begin() + 1, args.end(), "--gui-test-profile") != args.end()) {
+#if !defined(_WIN32) || !defined(_DEBUG)
+        *error = "--gui-test-profile requires Windows Debug";
+        return false;
+#else
+        bool has_port = false;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            const auto& key = args[i];
+            if (desktop_video_flag(key)) continue;
+            if (key != "--gui-test-profile" && key != "--ice-udp-port" &&
+                key != "--run-seconds" && key != "--signal-timeout-seconds") {
+                *error = "unsupported option for private Controller GUI";
+                return false;
+            }
+            if (++i == args.size() || args[i].empty() || args[i].starts_with("-")) {
+                *error = "private Controller GUI option requires a value";
+                return false;
+            }
+            if (key == "--gui-test-profile") {
+                if (!options->gui_test_profile.empty()) { *error = "duplicate GUI test profile"; return false; }
+                options->gui_test_profile = args[i];
+                options->disable_system_clipboard = true;
+            }
+            if (key == "--ice-udp-port") has_port = true;
+        }
+        if (!has_port) { *error = "private Controller GUI requires an explicit ICE port"; return false; }
+#endif
+    }
+
+    std::optional<DesktopVideoMode> video_override;
     std::string runtime_config_path;
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
@@ -45,7 +78,7 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             return true;
         }
 
-        if (arg == "--runtime-config") {
+        if (arg == "--runtime-config" || arg == "--gui-test-profile") {
             ++i;
             continue;
         }
@@ -120,7 +153,7 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
                 return false;
             }
             ++i;
-            if (!parse_uint32(args[i], &options->run_seconds)) {
+            if (!parse_uint32(args[i], &options->run_seconds) || options->run_seconds > kMaxRuntimeSeconds) {
                 *error = "invalid --run-seconds value: " + args[i];
                 return false;
             }
@@ -244,6 +277,10 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             continue;
         }
 
+        if (arg == "--no-system-clipboard") {
+            options->disable_system_clipboard = true;
+            continue;
+        }
         if (arg == "--disable-ipv6-candidates") {
             options->enable_ipv6_candidates = false;
             continue;
@@ -308,14 +345,11 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
             continue;
         }
 
-        if (arg == "--stream-smoke") {
-            options->stream_smoke = true;
-            continue;
-        }
-
-        if (arg == "--stream-require-capture") {
-            options->stream_smoke = true;
-            options->stream_require_capture = true;
+        if (const auto flag = desktop_video_flag(arg)) {
+            if (!add_video_flag(video_override, *flag)) {
+                *error = kVideoConflict;
+                return false;
+            }
             continue;
         }
 
@@ -567,7 +601,7 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
                 return false;
             }
             ++i;
-            if (!parse_uint32(args[i], &options->signal_timeout_seconds)) {
+            if (!parse_uint32(args[i], &options->signal_timeout_seconds) || options->signal_timeout_seconds > kMaxRuntimeSeconds) {
                 *error = "invalid --signal-timeout-seconds value: " + args[i];
                 return false;
             }
@@ -583,6 +617,18 @@ bool parse_runtime_options(int argc, char** argv, RuntimeOptions* options, std::
         return false;
     }
 
+    if (!apply_video_override(options->video_mode, video_override)) {
+        *error = kVideoConflict;
+        return false;
+    }
+    if (!options->gui_test_profile.empty() && options->ice_udp_port == 43000) {
+        *error = "private Controller GUI requires a test-owned ICE port";
+        return false;
+    }
+    if (options->disable_system_clipboard && options->gui_test_profile.empty() && options->role == RuntimeRole::kNone) {
+        *error = "--no-system-clipboard requires a runtime role";
+        return false;
+    }
     return validate_runtime_options(*options, error);
 }
 
