@@ -3,6 +3,8 @@ param(
 
     [string]$SessionCode = '',
 
+    [switch]$NoDesktopVideo,
+
     [switch]$DryRun
 )
 
@@ -16,6 +18,7 @@ if ([string]::IsNullOrWhiteSpace($SessionCode) -and (Test-Path -LiteralPath $pee
 
 $arguments = @{
     Role = 'controller'
+    NoDesktopVideo = [bool]$NoDesktopVideo
 }
 if ($ConnectionCredentialFile) { $arguments.ConnectionCredentialFile = $ConnectionCredentialFile }
 if ($SessionCode) { $arguments.SessionCode = $SessionCode }

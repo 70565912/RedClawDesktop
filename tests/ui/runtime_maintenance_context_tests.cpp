@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -42,7 +43,7 @@ TEST(RuntimeMaintenanceContext, PrivateImmutableSnapshotPreservesArgumentsAndRef
         }
     } cleanup{context.path()};
     const QStringList gui{QCoreApplication::applicationFilePath(), "--gui-role", "host"};
-    const QStringList runtime{"--cli", "--role", "host", "--session-code", "TESTONLY", "--agent-project-root", QString::fromUtf8("C:/测试项目/space folder")};
+    const QStringList runtime{"--cli", "--role", "host", "--session-code", "TESTONLY", "--agent-project-root", QString::fromUtf8("C:/测试项目/space folder"), "--desktop-video"};
     ASSERT_TRUE(context.save(gui, runtime, QCoreApplication::applicationPid(), &error)) << error.toStdString();
     const auto snapshot = redclaw::ui::RuntimeMaintenanceContext::read(context.path(), &error);
     ASSERT_TRUE(snapshot) << error.toStdString();
@@ -58,6 +59,27 @@ TEST(RuntimeMaintenanceContext, PrivateImmutableSnapshotPreservesArgumentsAndRef
     EXPECT_EQ(error, "maintenance_context_not_private_or_invalid");
     QFile file(context.path()); ASSERT_TRUE(file.open(QIODevice::ReadOnly));
     auto record = QJsonDocument::fromJson(file.readAll()).object(); file.close();
+    const auto rewrite = [&] {
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        ASSERT_GT(file.write(QJsonDocument(record).toJson()), 0);
+        file.close();
+    };
+    EXPECT_EQ(record.value("video_arguments_version").toInt(), 2);
+    EXPECT_EQ(record.value("runtime_arguments").toArray().last().toString(), "--stream-smoke");
+    record.insert("video_arguments_version", 99);
+    rewrite();
+    EXPECT_FALSE(redclaw::ui::RuntimeMaintenanceContext::read(context.path(), &error));
+    record.remove("video_arguments_version");
+    const QStringList old_worker{"--cli", "--role", "host"};
+    for (const QString flag : {QString{}, QString("--stream-smoke"), QString("--stream-require-capture")}) {
+        auto args = old_worker;
+        if (!flag.isEmpty()) args << flag;
+        record.insert("runtime_arguments", QJsonArray::fromStringList(args));
+        rewrite();
+        const auto legacy = redclaw::ui::RuntimeMaintenanceContext::read(context.path(), &error);
+        ASSERT_TRUE(legacy) << error.toStdString();
+        EXPECT_EQ(legacy->runtime_arguments.last(), flag.isEmpty() ? "--no-desktop-video" : flag);
+    }
     record.insert("role", "controller");
     ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(QJsonDocument(record).toJson()); file.close();

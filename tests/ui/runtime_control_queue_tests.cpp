@@ -2,6 +2,8 @@
 #include <gtest/gtest.h>
 #include "ui/runtime_stdio_reader.h"
 #include "ui/runtime_control_writer.h"
+#include "ui/file_preview_session.h"
+#include "runtime/local_control_output.h"
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
 #include <QFile>
@@ -44,6 +46,15 @@ TEST(RuntimeControlQueue, FullSizeFrameCanArriveBeforeItsDelimiter) {
 
 int run_runtime_stdio_fixture(const char* mode) {
     using namespace std::chrono_literals;
+    if (std::string_view(mode) == "preview-after-overflow") {
+        redclaw::runtime::LocalControlOutput control(true);
+        std::cerr << std::string(4 * 1024 * 1024 + 1, 'x') << std::flush;
+        std::string command;
+        if (!std::getline(std::cin, command) || command != "lost") return 6;
+        if (!control.send_preview({7, true}) || !control.send_preview({7, false}) ||
+            !control.send_preview({7, true}) || !control.send_preview({8, true})) return 7;
+        return std::getline(std::cin, command) && command == "drained" ? 0 : 8;
+    }
     if (std::string_view(mode) == "input-receipt") {
         QFile output(qEnvironmentVariable("REDCLAW_QA_CONTROL_RECEIPT"));
         if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 2;
@@ -166,4 +177,40 @@ TEST(RuntimeStdioReader, ActualPipeOversizeFailsControlWithoutDeliveringPartialM
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5); std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     EXPECT_TRUE(failed); EXPECT_EQ(messages, 0); EXPECT_TRUE(reader.snapshot()["control_failed"].toBool());
+}
+
+TEST(RuntimeStdioReader, PreviewActivatesAndRetiresAfterActualDiagnosticOverflow) {
+    QProcess process;
+    process.setProcessChannelMode(QProcess::SeparateChannels);
+    redclaw::ui::FilePreviewSession session;
+    ASSERT_TRUE(session.start(true));
+    QFile preview(session.directory() + "/controller-preview.ppm");
+    ASSERT_TRUE(preview.open(QIODevice::WriteOnly));
+    ASSERT_GT(preview.write("P6\n# 7\n1 1\n255\nRGB"), 0);
+    preview.close();
+    int losses = 0;
+    QList<bool> readable;
+    redclaw::ui::RuntimeStdioReader reader(process, [](const auto&, auto) { ADD_FAILURE(); },
+        [](const QString&) { ADD_FAILURE(); }, [&](const QString& reason, bool control) {
+            if (control) { EXPECT_TRUE(reason.contains("disconnected")); return; }
+            ++losses;
+            EXPECT_TRUE(session.read().isNull());
+            EXPECT_GT(process.write("lost\n"), 0);
+        }, nullptr, [&](auto state) {
+            session.apply(state);
+            readable.push_back(!session.read().isNull());
+            if (readable.size() == 4) EXPECT_GT(process.write("drained\n"), 0);
+        });
+    process.start(QCoreApplication::applicationFilePath(), {"--stdio-fixture", "preview-after-overflow"});
+    QElapsedTimer timer; timer.start();
+    while (timer.elapsed() < 10000 && process.state() != QProcess::NotRunning) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(losses, 1);
+    EXPECT_EQ(readable, (QList<bool>{true, false, false, false}));
+    EXPECT_TRUE(reader.snapshot()["diagnostic_lost"].toBool());
+    EXPECT_LE(reader.snapshot()["diagnostic_peak_bytes"].toInteger(), 4 * 1024 * 1024);
+    ASSERT_EQ(process.state(), QProcess::NotRunning);
+    EXPECT_EQ(process.exitCode(), 0);
 }

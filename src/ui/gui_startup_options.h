@@ -9,6 +9,7 @@ namespace redclaw::ui {
 enum class GuiStartupOrigin { kCommandLine, kValidatedMaintenance };
 
 struct GuiAutoStartOptions {
+  QString private_profile_dir;
   bool auto_start = false;
   bool persist_host_wait = false;
   QString role;
@@ -34,14 +35,13 @@ struct GuiAutoStartOptions {
   quint16 target_port = 0;
   quint16 ice_udp_port = 55000;
   bool ice_udp_port_explicit = false;
-  quint32 run_seconds = 0;
-  quint32 signal_timeout_seconds = 120;
+  int run_seconds = 0;
+  int signal_timeout_seconds = 120;
   quint32 stream_preview_width = 160;
   quint32 stream_video_max_width = 0;
   redclaw::protocol::VideoCodecPreference stream_video_codec = redclaw::protocol::VideoCodecPreference::kAuto;
   bool stream_qa_native_size = false;
-  bool stream_smoke = false;
-  bool stream_require_capture = false;
+  std::optional<runtime::DesktopVideoMode> video_override;
   bool stream_qa_drop_one_media_fragment = false;
   QString stream_qa_incomplete_feedback_class = "fresh";
   QString stream_qa_force_required_channel_close;
@@ -59,5 +59,8 @@ struct GuiAutoStartOptions {
 
 bool parse_gui_auto_start_options(
     const QStringList& args, GuiAutoStartOptions* options, QString* error_detail,
-    GuiStartupOrigin origin = GuiStartupOrigin::kCommandLine);
+    GuiStartupOrigin origin = GuiStartupOrigin::kCommandLine, qsizetype saved_worker_begin = -1);
+QStringList desktop_video_worker_arguments(runtime::DesktopVideoMode mode);
+bool normalize_saved_video_arguments(QStringList& arguments, QString* error);
+bool merge_gui_video_profile(const QString& path, std::optional<runtime::DesktopVideoMode>& selection, QString* error);
 } // namespace redclaw::ui

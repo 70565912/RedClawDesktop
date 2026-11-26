@@ -11,6 +11,7 @@
 
 namespace {
 using redclaw::runtime::RuntimeOptions;
+using redclaw::runtime::DesktopVideoMode;
 using redclaw::runtime::RuntimeRole;
 
 bool parse(std::initializer_list<std::string> args, RuntimeOptions* options, std::string* error) {
@@ -27,6 +28,9 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     ASSERT_TRUE(parse({}, &options, &error)) << error;
     EXPECT_EQ(options.role, RuntimeRole::kNone);
     EXPECT_FALSE(options.force_cli);
+    EXPECT_TRUE(options.gui_test_profile.empty());
+    EXPECT_FALSE(options.disable_system_clipboard);
+    EXPECT_EQ(options.video_mode, DesktopVideoMode::kDesktop);
     EXPECT_FALSE(options.allow_remote_input);
     EXPECT_FALSE(options.allow_remote_agent);
     EXPECT_FALSE(options.allow_remote_diagnostics);
@@ -42,6 +46,86 @@ TEST(RuntimeOptions, DefaultsRemainGuiNativeResolutionAndDenyPrivilegedCapabilit
     EXPECT_EQ(options.ice_udp_port, 55000U);
     EXPECT_EQ(options.dht_listen_port, 0U);
 }
+TEST(RuntimeOptions, PrivateGuiIsAnExplicitDebugControllerIndependentOfMedia) {
+    RuntimeOptions options;
+    std::string error;
+    const bool ok = parse({"--gui-test-profile", "test-dir", "--ice-udp-port", "49176"}, &options, &error);
+#if defined(_WIN32) && defined(_DEBUG)
+    ASSERT_TRUE(ok) << error;
+    EXPECT_TRUE(options.disable_system_clipboard);
+    EXPECT_EQ(options.role, RuntimeRole::kNone);
+    EXPECT_EQ(options.video_mode, DesktopVideoMode::kDesktop);
+    EXPECT_FALSE(options.agent_qa_fixture_provider);
+    for (const auto& [flag, mode] : std::initializer_list<std::pair<const char*, DesktopVideoMode>>{
+             {"--no-desktop-video", DesktopVideoMode::kDisabled}, {"--stream-smoke", DesktopVideoMode::kSmoke},
+             {"--stream-require-capture", DesktopVideoMode::kRequireCapture}}) {
+        options = {};
+        ASSERT_TRUE(parse({flag, "--ice-udp-port", "49176", "--gui-test-profile", "test-dir"}, &options, &error)) << error;
+        EXPECT_EQ(options.video_mode, mode);
+    }
+#else
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(error, "--gui-test-profile requires Windows Debug");
+#endif
+}
+
+TEST(RuntimeOptions, PrivateGuiRejectsRedirectsAndOtherLaunchModesBeforeFileParsing) {
+    for (const auto* option : {"--runtime-config", "--gui-maintenance-resume", "--connection-credential-file",
+             "--log-dir", "--debug-control-name", "--coordination-journal-path", "--cli", "--role",
+             "--gui-auto-start", "--agent-qa-fixture-provider", "--enable-port-mapping"}) {
+        RuntimeOptions options;
+        std::string error;
+        EXPECT_FALSE(parse({option, "invalid", "--gui-test-profile", "test-dir", "--ice-udp-port", "49176"}, &options, &error));
+#if defined(_WIN32) && defined(_DEBUG)
+        EXPECT_EQ(error, "unsupported option for private Controller GUI") << option;
+#endif
+    }
+    RuntimeOptions options;
+    std::string error;
+    EXPECT_FALSE(parse({"--gui-test-profile", "test-dir"}, &options, &error));
+    options = {};
+    EXPECT_FALSE(parse({"--gui-test-profile", "test-dir", "--ice-udp-port", "43000"}, &options, &error));
+}
+
+TEST(RuntimeOptions, WorkerClipboardOptOutAppliesToEitherRoleOnlyWhenRequested) {
+    for (const char* role : {"host", "controller"}) {
+        RuntimeOptions options;
+        std::string error;
+        ASSERT_TRUE(parse({"--cli", "--role", role}, &options, &error)) << error;
+        EXPECT_FALSE(options.disable_system_clipboard);
+        ASSERT_TRUE(parse({"--cli", "--role", role, "--no-system-clipboard"}, &options, &error)) << error;
+        EXPECT_TRUE(options.disable_system_clipboard);
+    }
+}
+
+TEST(RuntimeOptions, RejectsTimeLimitOverflowAtTheArgumentInEitherOrder) {
+    for (const char* flag : {"--run-seconds", "--signal-timeout-seconds"}) {
+        RuntimeOptions options;
+        std::string error;
+        EXPECT_FALSE(parse({flag, "2147483648", flag, "0"}, &options, &error));
+        EXPECT_FALSE(parse({flag, "0", flag, "4294967295"}, &options, &error));
+        ASSERT_TRUE(parse({flag, "2147483647"}, &options, &error)) << error;
+#if defined(_WIN32) && defined(_DEBUG)
+        EXPECT_FALSE(parse({flag, "2147483648", "--gui-test-profile", "test", "--ice-udp-port", "49176"}, &options, &error));
+        options = {};
+        EXPECT_FALSE(parse({"--gui-test-profile", "test", "--ice-udp-port", "49176", flag, "2147483648"}, &options, &error));
+#endif
+    }
+}
+
+TEST(RuntimeOptions, RejectsTimeLimitOverflowInProfileBeforeAnyCliOverride) {
+    const auto path = std::filesystem::temp_directory_path() / ("redclaw-time-profile-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".conf");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    for (const char* key : {"run_seconds", "signal_timeout_seconds"}) {
+        { std::ofstream file(path); ASSERT_TRUE(file << key << "=2147483648\n"); }
+        RuntimeOptions options;
+        std::string error;
+        EXPECT_FALSE(parse({"--runtime-config", path.string(), "--run-seconds", "0"}, &options, &error));
+        EXPECT_FALSE(parse({"--run-seconds", "0", "--runtime-config", path.string()}, &options, &error));
+    }
+}
+
 TEST(RuntimeOptions, WorkspaceControlUsesBuildDefaultAndRequiresPipeNameValue) {
     RuntimeOptions options; std::string error;
     ASSERT_TRUE(parse({"--workspace-control-name", "RedClawDesktop.Test.Workspace"}, &options, &error)) << error;
@@ -96,7 +180,7 @@ TEST(RuntimeOptions, FormalHostAndGuiPassThroughKeepTheirSeparateRoles) {
         "--stream-require-capture", "--allow-remote-input", "--enable-debug-control"}, &gui, &error)) << error;
     EXPECT_EQ(gui.role, RuntimeRole::kNone);
     EXPECT_TRUE(gui.allow_remote_input);
-    EXPECT_TRUE(gui.stream_require_capture);
+    EXPECT_EQ(gui.video_mode, DesktopVideoMode::kRequireCapture);
     EXPECT_TRUE(gui.enable_debug_control);
     RuntimeOptions host;
     ASSERT_TRUE(parse({"--role", "host", "--signal-transport", "dht", "--session-code", "UNIT0001"}, &host, &error)) << error;
@@ -202,7 +286,73 @@ TEST(RuntimeOptions, ControllerFramePipeCannotBeEnabledOnHost) {
     std::string error;
     EXPECT_FALSE(parse({"--role", "host", "--stream-smoke", "--stream-frame-pipe", "test"}, &options, &error));
     options = RuntimeOptions{};
-    EXPECT_TRUE(parse({"--role", "controller", "--stream-smoke", "--stream-frame-pipe", "test"}, &options, &error)) << error;
+    EXPECT_TRUE(parse({"--role", "controller", "--stream-frame-pipe", "test", "--stream-navigation-pipe", "nav"}, &options, &error)) << error;
+    for (const auto pipe : {"--stream-frame-pipe", "--stream-navigation-pipe"}) {
+        options = {};
+        EXPECT_FALSE(parse({"--role", "controller", "--no-desktop-video", pipe, "test"}, &options, &error));
+    }
+}
+
+TEST(RuntimeOptions, ExplicitSessionsDefaultToVideoWithoutOptingIntoDiagnostics) {
+    std::string error;
+    for (const auto role : {"host", "controller"}) {
+        RuntimeOptions options;
+        ASSERT_TRUE(parse({"--role", role}, &options, &error)) << error;
+        EXPECT_EQ(options.video_mode, DesktopVideoMode::kDesktop);
+        EXPECT_FALSE(checks_video_frames(options.video_mode));
+        ASSERT_TRUE(parse({"--role", role, "--no-desktop-video"}, &options, &error)) << error;
+        EXPECT_EQ(options.video_mode, DesktopVideoMode::kDisabled);
+    }
+    for (const auto flag : {"--desktop-video", "--stream-smoke", "--stream-require-capture"}) {
+        RuntimeOptions options;
+        EXPECT_FALSE(parse({flag, "--no-desktop-video"}, &options, &error));
+        EXPECT_FALSE(parse({"--no-desktop-video", flag}, &options, &error));
+    }
+    RuntimeOptions options;
+    EXPECT_FALSE(parse({"--role", "controller", "--stream-qa-drop-one-media-fragment"}, &options, &error));
+}
+
+TEST(RuntimeOptions, ProfileAndCliPrecedencePreservesExplicitCaptureGates) {
+    const auto path = std::filesystem::temp_directory_path() / ("redclaw-video-profile-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".conf");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    auto check = [&](const char* profile, const char* flag, std::optional<DesktopVideoMode> expected) {
+        SCOPED_TRACE(profile);
+        SCOPED_TRACE(flag);
+        { std::ofstream file(path); ASSERT_TRUE(file << "role=host\n" << profile); }
+        for (bool profile_first : {true, false}) {
+            RuntimeOptions options;
+            std::string error;
+            const bool ok = !*flag ? parse({"--runtime-config", path.string()}, &options, &error)
+                : profile_first ? parse({"--runtime-config", path.string(), flag}, &options, &error)
+                                : parse({flag, "--runtime-config", path.string()}, &options, &error);
+            ASSERT_EQ(ok, expected.has_value()) << error;
+            if (expected) EXPECT_EQ(options.video_mode, *expected);
+        }
+    };
+    check("", "", DesktopVideoMode::kDesktop);
+    check("desktop_video=false", "", DesktopVideoMode::kDisabled);
+    check("stream_smoke=false", "", DesktopVideoMode::kDisabled);
+    check("stream_smoke=false", "--desktop-video", DesktopVideoMode::kDesktop);
+    check("desktop_video=false", "--stream-smoke", DesktopVideoMode::kSmoke);
+    check("stream_smoke=true", "--no-desktop-video", DesktopVideoMode::kDisabled);
+    check("stream_smoke=false\nstream_require_capture=true", "", DesktopVideoMode::kRequireCapture);
+    check("stream_require_capture=true", "--no-desktop-video", std::nullopt);
+    check("stream_require_capture=true", "--desktop-video", DesktopVideoMode::kRequireCapture);
+    check("desktop_video=false\nstream_require_capture=true", "", std::nullopt);
+    check("desktop_video=invalid", "", std::nullopt);
+}
+
+TEST(RuntimeOptions, TimedSmokeChecksAreOptInAndStrictCaptureCannotUseTransmitAlone) {
+    using enum DesktopVideoMode;
+    EXPECT_TRUE(timed_video_failure(kDesktop, true, false, false, false).empty());
+    EXPECT_TRUE(timed_video_failure(kDisabled, false, false, false, false).empty());
+    EXPECT_FALSE(timed_video_failure(kSmoke, true, false, true, false).empty());
+    EXPECT_TRUE(timed_video_failure(kSmoke, true, true, false, false).empty());
+    EXPECT_FALSE(timed_video_failure(kRequireCapture, true, true, false, true).empty());
+    EXPECT_TRUE(timed_video_failure(kRequireCapture, true, true, true, false).empty());
+    EXPECT_FALSE(timed_video_failure(kSmoke, false, true, true, false).empty());
+    EXPECT_TRUE(timed_video_failure(kSmoke, false, false, false, true).empty());
 }
 
 TEST(RuntimeOptions, ReleaseStillRejectsDebugOnlyAgentFaultInjection) {

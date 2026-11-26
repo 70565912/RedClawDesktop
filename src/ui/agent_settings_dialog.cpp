@@ -332,7 +332,7 @@ struct AgentSettingsDialog::Impl {
     }
 };
 
-AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
+AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent, bool probe_on_startup)
     : QDialog(parent), impl_(std::make_unique<Impl>()) {
     impl_->owner = this;
     impl_->settings = settings;
@@ -531,7 +531,7 @@ AgentSettingsDialog::AgentSettingsDialog(QSettings* settings, QWidget* parent)
     });
     QObject::connect(impl_->close_buttons, &QDialogButtonBox::rejected,
         this, [this]() { reject(); });
-    impl_->refresh_all();
+    if (probe_on_startup) impl_->refresh_all();
 }
 
 AgentSettingsDialog::~AgentSettingsDialog() = default;

@@ -45,12 +45,29 @@ param(
 
     [switch]$InputDiagnostics,
 
+    [switch]$NoDesktopVideo,
+
+    [switch]$StreamSmoke,
+
     [switch]$SkipPrep,
 
     [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($NoDesktopVideo -and ($StreamSmoke -or $InputDiagnostics)) {
+    throw 'NoDesktopVideo conflicts with StreamSmoke or InputDiagnostics.'
+}
+if ($NoDesktopVideo -and $Role -eq 'host' -and $RuntimeExe -and -not $AutoStart) {
+    throw 'NoDesktopVideo with manual Host Wait and RuntimeExe is unsupported: older GUIs discard the profile. Use the signaling-only CLI validator instead.'
+}
+if ($InputDiagnostics -and $Configuration -ne 'Debug') { throw 'Input diagnostics require Debug.' }
+$videoArguments = @(
+    if ($NoDesktopVideo) { '--no-desktop-video' }
+    elseif ($Role -eq 'host') { '--stream-require-capture' }
+    elseif ($StreamSmoke -or $InputDiagnostics -or $RuntimeExe) { '--stream-smoke' }
+)
 
 if ($AllowRemoteAgent -and $AgentProjectRoot.Count -eq 0) {
     throw 'AllowRemoteAgent requires at least one explicit AgentProjectRoot before startup.'
@@ -158,18 +175,65 @@ $reportRootAbsolute = if ([System.IO.Path]::IsPathRooted($ReportRoot)) {
 }
 $runDirectory = Join-Path $reportRootAbsolute ("cross-lan-gui-{0}\{1}" -f $RunId, $Role)
 
+$gitSha = (& git rev-parse HEAD).Trim()
+$signalDir = if ($Role -eq 'host') { 'runtime-signaling-cross-lan-host' } else { 'runtime-signaling-cross-lan-controller' }
+$arguments = @(
+    '--gui-role', $Role,
+    '--session-code', $SessionCode,
+    '--signal-transport', 'dht',
+    '--signal-timeout-seconds', "$SignalTimeoutSeconds",
+    '--run-seconds', '0',
+    '--signal-dir', $signalDir,
+    '--enable-ice-tcp',
+    '--ice-udp-port', "$IceUdpPort",
+    '--enable-port-mapping',
+    '--log-dir', $runDirectory,
+    '--run-id', $RunId,
+    '--enable-debug-control',
+    '--debug-control-name', $ControlName
+)
+$arguments += $videoArguments
+foreach ($server in $IceServer) {
+    $arguments += @('--ice-server', $server)
+}
+if (-not [string]::IsNullOrWhiteSpace($IceServerFile)) {
+    $arguments += @('--ice-server-file', $IceServerFile)
+}
+if ($Role -eq 'host') {
+    $arguments += '--gui-persist-host-wait'
+}
+$arguments += @(
+    '--enable-agent-control',
+    '--agent-control-name', $AgentControlName,
+    '--coordination-journal-path', $CoordinationJournalPath,
+    '--coordination-git-sha', $gitSha
+)
+if ($AllowRemoteAgent) { $arguments += '--allow-remote-agent' }
+foreach ($project in $AgentProjectRoot) { $arguments += @('--agent-project-root', $project) }
+if ($DhtListenPort -gt 0) {
+    $arguments += @('--dht-listen-port', "$DhtListenPort")
+}
+if (-not [string]::IsNullOrWhiteSpace($NetworkBindAddress)) {
+    $arguments += @('--network-bind-address', $NetworkBindAddress)
+}
+if ($ConnectionCredentialFile) {
+    $arguments += @('--connection-credential-file', (Resolve-Path -LiteralPath $ConnectionCredentialFile).Path)
+}
+if ($AutoStart) {
+    $arguments += '--gui-auto-start'
+}
+if ($InputDiagnostics) {
+    $arguments += '--input-diagnostics'
+}
+
 if ($DryRun) {
-    Write-Host ("[debug-supervisor] runtime={0}" -f $runtimePath)
-    Write-Host ("[debug-supervisor] run_directory={0}" -f $runDirectory)
-    Write-Host ("[debug-supervisor] role={0} session={1} ice_server_count={2} ice_server_file_present={3}" -f `
-        $Role, (Get-RedactedSessionCode -Code $SessionCode), (@($IceServer).Count + $iceServerFileEntryCount), `
-        (-not [string]::IsNullOrWhiteSpace($IceServerFile)))
-    Write-Host ("[debug-supervisor] network_bind_address={0}" -f `
-        $(if ([string]::IsNullOrWhiteSpace($NetworkBindAddress)) { 'auto' } else { $NetworkBindAddress }))
-    Write-Host ("[debug-supervisor] ice_udp_port={0} upnp=enabled" -f $IceUdpPort)
-    Write-Host '[debug-supervisor] signal_transport=dht'
-    Write-Host ("[debug-supervisor] agent_control={0}" -f $AgentControlName)
-    exit 0
+    $safe = for ($index = 0; $index -lt $arguments.Count; ++$index) {
+        if ($arguments[$index] -like '--*' -or ($index -gt 0 -and $arguments[$index - 1] -in @('--gui-role', '--run-seconds', '--runtime-config'))) {
+            $arguments[$index]
+        } else { '<redacted>' }
+    }
+    [pscustomobject]@{ Runtime = $runtimePath; Arguments = $safe }
+    return
 }
 
 $existing = Get-Process -Name 'redclaw_desktop' -ErrorAction SilentlyContinue
@@ -194,7 +258,6 @@ if (-not $SkipPrep) {
 
 $runtimePath = (Resolve-Path -LiteralPath $RuntimeExe).Path
 
-$gitSha = (& git rev-parse HEAD).Trim()
 $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeFile = Get-Item -LiteralPath $runtimePath
 $manifestPath = Join-Path $runDirectory 'run-manifest.json'
@@ -221,57 +284,6 @@ $manifest = [pscustomobject]@{
     log_directory = $runDirectory
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-
-$signalDir = if ($Role -eq 'host') { 'runtime-signaling-cross-lan-host' } else { 'runtime-signaling-cross-lan-controller' }
-$arguments = @(
-    '--gui-role', $Role,
-    '--session-code', $SessionCode,
-    '--signal-transport', 'dht',
-    '--signal-timeout-seconds', "$SignalTimeoutSeconds",
-    '--run-seconds', '0',
-    '--signal-dir', $signalDir,
-    '--stream-smoke',
-    '--enable-ice-tcp',
-    '--ice-udp-port', "$IceUdpPort",
-    '--enable-port-mapping',
-    '--log-dir', $runDirectory,
-    '--run-id', $RunId,
-    '--enable-debug-control',
-    '--debug-control-name', $ControlName
-)
-foreach ($server in $IceServer) {
-    $arguments += @('--ice-server', $server)
-}
-if (-not [string]::IsNullOrWhiteSpace($IceServerFile)) {
-    $arguments += @('--ice-server-file', $IceServerFile)
-}
-if ($Role -eq 'host') {
-    $arguments += @('--gui-persist-host-wait', '--stream-require-capture')
-}
-$arguments += @(
-    '--enable-agent-control',
-    '--agent-control-name', $AgentControlName,
-    '--coordination-journal-path', $CoordinationJournalPath,
-    '--coordination-git-sha', $gitSha
-)
-if ($AllowRemoteAgent) { $arguments += '--allow-remote-agent' }
-foreach ($project in $AgentProjectRoot) { $arguments += @('--agent-project-root', $project) }
-if ($DhtListenPort -gt 0) {
-    $arguments += @('--dht-listen-port', "$DhtListenPort")
-}
-if (-not [string]::IsNullOrWhiteSpace($NetworkBindAddress)) {
-    $arguments += @('--network-bind-address', $NetworkBindAddress)
-}
-if ($ConnectionCredentialFile) {
-    $arguments += @('--connection-credential-file', (Resolve-Path -LiteralPath $ConnectionCredentialFile).Path)
-}
-if ($AutoStart) {
-    $arguments += '--gui-auto-start'
-}
-if ($InputDiagnostics) {
-    if ($Configuration -ne 'Debug') { throw 'Input diagnostics require Debug.' }
-    $arguments += '--input-diagnostics'
-}
 
 $argumentLine = ($arguments | ForEach-Object { ConvertTo-CommandLineArgument -Value $_ }) -join ' '
 $process = Start-Process -FilePath $runtimePath -ArgumentList $argumentLine -PassThru -WindowStyle Normal

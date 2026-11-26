@@ -57,22 +57,7 @@ QRect client_rect_on_screen(HWND hwnd) {
   return {origin.x, origin.y, client.right - client.left, client.bottom - client.top};
 }
 
-bool is_playback_window_occluded(HWND hwnd) {
-  const auto root = GetAncestor(hwnd, GA_ROOT);
-  if (!root) return false;
-  if (is_cloaked(root)) return true;
-  auto bounds = client_rect_on_screen(hwnd);
-  if (bounds.isEmpty()) return false;
-  for (auto parent = hwnd; parent != root;) {
-    parent = GetAncestor(parent, GA_PARENT);
-    if (!parent) return false;
-    const auto parent_bounds = client_rect_on_screen(parent);
-    // During native creation the parent may not have a client area yet.
-    if (parent_bounds.isEmpty()) return false;
-    bounds &= parent_bounds;
-  }
-  if (bounds.isEmpty()) return true;
-
+bool fully_covered_by_windows_above(HWND root, const QRect& bounds) {
   // Flip-model Present does not report occlusion. Subtract the rectangles of
   // opaque top-level windows above the playback window in desktop Z order.
   // Bound traversal in case windows are reordered during the scan.
@@ -99,6 +84,25 @@ bool is_playback_window_occluded(HWND hwnd) {
     if (uncovered.isEmpty()) return true;
   }
   return false;
+}
+
+bool is_playback_window_occluded(HWND hwnd, PlaybackPresenter presenter) {
+  const auto root = GetAncestor(hwnd, GA_ROOT);
+  if (!root) return false;
+  if (is_cloaked(root)) return true;
+  auto bounds = client_rect_on_screen(hwnd);
+  if (bounds.isEmpty()) return false;
+  for (auto parent = hwnd; parent != root;) {
+    parent = GetAncestor(parent, GA_PARENT);
+    if (!parent) return false;
+    const auto parent_bounds = client_rect_on_screen(parent);
+    // During native creation the parent may not have a client area yet.
+    if (parent_bounds.isEmpty()) return false;
+    bounds &= parent_bounds;
+  }
+  return playback_bounds_occluded(bounds, presenter, [root](const QRect& clipped) {
+    return fully_covered_by_windows_above(root, clipped);
+  });
 }
 
 std::uint64_t steady_now_ms() {
@@ -134,7 +138,7 @@ D3DCompileProc load_d3d_compile() {
 
 class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
  public:
-  explicit D3D11PlaybackWidget(QWidget* parent = nullptr) : QWidget(parent) {
+  D3D11PlaybackWidget(QWidget* parent, PlaybackPresenter presenter) : QWidget(parent), presenter_(presenter) {
     desktop_theme::apply_canvas_palette(this);
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_PaintOnScreen);
@@ -495,7 +499,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
     const bool hidden = !hwnd || !isVisible() || (window() && window()->isMinimized());
     presentation_gate_.set_hidden(hidden);
     if (check_coverage && !hidden && presentation_gate_.display_on())
-      presentation_gate_.set_window_occluded(is_playback_window_occluded(hwnd));
+      presentation_gate_.set_window_occluded(is_playback_window_occluded(hwnd, presenter_));
     notify_if_presentation_resumed(trigger);
   }
 
@@ -1553,6 +1557,7 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   QSize swap_chain_phys_size_;
   std::array<SharedInputSlot, redclaw::render::D3D11SharedSurfaceBridge::kSlotCount> shared_input_slots_;
   std::uint64_t shared_input_generation_ = 0;
+  const PlaybackPresenter presenter_;
   redclaw::render::PresentationGate presentation_gate_;
   redclaw::render::SlowCallReporter slow_calls_;
   std::function<void(const QString&)> diagnostic_log_;
@@ -1577,9 +1582,9 @@ class D3D11PlaybackWidget final : public QWidget, public PlaybackCanvas {
   return SUCCEEDED(hr);
 }
 }  // namespace
-PlaybackWidgetResult try_create_d3d11_playback_renderer(QWidget* parent) {
+PlaybackWidgetResult try_create_d3d11_playback_renderer(QWidget* parent, PlaybackPresenter presenter) {
     if (!probe_d3d11_available()) return {};
-    auto* widget = new D3D11PlaybackWidget(parent);
+    auto* widget = new D3D11PlaybackWidget(parent, presenter);
     return {widget, widget};
 }
 }  // namespace redclaw::ui

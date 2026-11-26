@@ -1,4 +1,5 @@
 #pragma once
+#include "preview_lifecycle.h"
 #include "redclaw/protocol/stream_control_protocol.h"
 #include <atomic>
 #include <iostream>
@@ -13,7 +14,12 @@ public:
     explicit LocalControlOutput(bool dedicated, std::streambuf* output = std::cout.rdbuf())
         : dedicated_(dedicated), output_(output) {}
     bool send(const redclaw::protocol::StreamControlMessageV1& message, std::uint64_t received_us = 0) {
-        auto frame = redclaw::protocol::serialize_local_runtime_control_frame_v2(message, received_us);
+        return write(redclaw::protocol::serialize_local_runtime_control_frame_v2(message, received_us));
+    }
+    bool send_preview(PreviewLifecycle state) { return dedicated_ && write(state.encode()); }
+    bool failed() const { return failed_.load(); }
+private:
+    bool write(std::string frame) {
         if (frame.empty() || frame.size() > redclaw::protocol::kMaxLocalRuntimeControlFrameBytes) {
             failed_ = true; return false;
         }
@@ -26,8 +32,6 @@ public:
         if (!ok) failed_ = true;
         return ok;
     }
-    bool failed() const { return failed_.load(); }
-private:
     bool dedicated_;
     std::streambuf* output_;
     std::mutex mutex_;

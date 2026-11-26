@@ -323,7 +323,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
         return false;
     }
 
-    if (options.stream_qa_native_size && (!options.stream_require_capture || options.stream_video_max_width != 0)) {
+    if (options.stream_qa_native_size && (options.video_mode != DesktopVideoMode::kRequireCapture || options.stream_video_max_width != 0)) {
         *error = "--stream-qa-native-size requires real capture and no explicit width cap";
         return false;
     }
@@ -339,8 +339,8 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
             *error = "--stream-frame-pipe is only valid in controller role";
             return false;
         }
-        if (!options.stream_smoke) {
-            *error = "--stream-frame-pipe requires --stream-smoke";
+        if (options.video_mode == DesktopVideoMode::kDisabled) {
+            *error = "--stream-frame-pipe requires desktop video";
             return false;
         }
     }
@@ -350,8 +350,8 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
             *error = "--stream-navigation-pipe is only valid in controller role";
             return false;
         }
-        if (!options.stream_smoke) {
-            *error = "--stream-navigation-pipe requires --stream-smoke";
+        if (options.video_mode == DesktopVideoMode::kDisabled) {
+            *error = "--stream-navigation-pipe requires desktop video";
             return false;
         }
     }
@@ -365,7 +365,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
             *error = "--stream-qa-drop-one-media-fragment is only valid in controller role";
             return false;
         }
-        if (!options.stream_smoke) {
+        if (!checks_video_frames(options.video_mode)) {
             *error = "--stream-qa-drop-one-media-fragment requires --stream-smoke";
             return false;
         }
@@ -395,7 +395,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
             *error = "--stream-qa-force-required-channel-close is only valid in controller role";
             return false;
         }
-        if (!options.stream_smoke) {
+        if (!checks_video_frames(options.video_mode)) {
             *error = "--stream-qa-force-required-channel-close requires --stream-smoke";
             return false;
         }
@@ -410,7 +410,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
         *error = "--input-diagnostics is Debug-only";
         return false;
 #else
-        if (!options.stream_smoke || options.log_dir.empty()) {
+        if (!checks_video_frames(options.video_mode) || options.log_dir.empty()) {
             *error = "--input-diagnostics requires stream smoke and an explicit log directory";
             return false;
         }
@@ -421,7 +421,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
         *error = "--agent-qa-fixture-provider is Debug-only";
         return false;
 #else
-        if (!options.stream_smoke) {
+        if (!checks_video_frames(options.video_mode)) {
             *error = "--agent-qa-fixture-provider requires explicit stream smoke";
             return false;
         }
@@ -432,7 +432,7 @@ bool validate_runtime_options(const RuntimeOptions& options, std::string* error)
         *error = "--agent-qa-force-channel-close-after-event is Debug-only";
         return false;
 #else
-        if (!options.stream_smoke || options.signal_transport != "dht") {
+        if (!checks_video_frames(options.video_mode) || options.signal_transport != "dht") {
             *error = "--agent-qa-force-channel-close-after-event requires DHT stream smoke";
             return false;
         }

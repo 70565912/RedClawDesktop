@@ -35,6 +35,13 @@ public:
             && (message.type != protocol::StreamControlMessageTypeV1::kKeyframeRequest || !state.paused);
     }
 
+    static bool confirms_presentation(const protocol::StreamControlMessageV1& report,
+                                      const helper::PlaybackStateSnapshot& state) {
+        return report.type == protocol::StreamControlMessageTypeV1::kReceiverNetworkStats
+            && report.rendered_frames && (report.latest_presented_frame_id || !report.observed_source_activity_revision)
+            && matches_feedback(report, state);
+    }
+
     // Manual capture retry must reach the Host even when playback is paused,
     // unmapped, or stamped with a different session or revision.
     static bool should_consume_stale_playback_command(

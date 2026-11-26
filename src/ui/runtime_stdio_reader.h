@@ -1,4 +1,5 @@
 #pragma once
+#include "runtime/preview_lifecycle.h"
 #include "runtime_control_queue.h"
 #include "gui_latency_probe.h"
 #include <QElapsedTimer>
@@ -13,8 +14,9 @@ public:
     using Control = std::function<void(const redclaw::protocol::StreamControlMessageV1&, std::uint64_t)>;
     using Diagnostic = std::function<void(const QString&)>;
     using Failure = std::function<void(const QString&, bool)>;
-    RuntimeStdioReader(QProcess& process, Control control, Diagnostic diagnostic, Failure failure, QObject* parent)
-        : QObject(parent), process_(process), control_(std::move(control)), diagnostic_(std::move(diagnostic)), failure_(std::move(failure)) {
+    using Preview = std::function<void(runtime::PreviewLifecycle)>;
+    RuntimeStdioReader(QProcess& process, Control control, Diagnostic diagnostic, Failure failure, QObject* parent, Preview preview = {})
+        : QObject(parent), process_(process), control_(std::move(control)), diagnostic_(std::move(diagnostic)), failure_(std::move(failure)), preview_(std::move(preview)) {
         control_timer_.setSingleShot(true); diagnostic_timer_.setSingleShot(true);
         control_timer_.setTimerType(Qt::PreciseTimer); diagnostic_timer_.setTimerType(Qt::PreciseTimer);
         QObject::connect(&control_timer_, &QTimer::timeout, this, [this] { drain_control(); });
@@ -61,9 +63,16 @@ private:
         QElapsedTimer budget; budget.start();
         while (const auto frame = control_queue_.take()) {
             std::uint64_t received_us = 0;
-            const auto parsed = redclaw::protocol::parse_local_runtime_control_frame_v2(frame->toStdString(), &received_us);
-            if (!parsed.ok) { fail_control("Invalid dedicated runtime control frame."); return; }
-            control_(parsed.value, received_us);
+            const std::string_view line(frame->constData(), static_cast<std::size_t>(frame->size()));
+            if (line.starts_with(runtime::PreviewLifecycle::prefix)) {
+                runtime::PreviewLifecycle state;
+                if (!preview_ || !runtime::PreviewLifecycle::parse(line, state)) { fail_control("Invalid preview lifecycle frame."); return; }
+                preview_(state);
+            } else {
+                const auto parsed = redclaw::protocol::parse_local_runtime_control_frame_v2(line, &received_us);
+                if (!parsed.ok) { fail_control("Invalid dedicated runtime control frame."); return; }
+                control_(parsed.value, received_us);
+            }
             if (budget.nsecsElapsed() >= 2000000) break;
         }
         if (control_queue_.ready() || available(QProcess::StandardOutput) > 0) schedule(control_timer_);
@@ -96,6 +105,7 @@ private:
     Control control_;
     Diagnostic diagnostic_;
     Failure failure_;
+    Preview preview_;
     QTimer control_timer_, diagnostic_timer_;
     RuntimeControlQueue control_queue_;
     QByteArray diagnostic_buffer_;

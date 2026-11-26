@@ -1,4 +1,5 @@
 #pragma once
+#include "redclaw/protocol/stream_control_protocol.h"
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -27,10 +28,24 @@ public:
         if (is_keyframe) keyframe = std::max(keyframe, frame_id);
         return true;
     }
+    enum class Draw { kRetired, kRedraw, kNewFrame };
+    Draw record_draw(std::uint64_t frame_generation, std::uint64_t frame_id) {
+        if (frame_generation != generation) return Draw::kRetired;
+        return mark_presented(frame_id) ? Draw::kNewFrame : Draw::kRedraw;
+    }
     bool mark_presented(std::uint64_t frame_id) {
         if (frame_id <= presented) return false;
         presented = frame_id;
         return true;
+    }
+    void stamp_feedback(protocol::StreamControlMessageV1& stats, std::uint64_t source_revision,
+                        std::uint64_t decoded, std::uint64_t draws) const {
+        stats.observed_source_activity_revision = source_revision;
+        stats.latest_displayable_frame_id = source_revision ? displayable : 0;
+        stats.latest_displayable_keyframe_id = source_revision ? keyframe : 0;
+        stats.latest_presented_frame_id = source_revision ? presented : 0;
+        stats.received_frames = stats.reassembled_frames = stats.decoded_frames = decoded;
+        stats.rendered_frames = presented ? (std::min)(draws, decoded) : 0;
     }
     void observe_transport(std::uint64_t snapshot_generation, std::uint64_t frame_id, std::uint64_t keyframe_id) {
         if (snapshot_generation != generation) return;

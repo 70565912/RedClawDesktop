@@ -13,7 +13,7 @@ namespace redclaw::ui {
 
 class AgentSettingsDialog final : public QDialog {
 public:
-    explicit AgentSettingsDialog(QSettings* settings, QWidget* parent = nullptr);
+    explicit AgentSettingsDialog(QSettings* settings, QWidget* parent = nullptr, bool probe_on_startup = true);
     ~AgentSettingsDialog() override;
 
     void set_runtime_active(bool active);

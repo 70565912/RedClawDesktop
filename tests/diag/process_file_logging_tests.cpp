@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include "redclaw/diag/diag_module.h"
+#include "../../src/runtime/desktop_stream_counters.h"
 
 TEST(ProcessFileLogging, RuntimeLogBurstDoesNotConsumeGuiHeartbeatBudget) {
     std::string line = "Runtime stats role=controller ";
@@ -603,6 +604,32 @@ TEST(RemoteDiagnosticsPolicy, DebugAllowsAndReleaseRequiresLocalOptIn) {
     EXPECT_TRUE(redclaw::diag::remote_diagnostics_allowed_by_policy(false, false));
     EXPECT_FALSE(redclaw::diag::remote_diagnostics_allowed_by_policy(true, false));
     EXPECT_TRUE(redclaw::diag::remote_diagnostics_allowed_by_policy(true, true));
+}
+
+TEST(DebugRuntimeStatus, AuthRejectedStreamStatsClosedHostIncludesZeroCounters) {
+    const auto line = redclaw::runtime::format_auth_rejected_stream_stats("host", {}, false, false, 0, 0);
+    EXPECT_EQ(line, "Runtime desktop stream stats role=host channel_open=false media_channel_open=false"
+                    " captured=0 synthetic=0 capture_failures=0 encoded=0 encode_failures=0"
+                    " transmitted=0 transmit_failures=0 received=0 decoded=0 media_fragments_sent=0"
+                    " media_fragments_received=0 event=connection_auth_rejected");
+}
+
+TEST(DebugRuntimeStatus, AuthRejectedStreamStatsPreservesControllerCounters) {
+    const redclaw::runtime::DesktopStreamCounters counters{
+        .captured_frames = 1, .synthetic_frames = 2, .capture_failures = 3,
+        .encoded_frames = 4, .encode_failures = 5, .transmitted_frames = 6,
+        .transmit_failures = 7, .received_frames = 8, .decoded_frames = 9};
+    const auto line = redclaw::runtime::format_auth_rejected_stream_stats(
+        "controller", counters, true, false, 4294967296ULL, 4294967297ULL);
+    EXPECT_EQ(line, "Runtime desktop stream stats role=controller channel_open=false media_channel_open=true"
+                    " captured=1 synthetic=2 capture_failures=3 encoded=4 encode_failures=5"
+                    " transmitted=6 transmit_failures=7 received=8 decoded=9 media_fragments_sent=4294967296"
+                    " media_fragments_received=4294967297 event=connection_auth_rejected");
+    redclaw::diag::DebugRuntimeStatus status;
+    ASSERT_TRUE(redclaw::diag::update_debug_runtime_status_from_line(line, &status));
+    EXPECT_EQ(status.role, "controller");
+    EXPECT_EQ(status.decoded, 9U);
+    EXPECT_EQ(status.media_fragments_received, 4294967297ULL);
 }
 
 TEST(DebugRuntimeStatus, ParsesDhtIceAndStreamStages) {

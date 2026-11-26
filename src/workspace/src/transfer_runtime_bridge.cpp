@@ -18,12 +18,13 @@ void native_identity(protocol::WorkspaceControlV1& to, const protocol::Workspace
 }
 TransferRuntimeBridge::TransferRuntimeBridge(bool host, std::string epoch, std::filesystem::path spool,
     TransferOperationGate& gate, ControlSend peer, ControlSend gui, BulkSend bulk, std::function<bool()> ensure,
-    ClipboardHostActions clipboard_actions)
-    : host_role_(host), local_epoch_(std::move(epoch)), spool_directory_(std::move(spool)), gate_(gate),
+    ClipboardHostActions clipboard_actions, bool enable_clipboard)
+    : host_role_(host), local_clipboard_version_(enable_clipboard ? kClipboardCapabilityVersion : 0),
+      local_epoch_(std::move(epoch)), spool_directory_(std::move(spool)), gate_(gate),
       peer_send_(std::move(peer)), gui_send_(std::move(gui)), bulk_send_(std::move(bulk)), ensure_(std::move(ensure)),
       clipboard_paste_(clipboard_actions), clipboard_capture_(std::move(clipboard_actions.capture)),
       clipboard_sequence_number_(clipboard_actions.sequence) {
-    if (clipboard_actions.native_demand || clipboard_actions.demand_port) {
+    if (enable_clipboard && (clipboard_actions.native_demand || clipboard_actions.demand_port)) {
         auto port = clipboard_actions.demand_port ? clipboard_actions.demand_port : make_native_clipboard_demand_port();
         native_clipboard_ = std::make_unique<ClipboardDemandSession>(host_role_, local_epoch_, spool_directory_, std::move(port),
             clipboard_actions, peer_send_, gui_send_, [this](const auto& request) {
@@ -36,7 +37,7 @@ TransferRuntimeBridge::TransferRuntimeBridge(bool host, std::string epoch, std::
 void TransferRuntimeBridge::peer_capability(std::uint32_t version, std::string epoch, std::uint32_t clipboard_version) {
     std::lock_guard lock(inbox_mutex_);
     peer_version_ = kFileTransferCapabilityVersion && version >= 1 ? 1 : 0;
-    peer_clipboard_version_ = peer_version_ ? std::min(kClipboardCapabilityVersion, clipboard_version) : 0;
+    peer_clipboard_version_ = peer_version_ ? std::min(local_clipboard_version_, clipboard_version) : 0;
     advertised_peer_epoch_ = std::move(epoch);
 }
 void TransferRuntimeBridge::channel_open(bool open) {

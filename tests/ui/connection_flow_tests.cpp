@@ -1666,7 +1666,13 @@ public:
 };
 
 int run_runtime_stdio_fixture(const char* mode);
+#if defined(_WIN32) && defined(_DEBUG)
+int run_private_startup_fixture(int argc, char** argv);
+#endif
 int main(int argc, char** argv) {
+#if defined(_WIN32) && defined(_DEBUG)
+  if (argc == 3 && std::string_view(argv[1]) == "--private-startup-fixture") return run_private_startup_fixture(argc, argv);
+#endif
   if (argc == 3 && std::string_view(argv[1]) == "--stdio-fixture") return run_runtime_stdio_fixture(argv[2]);
   TimedTestApplication application(argc, argv);
   ::testing::InitGoogleTest(&argc, argv);

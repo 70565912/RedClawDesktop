@@ -6,6 +6,8 @@ param(
     [ValidateRange(1, 65535)]
     [int]$IceUdpPort,
 
+    [switch]$NoDesktopVideo,
+
     [switch]$DryRun
 )
 
@@ -23,6 +25,7 @@ if (-not $PSBoundParameters.ContainsKey('IceUdpPort') -and (Test-Path -LiteralPa
 
 $arguments = @{
     Role = 'host'
+    NoDesktopVideo = [bool]$NoDesktopVideo
 }
 if ($ConnectionCredentialFile) { $arguments.ConnectionCredentialFile = $ConnectionCredentialFile }
 if ($SessionCode) { $arguments.SessionCode = $SessionCode }

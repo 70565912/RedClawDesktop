@@ -83,7 +83,7 @@ if (REDCLAW_QT_GUI_ENABLED)
   endif()
   if(REDCLAW_QT_OPENGL_ENABLED)
     target_link_libraries(redclaw_ui_playback PRIVATE Qt6::OpenGLWidgets)
-    target_compile_definitions(redclaw_ui_playback PRIVATE REDCLAW_ENABLE_QT_OPENGL=1)
+    target_compile_definitions(redclaw_ui_playback PUBLIC REDCLAW_ENABLE_QT_OPENGL=1)
   endif()
 
   add_library(redclaw_ui_agent_control STATIC
@@ -120,6 +120,7 @@ if (REDCLAW_QT_GUI_ENABLED)
     ui/clipboard_copies_dialog.cpp
     ui/runtime_maintenance_context.cpp
     ui/gui_startup_options.cpp
+    ui/private_gui_profile.cpp
     ui/host_update_restart_guard.cpp
     ui/agent_settings_dialog.cpp
     ui/connection_entry_page.cpp
@@ -137,10 +138,10 @@ if (REDCLAW_QT_GUI_ENABLED)
   target_include_directories(redclaw_ui_connection_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(redclaw_ui_connection_flow
     PUBLIC Qt6::Widgets Qt6::Network redclaw_protocol redclaw_diag
-    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace redclaw_security
+    PRIVATE Qt6::Concurrent redclaw_agent redclaw_input redclaw_workspace redclaw_security redclaw_helper redclaw_runtime_options
   )
   if(WIN32)
-    target_link_libraries(redclaw_ui_connection_flow PRIVATE dwmapi advapi32)
+    target_link_libraries(redclaw_ui_connection_flow PRIVATE dwmapi advapi32 shell32 ole32)
   endif()
   redclaw_apply_warnings(redclaw_ui_connection_flow)
 

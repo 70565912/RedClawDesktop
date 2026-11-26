@@ -1,4 +1,6 @@
 #include "ui/runtime_maintenance_context.h"
+#include "ui/windows_user_security.h"
+#include "ui/gui_startup_options.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonArray>
@@ -21,61 +23,21 @@ namespace redclaw::ui {
 namespace {
 bool fail(QString* error, const char* reason) { if (error) *error = QString::fromLatin1(reason); return false; }
 #ifdef _WIN32
-struct CloseFile { void operator()(void* value) const { CloseHandle(value); } };
-struct FreeLocal { void operator()(void* value) const { LocalFree(value); } };
-using File = std::unique_ptr<void, CloseFile>;
-using Local = std::unique_ptr<void, FreeLocal>;
-struct UserSecurity {
-    std::vector<unsigned char> token_user;
-    Local descriptor;
-    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
-    PSID sid() const { return reinterpret_cast<const TOKEN_USER*>(token_user.data())->User.Sid; }
-    bool load() {
-        HANDLE value = nullptr;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &value)) return false;
-        File token(value); DWORD bytes = 0;
-        (void)GetTokenInformation(token.get(), TokenUser, nullptr, 0, &bytes);
-        if (!bytes) return false;
-        token_user.resize(bytes);
-        if (!GetTokenInformation(token.get(), TokenUser, token_user.data(), bytes, &bytes)) return false;
-        LPWSTR name = nullptr;
-        if (!ConvertSidToStringSidW(sid(), &name)) return false;
-        Local owner(name);
-        const std::wstring sddl = L"O:" + std::wstring(name) + L"D:P(A;OICI;FA;;;" + name + L")";
-        PSECURITY_DESCRIPTOR security = nullptr;
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &security, nullptr)) return false;
-        descriptor.reset(security); attributes.lpSecurityDescriptor = security; return true;
-    }
-};
+QString legacy_video_suffix(runtime::DesktopVideoMode mode, bool has_profile) {
+    if (mode == runtime::DesktopVideoMode::kDesktop) return "--stream-smoke";
+    if (mode == runtime::DesktopVideoMode::kDisabled && !has_profile) return {};
+    return desktop_video_worker_arguments(mode).front();
+}
+using win::File;
+using win::Local;
+using win::UserSecurity;
 quint64 started_ms(HANDLE process) {
     FILETIME created{}, exited{}, kernel{}, user{};
     if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) return 0;
     const auto ticks = (static_cast<quint64>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
     return ticks >= 116444736000000000ULL ? (ticks - 116444736000000000ULL) / 10000 : 0;
 }
-bool private_file(HANDLE file, PSID current_user) {
-    FILE_ATTRIBUTE_TAG_INFO info{};
-    if (!GetFileInformationByHandleEx(file, FileAttributeTagInfo, &info, sizeof(info))
-        || (info.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))) return false;
-    PSID owner = nullptr; PACL acl = nullptr; PSECURITY_DESCRIPTOR security = nullptr;
-    if (GetSecurityInfo(file, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-        &owner, nullptr, &acl, nullptr, &security) != ERROR_SUCCESS) return false;
-    Local descriptor(security);
-    SECURITY_DESCRIPTOR_CONTROL control = 0; DWORD revision = 0;
-    if (!owner || !EqualSid(owner, current_user) || !acl || !GetSecurityDescriptorControl(security, &control, &revision)
-        || !(control & SE_DACL_PROTECTED)) return false;
-    bool allowed = false;
-    for (DWORD index = 0; index < acl->AceCount; ++index) {
-        void* raw = nullptr;
-        if (!GetAce(acl, index, &raw)) return false;
-        const auto* header = static_cast<ACE_HEADER*>(raw);
-        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) return false;
-        auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
-        if (!EqualSid(&ace->SidStart, current_user)) return false;
-        allowed = true;
-    }
-    return allowed;
-}
+bool private_file(HANDLE file, PSID user) { return win::owner_only_object(file, user, false); }
 #endif
 bool read_arguments(const QJsonValue& value, QStringList& output) {
     if (!value.isArray()) return false;
@@ -119,13 +81,19 @@ bool RuntimeMaintenanceContext::save(const QStringList& gui_arguments, const QSt
     const auto runtime_started = runtime ? started_ms(runtime.get()) : 0;
     const auto gui_started = started_ms(GetCurrentProcess());
     if (!runtime_started || !gui_started) return fail(error, "maintenance_context_identity_unavailable");
+    auto legacy_arguments = runtime_arguments;
+    const auto video_flag = legacy_arguments.takeLast();
+    const auto mode = runtime::desktop_video_flag(video_flag.toStdString());
+    if (!mode) return fail(error, "maintenance_video_mode_missing");
+    const auto suffix = legacy_video_suffix(*mode, legacy_arguments.contains("--runtime-config"));
+    if (!suffix.isEmpty()) legacy_arguments << suffix;
     QJsonObject context{{"schema", "redclaw.runtime-maintenance.context.v1"}, {"role", "host"},
         {"gui_pid", static_cast<qint64>(QCoreApplication::applicationPid())}, {"gui_started_ms", static_cast<qint64>(gui_started)},
         {"runtime_pid", static_cast<qint64>(runtime_pid)}, {"runtime_started_ms", static_cast<qint64>(runtime_started)},
         {"executable", QDir::toNativeSeparators(QCoreApplication::applicationFilePath())},
         {"working_directory", QDir::toNativeSeparators(QDir::currentPath())},
-        {"previous_context", previous_context_},
-        {"gui_arguments", QJsonArray::fromStringList(gui_arguments)}, {"runtime_arguments", QJsonArray::fromStringList(runtime_arguments)}};
+        {"previous_context", previous_context_}, {"video_arguments_version", 2}, {"worker_video_flag", video_flag},
+        {"gui_arguments", QJsonArray::fromStringList(gui_arguments)}, {"runtime_arguments", QJsonArray::fromStringList(legacy_arguments)}};
     const auto bytes = QJsonDocument(context).toJson(QJsonDocument::Compact);
     UserSecurity security;
     if (!security.load()) return fail(error, "maintenance_context_user_unavailable");
@@ -166,6 +134,21 @@ std::optional<RuntimeMaintenanceSnapshot> RuntimeMaintenanceContext::read(const 
         || !read_arguments(context.value("runtime_arguments"), snapshot.runtime_arguments)
         || snapshot.gui_arguments.contains("--gui-maintenance-resume") || snapshot.runtime_arguments.contains("--gui-runtime-stdio")) {
         fail(error, "maintenance_context_invalid"); return {};
+    }
+    const auto video_version = context.value("video_arguments_version");
+    if (video_version.isUndefined()) {
+        if (!normalize_saved_video_arguments(snapshot.runtime_arguments, error)) return {};
+    } else if (video_version.toInt(-1) != 2) {
+        fail(error, "maintenance_video_version_incompatible"); return {};
+    } else {
+        const auto flag = context.value("worker_video_flag").toString();
+        const auto mode = runtime::desktop_video_flag(flag.toStdString());
+        if (!mode) { fail(error, "maintenance_video_mode_missing"); return {}; }
+        const auto suffix = legacy_video_suffix(*mode, snapshot.runtime_arguments.contains("--runtime-config"));
+        if (!suffix.isEmpty() && (snapshot.runtime_arguments.isEmpty() || snapshot.runtime_arguments.takeLast() != suffix)) {
+            fail(error, "maintenance_video_arguments_invalid"); return {};
+        }
+        snapshot.runtime_arguments << flag;
     }
     if (error) error->clear(); return snapshot;
 #else

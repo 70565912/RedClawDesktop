@@ -10,6 +10,8 @@ param(
     [ValidateRange(1, 65535)]
     [int]$IceUdpPort,
 
+    [switch]$NoDesktopVideo,
+
     [switch]$DryRun
 )
 
@@ -99,6 +101,7 @@ $arguments = @{
     NetworkBindAddress = $networkExit.Address
     SignalTimeoutSeconds = 0
     AutoStart = $true
+    NoDesktopVideo = [bool]$NoDesktopVideo
 }
 if ($ConnectionCredentialFile) { $arguments.ConnectionCredentialFile = $ConnectionCredentialFile }
 if ($SessionCode) { $arguments.SessionCode = $SessionCode }
